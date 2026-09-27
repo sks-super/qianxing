@@ -1,0 +1,26 @@
+[
+  { "label": "1. 新建工程", "tool": "qxqy_project_open", "args": {} },
+
+  { "label": "2. 挂载信号探测脚本", "tool": "qxqy_studio_patch", "args": {
+    "handle": "project-1",
+    "op": {
+      "op": "addScript",
+      "path": "probe_signal.lua",
+      "controlId": "n1",
+      "controlAsset": "client",
+      "expectedRevision": 1,
+      "source": "print(\"[probe] chunk loaded\")\n\nlocal function reg(name)\n    local ok, err = pcall(function()\n        return script:RegisterServerSignalHandler(name, function(signalName, params)\n            local n = 0\n            if type(params) == 'table' then n = #params end\n            print('[probe] >>> SIGNAL RECEIVED name=' .. tostring(signalName) .. ' paramCount=' .. tostring(n) .. ' p1=' .. tostring(params and params[1]))\n        end)\n    end)\n    print('[probe] register [' .. name .. '] ok=' .. tostring(ok) .. ' ret=' .. tostring(err))\nend\n\nfunction OnStart()\n    print('[probe] OnStart, script=' .. tostring(script))\n    reg('测试')\n    reg('进入关卡')\n    reg('服务器事件')\nend\n"
+    }
+  } },
+
+  { "label": "3. 启动试玩", "tool": "qxqy_studio_play", "args": { "handle": "project-1", "action": "start", "args": { "canvasId": "mobile-16-9" } } },
+  { "label": "4. 读日志", "tool": "qxqy_studio_play", "args": { "handle": "project-1", "action": "get" } },
+
+  { "label": "5. 服务器下发【测试】", "tool": "qxqy_studio_play", "args": { "handle": "project-1", "action": "serverSend", "args": { "target": "PlayerSelf", "name": "测试", "params": [7] } } },
+  { "label": "6. 服务器下发【进入关卡】", "tool": "qxqy_studio_play", "args": { "handle": "project-1", "action": "serverSend", "args": { "target": "PlayerSelf", "name": "进入关卡", "params": [3] } } },
+  { "label": "7. 服务器下发【服务器事件/开挂】", "tool": "qxqy_studio_play", "args": { "handle": "project-1", "action": "serverSend", "args": { "target": "PlayerSelf", "name": "服务器事件", "params": ["开挂"] } } },
+  { "label": "8. 推进一帧", "tool": "qxqy_studio_play", "args": { "handle": "project-1", "action": "step", "args": { "dt": 0.0333 } } },
+
+  { "label": "9. 最终日志", "tool": "qxqy_studio_play", "args": { "handle": "project-1", "action": "get" } },
+  { "label": "10. 停止", "tool": "qxqy_studio_play", "args": { "handle": "project-1", "action": "stop", "args": {} } }
+]

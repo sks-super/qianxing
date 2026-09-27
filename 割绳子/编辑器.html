@@ -1,0 +1,1704 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>割绳子关卡编辑器</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            font-family: "Microsoft YaHei", sans-serif;
+            user-select: none;
+        }
+        body {
+            background: #1e1e2f;
+            color: #eee;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+        }
+        #header {
+            display: flex;
+            align-items: center;
+            padding: 8px 16px;
+            background: #2a2a3e;
+            border-bottom: 1px solid #444;
+            flex-shrink: 0;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        #header label,
+        #header button,
+        #header select {
+            font-size: 13px;
+        }
+        #header input,
+        #header select,
+        #header button {
+            background: #3a3a52;
+            color: #eee;
+            border: 1px solid #555;
+            padding: 4px 8px;
+            border-radius: 4px;
+        }
+        #header button {
+            cursor: pointer;
+            background: #4a6fa5;
+            border-color: #5a7fb5;
+        }
+        #header button:hover {
+            background: #5a7fb5;
+        }
+        #main {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+        #toolbar {
+            width: 130px;
+            background: #2a2a3e;
+            padding: 10px 6px;
+            border-right: 1px solid #444;
+            flex-shrink: 0;
+            overflow-y: auto;
+        }
+        #toolbar .tool-btn {
+            display: block;
+            width: 100%;
+            margin: 3px 0;
+            padding: 6px 4px;
+            background: #3a3a52;
+            border: 1px solid #555;
+            border-radius: 4px;
+            color: #eee;
+            font-size: 12px;
+            cursor: pointer;
+            text-align: left;
+        }
+        #toolbar .tool-btn.active {
+            background: #4a6fa5;
+            border-color: #6a8fc5;
+        }
+        #canvas-container {
+            flex: 1;
+            position: relative;
+            background: #16213e;
+            overflow: hidden;
+        }
+        #canvas-container canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            cursor: crosshair;
+        }
+        #properties {
+            width: 280px;
+            background: #2a2a3e;
+            padding: 12px 16px;
+            border-left: 1px solid #444;
+            overflow-y: auto;
+            flex-shrink: 0;
+            font-size: 13px;
+        }
+        #properties h3 {
+            margin: 0 0 10px 0;
+            color: #8ab4f8;
+            border-bottom: 1px solid #444;
+            padding-bottom: 6px;
+        }
+        .prop-row {
+            display: flex;
+            align-items: center;
+            margin: 4px 0;
+            gap: 6px;
+        }
+        .prop-row label {
+            width: 100px;
+            flex-shrink: 0;
+            color: #aaa;
+            font-size: 12px;
+        }
+        .prop-row input {
+            flex: 1;
+            background: #3a3a52;
+            color: #eee;
+            border: 1px solid #555;
+            padding: 3px 6px;
+            border-radius: 3px;
+            font-size: 12px;
+            width: 60px;
+        }
+        .prop-row input[type="number"] {
+            -moz-appearance: textfield;
+        }
+        /* “默认”复选框 + 禁用态 */
+        .default-lbl {
+            display: flex;
+            align-items: center;
+            gap: 3px;
+            font-size: 11px;
+            color: #8a8aa8;
+            white-space: nowrap;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+        .default-lbl input {
+            width: auto;
+            margin: 0;
+        }
+        .prop-row input.dyn-input:disabled {
+            opacity: 0.45;
+            background: #2a2a3e;
+            color: #9a9ab0;
+        }
+        .delete-btn {
+            background: #a54a4a;
+            border: none;
+            color: #fff;
+            padding: 4px 12px;
+            border-radius: 3px;
+            cursor: pointer;
+            margin-top: 8px;
+        }
+        .delete-btn:hover {
+            background: #c55a5a;
+        }
+        #footer {
+            padding: 4px 16px;
+            background: #2a2a3e;
+            border-top: 1px solid #444;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-shrink: 0;
+            font-size: 12px;
+            color: #888;
+        }
+        #footer .zoom-control {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        #footer .zoom-control input[type="range"] {
+            width: 100px;
+            background: #3a3a52;
+            accent-color: #4a6fa5;
+        }
+        #footer .zoom-control span {
+            min-width: 40px;
+            text-align: center;
+            color: #8ab4f8;
+        }
+        #export-code, #import-dialog {
+            display: none;
+            position: fixed;
+            top: 10%;
+            left: 10%;
+            width: 80%;
+            height: 80%;
+            background: #1a1a2a;
+            border: 2px solid #4a6fa5;
+            border-radius: 8px;
+            z-index: 100;
+            padding: 16px;
+            flex-direction: column;
+        }
+        #export-code textarea, #import-dialog textarea {
+            flex: 1;
+            background: #0d0d1a;
+            color: #cfc;
+            border: 1px solid #444;
+            padding: 8px;
+            font-size: 13px;
+            font-family: monospace;
+            resize: none;
+            width: 100%;
+        }
+        .btn-row {
+            display: flex;
+            gap: 8px;
+            padding-top: 8px;
+        }
+        .btn-row button {
+            background: #4a6fa5;
+            border: none;
+            color: #eee;
+            padding: 6px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .close-btn {
+            background: #6a4a4a;
+        }
+        .close-btn:hover {
+            background: #8a5a5a;
+        }
+        .item-count {
+            color: #aaa;
+            font-size: 11px;
+            margin-top: 8px;
+        }
+        #level-selector {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        #import-msg {
+            color: #4a6fa5;
+            font-size: 12px;
+            margin-top: 4px;
+        }
+        .section-title {
+            color: #8ab4f8;
+            font-weight: bold;
+            margin: 10px 0 6px 0;
+            border-bottom: 1px solid #444;
+            padding-bottom: 4px;
+        }
+        /* 画布坐标轴指示 */
+        .axis-label {
+            color: #888;
+            font-size: 11px;
+        }
+    </style>
+</head>
+<body>
+
+<div id="header">
+    <span style="font-weight:bold;">🎮 关卡编辑器</span>
+    <span style="color:#888;font-size:12px;">(坐标原点在中心)</span>
+    <div id="level-selector">
+        <label>关卡：<select id="levelSelect"></select></label>
+        <button id="addLevelBtn">+</button>
+        <button id="delLevelBtn">-</button>
+        <button id="copyLevelBtn">复制</button>
+        <button id="importBtn" style="background:#5a7fa5;">📥 导入</button>
+    </div>
+    <div style="margin-left:auto;display:flex;gap:6px;">
+        <button id="exportBtn">📋 导出</button>
+        <button id="clearBtn">清空</button>
+    </div>
+</div>
+
+<div id="main">
+    <div id="toolbar">
+        <div style="font-weight:bold;color:#8ab4f8;margin-bottom:4px;">工具</div>
+        <button class="tool-btn active" data-tool="select">🖱 选择</button>
+        <button class="tool-btn" data-tool="fixed">📍 固定点</button>
+        <button class="tool-btn" data-tool="candy">🍬 糖果</button>
+        <button class="tool-btn" data-tool="target">🎯 目标</button>
+        <button class="tool-btn" data-tool="star">⭐ 星星</button>
+        <button class="tool-btn" data-tool="bubble">🫧 泡泡</button>
+        <button class="tool-btn" data-tool="spike">⚫ 尖刺</button>
+        <button class="tool-btn" data-tool="board">🟫 木板</button>
+        <button class="tool-btn" data-tool="textbox">🔤 文本框</button>
+        <div class="item-count" id="itemCount"></div>
+        <div style="font-size:11px;color:#666;margin-top:6px;">
+            <div>左键: 放置/选中</div>
+            <div>拖动: 移动</div>
+            <div>滚轮: 缩放</div>
+            <div>右键: 取消选中</div>
+        </div>
+    </div>
+
+    <div id="canvas-container">
+        <canvas id="canvas"></canvas>
+    </div>
+
+    <div id="properties">
+        <h3>📐 属性</h3>
+        <div id="propContent">
+            <div style="color:#888;font-size:13px;">点击画布上的物品查看属性</div>
+        </div>
+    </div>
+</div>
+
+<div id="footer">
+    <span id="status">就绪</span>
+    <div class="zoom-control">
+        <button id="zoomOutBtn">−</button>
+        <input type="range" id="zoomSlider" min="20" max="300" value="100">
+        <span id="zoomLabel">100%</span>
+        <button id="zoomInBtn">+</button>
+        <button id="resetZoomBtn" style="background:#4a4a6a;">重置</button>
+    </div>
+    <span>拖动物品调整位置</span>
+</div>
+
+<div id="export-code">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <span style="font-weight:bold;">📋 Lua 配置</span>
+        <span style="font-size:12px;color:#888;">复制到 config.lua 的 LEVELS 表中</span>
+    </div>
+    <textarea id="codeArea" spellcheck="false"></textarea>
+    <div class="btn-row">
+        <button id="copyCodeBtn">📋 复制</button>
+        <button id="closeExportBtn" class="close-btn">关闭</button>
+    </div>
+</div>
+
+<div id="import-dialog">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <span style="font-weight:bold;">📥 导入 Lua 关卡数据</span>
+        <span style="font-size:12px;color:#888;">粘贴 LEVELS = {...} 内容</span>
+    </div>
+    <textarea id="importArea" spellcheck="false"></textarea>
+    <div id="import-msg"></div>
+    <div class="btn-row">
+        <button id="importConfirmBtn">✅ 导入</button>
+        <button id="closeImportBtn" class="close-btn">取消</button>
+    </div>
+</div>
+
+<script>
+    // ================================================================
+    // 关卡编辑器 - 统一缩放（网格正方形）
+    // ================================================================
+
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+
+    // ---------- 数据 ----------
+    let levels = [];
+    let currentLevelIndex = 0;
+    let currentLevel = null;
+    let currentTool = 'select';
+    let selectedItem = null;
+    let isDragging = false;
+    let dragData = null;
+
+    // 缩放
+    let zoom = 1.0;
+    const MIN_ZOOM = 0.2;
+    const MAX_ZOOM = 3.0;
+    const WORLD_W = 800;
+    const WORLD_H = 600;
+
+    // 参数默认值（与 config.lua 的 DEFAULT_* 保持一致）。
+    // 这些参数均为“非位置参数”，未显式设定时使用默认值，导出时省略。
+    const DEFAULTS = {
+        gravity: 800,
+        candy_damping: 0.9983,
+        constraint_iterations: 20,
+        sub_steps: 8,
+        max_drag_factor: 1.0,
+        bubble_radius: 28,
+        bubble_upward_gravity: 250,
+        bubble_alpha: 0.5,
+        spike_width: 24,
+        spike_length: 40,
+        spike_rotation: 0,
+        board_width: 160,
+        board_length: 24,
+        board_rotation: 0,
+        text_width: 200,
+        text_length: 60,
+        text_rotation: 0,
+        text_font_size: 30,
+        text_min_font_size: 10,
+        rope_total_length: 200,
+        rope_seg_length: 10,
+    };
+    // 参数默认值与 config 字段名映射（用于“默认”复选框复位 / 提示）
+    // kind: 'global' | 'bubble' | 'spike' | 'fixed'
+    function getDefValue(kind, key, item) {
+        if (kind === 'global') return DEFAULTS[key];
+        if (kind === 'bubble') {
+            return { radius: DEFAULTS.bubble_radius, upward_gravity: DEFAULTS.bubble_upward_gravity, alpha: DEFAULTS.bubble_alpha }[key];
+        }
+        if (kind === 'spike') {
+            return { width: DEFAULTS.spike_width, length: DEFAULTS.spike_length, rotation: DEFAULTS.spike_rotation }[key];
+        }
+        if (kind === 'board') {
+            return { width: DEFAULTS.board_width, length: DEFAULTS.board_length, rotation: DEFAULTS.board_rotation }[key];
+        }
+        if (kind === 'textbox') {
+            return { width: DEFAULTS.text_width, length: DEFAULTS.text_length, rotation: DEFAULTS.text_rotation, font_size: DEFAULTS.text_font_size, min_font_size: DEFAULTS.text_min_font_size }[key];
+        }
+        if (kind === 'fixed') {
+            if (key === 'total_length') return DEFAULTS.rope_total_length;
+            if (key === 'seg_length') return DEFAULTS.rope_seg_length;
+        }
+        return undefined;
+    }
+
+    // ---------- 坐标转换（统一缩放） ----------
+    function getCanvasSize() {
+        return { width: canvas.width, height: canvas.height };
+    }
+
+    function toCanvas(wx, wy) {
+        const { width, height } = getCanvasSize();
+        const scale = Math.min(width / WORLD_W, height / WORLD_H) * zoom;
+        return {
+            x: width/2 + wx * scale,
+            y: height/2 - wy * scale
+        };
+    }
+
+    function toWorld(cx, cy) {
+        const { width, height } = getCanvasSize();
+        const scale = Math.min(width / WORLD_W, height / WORLD_H) * zoom;
+        if (scale === 0) return { x: 0, y: 0 };
+        return {
+            x: (cx - width/2) / scale,
+            y: -(cy - height/2) / scale
+        };
+    }
+
+    // 获取当前缩放比例（用于半径等）
+    function getScale() {
+        const { width, height } = getCanvasSize();
+        return Math.min(width / WORLD_W, height / WORLD_H) * zoom;
+    }
+
+    // ---------- 默认关卡 ----------
+    function createDefaultLevel() {
+        // 新关卡：所有“非位置参数”初始均“使用默认值”，导出时省略；
+        // 实际数值仍保存为默认值（便于画布渲染与面板显示），但 _d 标记为默认。
+        return {
+            name: '新关卡',
+            candy_position: { x: 0, y: 0 },
+            target: { x: 150, y: -80, width: 100, height: 50 },
+            stars: [],
+            bubbles: [],
+            spikes: [],
+            texts: [],
+            boards: [],
+            ropes: [
+                { fixed: { x: -80, y: 60 }, total_length: DEFAULTS.rope_total_length, seg_length: DEFAULTS.rope_seg_length, _d: { total_length: true, seg_length: true } },
+                { fixed: { x: 80, y: 60 }, total_length: DEFAULTS.rope_total_length, seg_length: DEFAULTS.rope_seg_length, _d: { total_length: true, seg_length: true } },
+            ],
+            gravity: DEFAULTS.gravity,
+            candy_damping: DEFAULTS.candy_damping,
+            constraint_iterations: DEFAULTS.constraint_iterations,
+            sub_steps: DEFAULTS.sub_steps,
+            max_drag_factor: DEFAULTS.max_drag_factor,
+            _d: { gravity: true, candy_damping: true, constraint_iterations: true, sub_steps: true, max_drag_factor: true },
+        };
+    }
+
+    function initData() {
+        if (levels.length === 0) {
+            levels.push(createDefaultLevel());
+            let l2 = createDefaultLevel();
+            l2.name = '第二关';
+            l2.candy_position = { x: 0, y: -30 };
+            l2.target = { x: -120, y: -60, width: 80, height: 40 };
+            l2.ropes = [
+                { fixed: { x: -100, y: 50 }, total_length: 150, seg_length: 10, _d: { total_length: false, seg_length: false } },
+                { fixed: { x: 100, y: 50 }, total_length: 150, seg_length: 10, _d: { total_length: false, seg_length: false } },
+                { fixed: { x: 0, y: 40 }, total_length: 120, seg_length: 8, _d: { total_length: false, seg_length: false } },
+            ];
+            l2.gravity = 700;
+            l2._d.gravity = false; // 显式设定，导出
+            levels.push(l2);
+        }
+        loadLevel(0);
+    }
+
+    function loadLevel(index) {
+        currentLevelIndex = index;
+        currentLevel = levels[index];
+        if (!currentLevel) {
+            currentLevel = createDefaultLevel();
+            levels[index] = currentLevel;
+        }
+        selectedItem = null;
+        dragData = null;
+        isDragging = false;
+        updateUI();
+        render();
+        updatePropPanel();
+    }
+
+    // ---------- UI ----------
+    function updateLevelSelect() {
+        const sel = document.getElementById('levelSelect');
+        sel.innerHTML = '';
+        levels.forEach((l, i) => {
+            const opt = document.createElement('option');
+            opt.value = i;
+            opt.textContent = l.name || `关卡 ${i+1}`;
+            if (i === currentLevelIndex) opt.selected = true;
+            sel.appendChild(opt);
+        });
+    }
+
+    function updateUI() {
+        const l = currentLevel;
+        document.getElementById('itemCount').textContent =
+            `固定:${l.ropes.length} 糖果:1 目标:1 星星:${l.stars.length} 泡泡:${l.bubbles.length} 尖刺:${l.spikes.length} 木板:${l.boards?l.boards.length:0} 文本框:${l.texts?l.texts.length:0}`;
+        updateLevelSelect();
+    }
+
+    // 四舍五入为整数
+    function roundToInt(v) { return Math.round(v); }
+
+    // ---------- 属性面板 ----------
+    function updatePropPanel() {
+        const container = document.getElementById('propContent');
+        if (!selectedItem) {
+            container.innerHTML = buildGlobalParamsHTML();
+            bindDynParams(container);
+            return;
+        }
+        const { type, index, data } = selectedItem;
+        let html = `<div style="font-weight:bold;color:#8ab4f8;">${typeLabel(type)} #${index+1}</div>`;
+        const pt = (label, key, value, step) => plainRowHTML(label, key, value, type, index, step);
+
+        if (type === 'fixed') {
+            html += pt('X', 'X', data.fixed.x);
+            html += pt('Y', 'Y', data.fixed.y);
+            // 绳长(total_length)：已合并触发半径；可勾选“默认”（未配置时导出省略，用 config 默认绳长）
+            html += paramRowHTML({ key:'total_length', label:'绳长 (total_length)', value:data.total_length, defVal:DEFAULTS.rope_total_length, isDefault:!!(data._d && data._d.total_length) }, 'fixed');
+            html += paramRowHTML({ key:'seg_length', label:'分段 (seg_length)', value:data.seg_length, defVal:DEFAULTS.rope_seg_length, isDefault:!!(data._d && data._d.seg_length) }, 'fixed');
+        } else if (type === 'candy') {
+            html += pt('X', 'x', data.x);
+            html += pt('Y', 'y', data.y);
+        } else if (type === 'target') {
+            html += pt('X', 'x', data.x);
+            html += pt('Y', 'y', data.y);
+            html += pt('宽 (width)', 'width', data.width||100);
+            html += pt('高 (height)', 'height', data.height||50);
+        } else if (type === 'star') {
+            html += pt('X', 'x', data.x);
+            html += pt('Y', 'y', data.y);
+        } else if (type === 'bubble') {
+            html += pt('X', 'x', data.x);
+            html += pt('Y', 'y', data.y);
+            html += paramRowHTML({ key:'radius', label:'半径 (radius)', value:data.radius, defVal:DEFAULTS.bubble_radius, isDefault:!!(data._d && data._d.radius) }, 'bubble');
+            html += paramRowHTML({ key:'upward_gravity', label:'上浮力 (upward_gravity)', value:data.upward_gravity, defVal:DEFAULTS.bubble_upward_gravity, isDefault:!!(data._d && data._d.upward_gravity) }, 'bubble');
+            html += paramRowHTML({ key:'alpha', label:'透明度 (alpha)', value:data.alpha, defVal:DEFAULTS.bubble_alpha, isDefault:!!(data._d && data._d.alpha) }, 'bubble');
+        } else if (type === 'spike') {
+            html += pt('X', 'x', data.x);
+            html += pt('Y', 'y', data.y);
+            html += paramRowHTML({ key:'width', label:'宽 (width)', value:data.width, defVal:DEFAULTS.spike_width, isDefault:!!(data._d && data._d.width) }, 'spike');
+            html += paramRowHTML({ key:'length', label:'长 (length)', value:data.length, defVal:DEFAULTS.spike_length, isDefault:!!(data._d && data._d.length) }, 'spike');
+            html += paramRowHTML({ key:'rotation', label:'旋转 (rotation)', value:data.rotation, defVal:DEFAULTS.spike_rotation, isDefault:!!(data._d && data._d.rotation) }, 'spike');
+        } else if (type === 'board') {
+            html += pt('X', 'x', data.x);
+            html += pt('Y', 'y', data.y);
+            html += paramRowHTML({ key:'width', label:'宽 (width)', value:data.width, defVal:DEFAULTS.board_width, isDefault:!!(data._d && data._d.width) }, 'board');
+            html += paramRowHTML({ key:'length', label:'长 (length)', value:data.length, defVal:DEFAULTS.board_length, isDefault:!!(data._d && data._d.length) }, 'board');
+            html += paramRowHTML({ key:'rotation', label:'旋转 (rotation)', value:data.rotation, defVal:DEFAULTS.board_rotation, isDefault:!!(data._d && data._d.rotation) }, 'board');
+        } else if (type === 'textbox') {
+            html += pt('X', 'x', data.x);
+            html += pt('Y', 'y', data.y);
+            html += textRowHTML('文本 (text)', 'text', data.text, 'textbox', index);
+            html += paramRowHTML({ key:'width', label:'宽 (width)', value:data.width, defVal:DEFAULTS.text_width, isDefault:!!(data._d && data._d.width) }, 'textbox');
+            html += paramRowHTML({ key:'length', label:'长 (length)', value:data.length, defVal:DEFAULTS.text_length, isDefault:!!(data._d && data._d.length) }, 'textbox');
+            html += paramRowHTML({ key:'rotation', label:'旋转 (rotation)', value:data.rotation, defVal:DEFAULTS.text_rotation, isDefault:!!(data._d && data._d.rotation) }, 'textbox');
+            html += paramRowHTML({ key:'font_size', label:'字号 (font_size)', value:data.font_size, defVal:DEFAULTS.text_font_size, isDefault:!!(data._d && data._d.font_size) }, 'textbox');
+            html += paramRowHTML({ key:'min_font_size', label:'最小字号 (min_font_size)', value:data.min_font_size, defVal:DEFAULTS.text_min_font_size, isDefault:!!(data._d && data._d.min_font_size) }, 'textbox');
+        }
+
+        html += `<button class="delete-btn" id="deleteItemBtn">🗑 删除此物品</button>`;
+        container.innerHTML = html;
+
+        bindPropInputs(container);
+        bindTextInputs(container);
+        bindDynParams(container);
+
+        const delBtn = document.getElementById('deleteItemBtn');
+        if (delBtn) delBtn.addEventListener('click', deleteSelectedItem);
+    }
+
+    // ---- 全局参数 HTML（含“默认”复选框） ----
+    function buildGlobalParamsHTML() {
+        const l = currentLevel;
+        let html = `<div class="section-title">关卡全局参数</div>`;
+        html += `<div class="prop-row"><label>关卡名 (name)</label><input type="text" value="${l.name || ''}" id="g_name" class="prop-input"></div>`;
+        const defs = [
+            { key:'gravity', label:'重力 (gravity)', value:l.gravity, defVal:DEFAULTS.gravity, isDefault:!!(l._d && l._d.gravity), step:10 },
+            { key:'candy_damping', label:'阻尼 (candy_damping)', value:l.candy_damping, defVal:DEFAULTS.candy_damping, isDefault:!!(l._d && l._d.candy_damping), step:0.000001 },
+            { key:'constraint_iterations', label:'约束迭代 (constraint_iterations)', value:l.constraint_iterations, defVal:DEFAULTS.constraint_iterations, isDefault:!!(l._d && l._d.constraint_iterations), step:1 },
+            { key:'sub_steps', label:'子步 (sub_steps)', value:l.sub_steps, defVal:DEFAULTS.sub_steps, isDefault:!!(l._d && l._d.sub_steps), step:1 },
+            { key:'max_drag_factor', label:'最大拖拽因子 (max_drag_factor)', value:l.max_drag_factor, defVal:DEFAULTS.max_drag_factor, isDefault:!!(l._d && l._d.max_drag_factor), step:0.1 },
+        ];
+        defs.forEach(d => html += paramRowHTML(d, 'global'));
+        html += `<div style="color:#888;font-size:11px;margin-top:8px;">💡 勾选“默认”则导出时省略该参数（游戏自动使用 config 默认值）</div>`;
+        return html;
+    }
+
+    // 普通（位置）属性行（无“默认”选项）
+    function plainRowHTML(label, key, value, type, index, step) {
+        const st = (step != null) ? step : 1;
+        return `<div class="prop-row"><label>${label}</label><input type="number" step="${st}" value="${value}" data-type="${type}" data-index="${index}" data-key="${key}" class="prop-input"></div>`;
+    }
+
+    // 带“默认”复选框的数值属性行
+    function paramRowHTML(desc, kind) {
+        const disabled = desc.isDefault ? 'disabled' : '';
+        const checked = desc.isDefault ? 'checked' : '';
+        const val = desc.isDefault ? desc.defVal : desc.value;
+        const step = (desc.step != null) ? desc.step : 1;
+        return `<div class="prop-row">
+            <label>${desc.label}</label>
+            <input type="number" step="${step}" value="${val}" data-key="${desc.key}" data-kind="${kind}" class="dyn-input" ${disabled}>
+            <label class="default-lbl"><input type="checkbox" data-key="${desc.key}" data-kind="${kind}" class="default-chk" ${checked}>默认</label>
+        </div>`;
+    }
+
+    function typeLabel(t) {
+        return { fixed:'固定点', candy:'糖果', target:'目标', star:'星星', bubble:'泡泡', spike:'尖刺', board:'木板', textbox:'文本框' }[t] || t;
+    }
+
+    // 普通（文本）属性行（字符串，无“默认”选项，如文本框的 text 内容）
+    function textRowHTML(label, key, value, type, index) {
+        const v = (value == null) ? '' : value;
+        return `<div class="prop-row"><label>${label}</label><input type="text" value="${String(v).replace(/"/g,'&quot;')}" data-type="${type}" data-index="${index}" data-key="${key}" class="text-input"></div>`;
+    }
+
+    // 绑定文本输入（如文本框内容）
+    function bindTextInputs(container) {
+        container.querySelectorAll('.text-input').forEach(inp => {
+            inp.addEventListener('change', function() {
+                const t = this.dataset.type;
+                const idx = parseInt(this.dataset.index);
+                const key = this.dataset.key;
+                const item = getItemByType(t, idx);
+                if (!item) return;
+                item[key] = this.value;
+                if (selectedItem && selectedItem.data === item) selectedItem.data = item;
+                render();
+                updateUI();
+                updatePropPanel();
+            });
+        });
+    }
+
+    // 取“默认”标志对象
+    function getDObj(kind) {
+        if (kind === 'global') return currentLevel._d;
+        if (selectedItem && selectedItem.data) return selectedItem.data._d;
+        return null;
+    }
+
+    // 绑定位置（普通）输入
+    function bindPropInputs(container) {
+        container.querySelectorAll('.prop-input').forEach(inp => {
+            inp.addEventListener('change', function() {
+                let val = parseFloat(this.value);
+                if (isNaN(val)) return;
+                val = roundToInt(val);
+                this.value = val;
+                const t = this.dataset.type;
+                const idx = parseInt(this.dataset.index);
+                const key = this.dataset.key;
+                const item = getItemByType(t, idx);
+                if (!item) return;
+                if (t === 'fixed') {
+                    if (key === 'x') item.fixed.x = val;
+                    else if (key === 'y') item.fixed.y = val;
+                    else item[key] = val;
+                } else {
+                    item[key] = val;
+                }
+                if (selectedItem && selectedItem.data === item) selectedItem.data = item;
+                render();
+                updateUI();
+                updatePropPanel();
+            });
+        });
+    }
+
+    // 绑定“默认”复选框 + 动态数值输入
+    function bindDynParams(container) {
+        container.querySelectorAll('.dyn-input').forEach(inp => {
+            inp.addEventListener('change', function() {
+                let val = parseFloat(this.value);
+                if (isNaN(val)) return;
+                const kind = this.dataset.kind;
+                const key = this.dataset.key;
+                const dObj = getDObj(kind);
+                if (kind === 'global') {
+                    currentLevel[key] = val;
+                } else {
+                    const item = selectedItem ? selectedItem.data : null;
+                    if (!item) return;
+                    item[key] = val;
+                }
+                // 一旦手动输入，即视为显式设定（取消默认）
+                if (dObj) dObj[key] = false;
+                const chk = container.querySelector(`.default-chk[data-key="${key}"][data-kind="${kind}"]`);
+                if (chk) chk.checked = false;
+                render();
+                updateUI();
+                updatePropPanel();
+            });
+        });
+        container.querySelectorAll('.default-chk').forEach(chk => {
+            chk.addEventListener('change', function() {
+                const kind = this.dataset.kind;
+                const key = this.dataset.key;
+                const dObj = getDObj(kind);
+                if (!dObj) return;
+                const item = (kind === 'global') ? currentLevel : (selectedItem ? selectedItem.data : null);
+                if (!item) return;
+                const inp = container.querySelector(`.dyn-input[data-key="${key}"][data-kind="${kind}"]`);
+                if (this.checked) {
+                    // 使用默认值：复位数值并禁用输入
+                    dObj[key] = true;
+                    const defVal = getDefValue(kind, key, item);
+                    if (kind === 'global') currentLevel[key] = defVal;
+                    else item[key] = defVal;
+                    if (inp) { inp.value = defVal; inp.disabled = true; }
+                } else {
+                    dObj[key] = false;
+                    if (inp) inp.disabled = false;
+                }
+            });
+        });
+        // 关卡名（文本，始终显式，无“默认”选项）
+        const nameEl = container.querySelector('#g_name');
+        if (nameEl) {
+            nameEl.addEventListener('change', function() {
+                currentLevel.name = this.value;
+                updateLevelSelect();
+            });
+        }
+    }
+
+    // ---------- 数据操作 ----------
+    function getItemByType(type, index) {
+        if (type === 'fixed') return currentLevel.ropes[index] || null;
+        if (type === 'candy') return currentLevel.candy_position;
+        if (type === 'target') return currentLevel.target;
+        if (type === 'star') return currentLevel.stars[index];
+        if (type === 'bubble') return currentLevel.bubbles[index];
+        if (type === 'spike') return currentLevel.spikes[index];
+        if (type === 'board') return currentLevel.boards[index];
+        if (type === 'textbox') return currentLevel.texts[index];
+        return null;
+    }
+
+    function deleteSelectedItem() {
+        if (!selectedItem) return;
+        const { type, index } = selectedItem;
+        if (type === 'fixed') {
+            if (currentLevel.ropes.length > 1) {
+                currentLevel.ropes.splice(index, 1);
+            } else {
+                alert('至少保留一个固定点');
+                return;
+            }
+        } else if (type === 'star') {
+            currentLevel.stars.splice(index, 1);
+        } else if (type === 'bubble') {
+            currentLevel.bubbles.splice(index, 1);
+        } else if (type === 'spike') {
+            currentLevel.spikes.splice(index, 1);
+        } else if (type === 'board') {
+            currentLevel.boards.splice(index, 1);
+        } else if (type === 'textbox') {
+            currentLevel.texts.splice(index, 1);
+        } else if (type === 'candy' || type === 'target') {
+            alert('糖果和目标不可删除');
+            return;
+        } else {
+            return;
+        }
+        selectedItem = null;
+        render();
+        updateUI();
+        updatePropPanel();
+    }
+
+    // ---------- 绘制 ----------
+    function render() {
+        const rect = canvas.parentElement.getBoundingClientRect();
+        canvas.width = rect.width;
+        canvas.height = rect.height;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        const scale = getScale();
+
+        // 绘制网格（世界坐标中的正方形网格）
+        ctx.strokeStyle = '#2a3a5a';
+        ctx.lineWidth = 0.5;
+        // 绘制垂直网格线
+        for (let wx = -400; wx <= 400; wx += 40) {
+            const p1 = toCanvas(wx, -300);
+            const p2 = toCanvas(wx, 300);
+            ctx.beginPath();
+            ctx.moveTo(p1.x, p1.y);
+            ctx.lineTo(p2.x, p2.y);
+            ctx.stroke();
+        }
+        // 绘制水平网格线
+        for (let wy = -300; wy <= 300; wy += 40) {
+            const p1 = toCanvas(-400, wy);
+            const p2 = toCanvas(400, wy);
+            ctx.beginPath();
+            ctx.moveTo(p1.x, p1.y);
+            ctx.lineTo(p2.x, p2.y);
+            ctx.stroke();
+        }
+
+        // 绘制坐标轴
+        ctx.strokeStyle = '#4a6a8a';
+        ctx.lineWidth = 1.5;
+        // X轴
+        const ax1 = toCanvas(-400, 0);
+        const ax2 = toCanvas(400, 0);
+        ctx.beginPath();
+        ctx.moveTo(ax1.x, ax1.y);
+        ctx.lineTo(ax2.x, ax2.y);
+        ctx.stroke();
+        // Y轴
+        const ay1 = toCanvas(0, -300);
+        const ay2 = toCanvas(0, 300);
+        ctx.beginPath();
+        ctx.moveTo(ay1.x, ay1.y);
+        ctx.lineTo(ay2.x, ay2.y);
+        ctx.stroke();
+
+        // 坐标轴标签
+        ctx.fillStyle = '#6a8aaa';
+        ctx.font = '11px sans-serif';
+        const origin = toCanvas(0, 0);
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'top';
+        ctx.fillText('X', toCanvas(380, 0).x, toCanvas(380, 0).y + 4);
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText('Y', toCanvas(0, 280).x + 4, toCanvas(0, 280).y);
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'top';
+        ctx.fillText('(0,0)', origin.x - 6, origin.y + 4);
+
+        // 绘制固定点范围
+        function drawRopeRange(rope, isSelected) {
+            const fixed = rope.fixed;
+            const px = toCanvas(fixed.x, fixed.y);
+            const radius = rope.total_length || 200;
+            const r = radius * scale;
+
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(px.x, px.y, r, 0, Math.PI*2);
+            ctx.strokeStyle = isSelected ? 'rgba(100,200,255,0.9)' : 'rgba(100,150,255,0.5)';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([]);
+            ctx.stroke();
+            ctx.fillStyle = isSelected ? '#8ff' : '#aaa';
+            ctx.font = '10px sans-serif';
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(`范围:${radius}`, px.x + 10, px.y + 6);
+            ctx.restore();
+        }
+
+        const l = currentLevel;
+        l.ropes.forEach((rope, idx) => {
+            const isSel = (selectedItem && selectedItem.type === 'fixed' && selectedItem.index === idx);
+            drawRopeRange(rope, isSel);
+        });
+
+        // 绘制物品
+        function drawCircle(wx, wy, radius, color, label) {
+            const p = toCanvas(wx, wy);
+            const r = radius * scale;
+            ctx.save();
+            ctx.fillStyle = color;
+            ctx.shadowColor = color;
+            ctx.shadowBlur = 6;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, r, 0, Math.PI*2);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+            if (label) {
+                ctx.fillStyle = '#fff';
+                ctx.font = '10px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'bottom';
+                ctx.fillText(label, p.x, p.y - r - 4);
+            }
+            ctx.restore();
+        }
+
+        function drawRect(wx, wy, w, h, color) {
+            const p1 = toCanvas(wx - w/2, wy + h/2);
+            const p2 = toCanvas(wx + w/2, wy - h/2);
+            const rectW = p2.x - p1.x;
+            const rectH = p1.y - p2.y;
+            ctx.save();
+            ctx.fillStyle = color;
+            ctx.strokeStyle = '#33cc33';
+            ctx.lineWidth = 2;
+            ctx.fillRect(p1.x, p2.y, rectW, rectH);
+            ctx.strokeRect(p1.x, p2.y, rectW, rectH);
+            ctx.restore();
+        }
+
+        function drawStar(wx, wy, radius) {
+            const p = toCanvas(wx, wy);
+            const r = radius * scale;
+            ctx.save();
+            ctx.fillStyle = '#ffdd00';
+            ctx.shadowColor = '#ffdd00';
+            ctx.shadowBlur = 8;
+            let rot = -Math.PI/2;
+            const step = Math.PI / 5;
+            ctx.beginPath();
+            for (let i=0; i<10; i++) {
+                const rad = i%2===0 ? r : r*0.5;
+                const x = p.x + Math.cos(rot) * rad;
+                const y = p.y + Math.sin(rot) * rad;
+                i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+                rot += step;
+            }
+            ctx.closePath();
+            ctx.fill();
+            ctx.shadowBlur = 0;
+            ctx.restore();
+        }
+
+        function drawSpike(wx, wy, width, length, rotation) {
+            const p = toCanvas(wx, wy);
+            const w = width * scale;
+            const h = length * scale;
+            ctx.save();
+            ctx.translate(p.x, p.y);
+            ctx.rotate(-(rotation || 0) * Math.PI / 180); // 世界 Y 向上、画布 Y 向下，取负
+            ctx.fillStyle = '#111';
+            ctx.strokeStyle = '#888';
+            ctx.lineWidth = 1;
+            ctx.fillRect(-w/2, -h/2, w, h);
+            ctx.strokeRect(-w/2, -h/2, w, h);
+            ctx.restore();
+        }
+
+        function drawBoard(wx, wy, width, length, rotation, isSel) {
+            const p = toCanvas(wx, wy);
+            const w = width * scale;
+            const h = length * scale;
+            ctx.save();
+            ctx.translate(p.x, p.y);
+            ctx.rotate(-(rotation || 0) * Math.PI / 180);
+            ctx.fillStyle = '#8b5a2b';
+            ctx.strokeStyle = isSel ? '#ffcc00' : '#5a3a1a';
+            ctx.lineWidth = 2;
+            ctx.fillRect(-w/2, -h/2, w, h);
+            ctx.strokeRect(-w/2, -h/2, w, h);
+            ctx.restore();
+        }
+
+        function drawTextBox(wx, wy, width, length, rotation, text, isSel) {
+            const p = toCanvas(wx, wy);
+            const w = width * scale;
+            const h = length * scale;
+            ctx.save();
+            ctx.translate(p.x, p.y);
+            ctx.rotate(-(rotation || 0) * Math.PI / 180);
+            ctx.fillStyle = 'rgba(30,40,70,0.85)';
+            ctx.strokeStyle = isSel ? '#ffcc00' : '#6a8fc5';
+            ctx.lineWidth = 2;
+            ctx.fillRect(-w/2, -h/2, w, h);
+            ctx.strokeRect(-w/2, -h/2, w, h);
+            if (text) {
+                ctx.fillStyle = '#fff';
+                ctx.font = '12px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(String(text), 0, 0);
+            }
+            ctx.restore();
+        }
+
+        function drawBubble(wx, wy, radius) {
+            const p = toCanvas(wx, wy);
+            const r = radius * scale;
+            ctx.save();
+            ctx.globalAlpha = 0.5;
+            ctx.fillStyle = 'rgba(100,200,255,0.5)';
+            ctx.strokeStyle = 'rgba(100,200,255,0.8)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, r, 0, Math.PI*2);
+            ctx.fill();
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        l.ropes.forEach((rope, idx) => {
+            const fixed = rope.fixed;
+            const isSel = (selectedItem && selectedItem.type === 'fixed' && selectedItem.index === idx);
+            drawCircle(fixed.x, fixed.y, 12, isSel ? '#ff8800' : '#ff3333', `固定${idx+1}`);
+        });
+
+        drawCircle(l.candy_position.x, l.candy_position.y, 18, '#ffcc33', '糖果');
+        drawRect(l.target.x, l.target.y, l.target.width || 100, l.target.height || 50, 'rgba(0,200,0,0.2)');
+        l.stars.forEach((s, i) => drawStar(s.x, s.y, 15));
+        l.bubbles.forEach((b, i) => drawBubble(b.x, b.y, b.radius || 22));
+        l.spikes.forEach((s, i) => drawSpike(s.x, s.y, s.width || 24, s.length || 40, s.rotation || 0));
+        l.boards.forEach((b, i) => drawBoard(b.x, b.y, b.width || 160, b.length || 24, b.rotation || 0,
+            selectedItem && selectedItem.type === 'board' && selectedItem.index === i));
+        l.texts.forEach((t, i) => drawTextBox(t.x, t.y, t.width || 200, t.length || 60, t.rotation || 0, t.text,
+            selectedItem && selectedItem.type === 'textbox' && selectedItem.index === i));
+
+        // 选中高亮
+        if (selectedItem) {
+            const d = selectedItem.data;
+            if (selectedItem.type === 'target') {
+                const p1 = toCanvas(d.x - d.width/2, d.y + d.height/2);
+                const p2 = toCanvas(d.x + d.width/2, d.y - d.height/2);
+                ctx.save();
+                ctx.strokeStyle = '#ffaa00';
+                ctx.lineWidth = 3;
+                ctx.setLineDash([6, 4]);
+                ctx.strokeRect(p1.x, p2.y, p2.x-p1.x, p1.y-p2.y);
+                ctx.restore();
+            } else if (selectedItem.type !== 'fixed') {
+                const p = toCanvas(d.x, d.y);
+                ctx.save();
+                ctx.strokeStyle = '#ffaa00';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([5, 5]);
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 25 * scale, 0, Math.PI*2);
+                ctx.stroke();
+                ctx.restore();
+            }
+        }
+    }
+
+    // ---------- 交互 ----------
+    function getMouseWorld(e) {
+        const rect = canvas.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+        return toWorld(mx, my);
+    }
+
+    function findItemAt(mx, my) {
+        const world = getMouseWorld({ clientX: mx, clientY: my });
+        const l = currentLevel;
+        const check = (item, type, idx) => {
+            if (!item) return null;
+            let dx = world.x - item.x, dy = world.y - item.y;
+            let dist = Math.sqrt(dx*dx+dy*dy);
+            let threshold = 20 / Math.max(0.1, zoom);
+            if (type === 'target') {
+                const hw = (item.width||100)/2, hh = (item.height||50)/2;
+                if (world.x >= item.x-hw && world.x <= item.x+hw &&
+                    world.y >= item.y-hh && world.y <= item.y+hh) {
+                    return { type, index: idx, data: item };
+                }
+                return null;
+            }
+            if (type === 'bubble') threshold = (item.radius||22) / Math.max(0.1, zoom);
+            if (type === 'spike') threshold = (Math.max(item.width||24, item.length||40)/2 + 8) / Math.max(0.1, zoom);
+            if (type === 'board') threshold = (Math.max(item.width||160, item.length||24)/2 + 8) / Math.max(0.1, zoom);
+            if (type === 'textbox') threshold = (Math.max(item.width||200, item.length||60)/2 + 8) / Math.max(0.1, zoom);
+            if (type === 'fixed') {
+                const fixed = item.fixed;
+                dx = world.x - fixed.x;
+                dy = world.y - fixed.y;
+                dist = Math.sqrt(dx*dx+dy*dy);
+                threshold = 20 / Math.max(0.1, zoom);
+                if (dist < threshold) return { type, index: idx, data: item };
+                return null;
+            }
+            if (dist < threshold) return { type, index: idx, data: item };
+            return null;
+        };
+        for (let i=0; i<l.ropes.length; i++) {
+            const r = check(l.ropes[i], 'fixed', i);
+            if (r) return r;
+        }
+        const c = check(l.candy_position, 'candy', 0);
+        if (c) return c;
+        const t = check(l.target, 'target', 0);
+        if (t) return t;
+        for (let i=0; i<l.stars.length; i++) {
+            const r = check(l.stars[i], 'star', i);
+            if (r) return r;
+        }
+        for (let i=0; i<l.bubbles.length; i++) {
+            const r = check(l.bubbles[i], 'bubble', i);
+            if (r) return r;
+        }
+        for (let i=0; i<l.spikes.length; i++) {
+            const r = check(l.spikes[i], 'spike', i);
+            if (r) return r;
+        }
+        for (let i=0; i<l.boards.length; i++) {
+            const r = check(l.boards[i], 'board', i);
+            if (r) return r;
+        }
+        for (let i=0; i<l.texts.length; i++) {
+            const r = check(l.texts[i], 'textbox', i);
+            if (r) return r;
+        }
+        return null;
+    }
+
+    function handleCanvasClick(e) {
+        if (currentTool === 'select') {
+            const hit = findItemAt(e.clientX, e.clientY);
+            if (hit) {
+                selectedItem = hit;
+                updatePropPanel();
+                render();
+                return;
+            } else {
+                selectedItem = null;
+                updatePropPanel();
+                render();
+                return;
+            }
+        } else {
+            const world = getMouseWorld(e);
+            const type = currentTool;
+            let wx = roundToInt(world.x);
+            let wy = roundToInt(world.y);
+            if (type === 'fixed') {
+                currentLevel.ropes.push({
+                    fixed: { x: wx, y: wy },
+                    total_length: DEFAULTS.rope_total_length,
+                    seg_length: DEFAULTS.rope_seg_length,
+                    _d: { total_length: true, seg_length: true },
+                });
+            } else if (type === 'candy') {
+                currentLevel.candy_position = { x: wx, y: wy };
+            } else if (type === 'target') {
+                currentLevel.target = { x: wx, y: wy, width: 100, height: 50 };
+            } else if (type === 'star') {
+                currentLevel.stars.push({ x: wx, y: wy });
+            } else if (type === 'bubble') {
+                currentLevel.bubbles.push({
+                    x: wx, y: wy,
+                    radius: DEFAULTS.bubble_radius,
+                    upward_gravity: DEFAULTS.bubble_upward_gravity,
+                    alpha: DEFAULTS.bubble_alpha,
+                    _d: { radius: true, upward_gravity: true, alpha: true },
+                });
+            } else if (type === 'spike') {
+                currentLevel.spikes.push({
+                    x: wx, y: wy,
+                    width: DEFAULTS.spike_width,
+                    length: DEFAULTS.spike_length,
+                    rotation: DEFAULTS.spike_rotation,
+                    _d: { width: true, length: true, rotation: true },
+                });
+            } else if (type === 'board') {
+                currentLevel.boards.push({
+                    x: wx, y: wy,
+                    width: DEFAULTS.board_width,
+                    length: DEFAULTS.board_length,
+                    rotation: DEFAULTS.board_rotation,
+                    _d: { width: true, length: true, rotation: true },
+                });
+            } else if (type === 'textbox') {
+                currentLevel.texts.push({
+                    x: wx, y: wy,
+                    text: '文本',
+                    width: DEFAULTS.text_width,
+                    length: DEFAULTS.text_length,
+                    rotation: DEFAULTS.text_rotation,
+                    font_size: DEFAULTS.text_font_size,
+                    min_font_size: DEFAULTS.text_min_font_size,
+                    _d: { width: true, length: true, rotation: true, font_size: true, min_font_size: true },
+                });
+            }
+            if (type !== 'candy' && type !== 'target') {
+                let list = null;
+                if (type === 'board') list = currentLevel.boards;
+                else if (type === 'textbox') list = currentLevel.texts;
+                else list = currentLevel[type+'s'] || currentLevel[type];
+                if (list && list.length) {
+                    const idx = list.length - 1;
+                    selectedItem = { type: type, index: idx, data: list[idx] };
+                }
+            }
+            render();
+            updateUI();
+            updatePropPanel();
+        }
+    }
+
+    // 拖拽
+    function onMouseDown(e) {
+        if (currentTool !== 'select') return;
+        const hit = findItemAt(e.clientX, e.clientY);
+        if (hit) {
+            selectedItem = hit;
+            updatePropPanel();
+            render();
+            isDragging = true;
+            let data = hit.data;
+            if (hit.type === 'fixed') {
+                dragData = {
+                    type: hit.type,
+                    index: hit.index,
+                    data: data,
+                    startX: e.clientX,
+                    startY: e.clientY,
+                    origX: data.fixed.x,
+                    origY: data.fixed.y,
+                };
+            } else {
+                dragData = {
+                    type: hit.type,
+                    index: hit.index,
+                    data: data,
+                    startX: e.clientX,
+                    startY: e.clientY,
+                    origX: data.x,
+                    origY: data.y,
+                };
+            }
+            canvas.style.cursor = 'grabbing';
+        } else {
+            selectedItem = null;
+            updatePropPanel();
+            render();
+        }
+    }
+
+    function onMouseMove(e) {
+        const world = getMouseWorld(e);
+        document.getElementById('status').textContent =
+            `鼠标: (${Math.round(world.x)}, ${Math.round(world.y)})  工具: ${currentTool}  缩放: ${Math.round(zoom*100)}%`;
+
+        if (isDragging && dragData) {
+            const rect = canvas.getBoundingClientRect();
+            const currentWorld = getMouseWorld(e);
+            let newX = roundToInt(dragData.origX + (currentWorld.x - toWorld(dragData.startX, 0).x));
+            let newY = roundToInt(dragData.origY + (currentWorld.y - toWorld(0, dragData.startY).y));
+            // 直接使用当前鼠标世界坐标计算偏移
+            const startWorld = toWorld(dragData.startX, dragData.startY);
+            const curWorld = toWorld(e.clientX, e.clientY);
+            newX = roundToInt(dragData.origX + (curWorld.x - startWorld.x));
+            newY = roundToInt(dragData.origY + (curWorld.y - startWorld.y));
+
+            if (dragData.type === 'fixed') {
+                const rope = currentLevel.ropes[dragData.index];
+                if (rope) {
+                    rope.fixed.x = newX;
+                    rope.fixed.y = newY;
+                }
+            } else {
+                const item = getItemByType(dragData.type, dragData.index);
+                if (item) {
+                    item.x = newX;
+                    item.y = newY;
+                }
+            }
+            render();
+            updateUI();
+            if (selectedItem) {
+                if (dragData.type === 'fixed') {
+                    selectedItem.data = currentLevel.ropes[dragData.index];
+                } else {
+                    selectedItem.data = getItemByType(dragData.type, dragData.index);
+                }
+                updatePropPanel();
+            }
+        }
+    }
+
+    function onMouseUp(e) {
+        if (isDragging) {
+            isDragging = false;
+            dragData = null;
+            canvas.style.cursor = 'default';
+            render();
+            updateUI();
+        }
+    }
+
+    // ---------- 缩放 ----------
+    function setZoom(newZoom) {
+        zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, newZoom));
+        document.getElementById('zoomSlider').value = zoom * 100;
+        document.getElementById('zoomLabel').textContent = Math.round(zoom * 100) + '%';
+        render();
+    }
+
+    function handleWheel(e) {
+        e.preventDefault();
+        const delta = e.deltaY > 0 ? -0.05 : 0.05;
+        setZoom(zoom + delta);
+    }
+
+    // ---------- 导入导出 ----------
+    function parseLuaValue(str) {
+        str = str.trim();
+        if (/^-?\d+(\.\d+)?$/.test(str)) return parseFloat(str);
+        if ((str.startsWith('"') && str.endsWith('"')) || (str.startsWith("'") && str.endsWith("'"))) return str.slice(1, -1);
+        if (str === 'true') return true;
+        if (str === 'false') return false;
+        if (str === 'nil') return null;
+        if (str.startsWith('{') && str.endsWith('}')) {
+            const content = str.slice(1, -1).trim();
+            if (!content) return [];
+            let firstChar = content.match(/^\s*([^,{[\s])/)?.[1];
+            let isObject = false;
+            if (firstChar && /[a-zA-Z_"]/.test(firstChar)) {
+                let depth = 0, found = false;
+                for (let i = 0; i < content.length; i++) {
+                    let ch = content[i];
+                    if (ch === '{' || ch === '[') depth++;
+                    if (ch === '}' || ch === ']') depth--;
+                    if (ch === '=' && depth === 0) { found = true; break; }
+                }
+                if (found) isObject = true;
+            }
+            if (isObject) {
+                const obj = {};
+                let depth = 0, current = '', parts = [];
+                for (let ch of content) {
+                    if (ch === '{' || ch === '[') depth++;
+                    if (ch === '}' || ch === ']') depth--;
+                    if (ch === ',' && depth === 0) { parts.push(current); current = ''; }
+                    else current += ch;
+                }
+                if (current) parts.push(current);
+                for (let part of parts) {
+                    part = part.trim();
+                    if (!part) continue;
+                    let eqIdx = part.indexOf('=');
+                    if (eqIdx === -1) continue;
+                    let key = part.slice(0, eqIdx).trim();
+                    let val = part.slice(eqIdx+1).trim();
+                    if ((key.startsWith('"') && key.endsWith('"')) || (key.startsWith("'") && key.endsWith("'"))) {
+                        key = key.slice(1, -1);
+                    }
+                    obj[key] = parseLuaValue(val);
+                }
+                return obj;
+            } else {
+                let arr = [], depth = 0, current = '';
+                for (let ch of content) {
+                    if (ch === '{' || ch === '[') depth++;
+                    if (ch === '}' || ch === ']') depth--;
+                    if (ch === ',' && depth === 0) { arr.push(parseLuaValue(current.trim())); current = ''; }
+                    else current += ch;
+                }
+                if (current.trim()) arr.push(parseLuaValue(current.trim()));
+                return arr;
+            }
+        }
+        return str;
+    }
+
+    function parseLuaLevels(luaText) {
+        // 先剔除注释（行注释 --... 与块注释 --[[ ... ]]），避免注释中的符号干扰解析
+        luaText = luaText.replace(/--\[\[[\s\S]*?\]\]/g, ' ').replace(/--[^\n]*/g, ' ');
+        let match = luaText.match(/LEVELS\s*=\s*(\{[^]*\})/s);
+        if (!match) {
+            let trimmed = luaText.trim();
+            if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+                let data = parseLuaValue(trimmed);
+                if (!Array.isArray(data) && typeof data === 'object' && data !== null) {
+                    let keys = Object.keys(data).filter(k => !isNaN(parseInt(k)));
+                    if (keys.length > 0) {
+                        keys.sort((a,b) => parseInt(a)-parseInt(b));
+                        let arr = keys.map(k => data[k]);
+                        data = arr;
+                    } else {
+                        data = [data];
+                    }
+                }
+                return data;
+            }
+            throw new Error('未找到 LEVELS = {...}');
+        }
+        let data = parseLuaValue(match[1]);
+        if (!Array.isArray(data) && typeof data === 'object' && data !== null) {
+            let keys = Object.keys(data).filter(k => !isNaN(parseInt(k)));
+            if (keys.length > 0) {
+                keys.sort((a,b) => parseInt(a)-parseInt(b));
+                let arr = keys.map(k => data[k]);
+                data = arr;
+            } else {
+                data = [data];
+            }
+        }
+        if (!Array.isArray(data)) {
+            throw new Error('LEVELS 数据不是数组');
+        }
+        return data;
+    }
+
+    function importLevels(luaText) {
+        try {
+            const imported = parseLuaLevels(luaText);
+            if (imported.length === 0) { alert('导入的数据为空'); return; }
+            levels = imported;
+            levels.forEach((l, idx) => {
+                if (!l.name) l.name = `关卡 ${idx+1}`;
+                if (!l.candy_position) l.candy_position = { x: 0, y: 0 };
+                if (!l.target) l.target = { x: 150, y: -80, width: 100, height: 50 };
+                if (!l.stars) l.stars = [];
+                if (!l.bubbles) l.bubbles = [];
+                if (!l.spikes) l.spikes = [];
+                if (!l.texts) l.texts = [];
+                if (!l.boards) l.boards = [];
+                if (!l.ropes) l.ropes = [];
+                // 全局参数：缺失→用默认值并标记 _d=true（导出时省略）；存在→_d=false（显式导出）
+                l._d = l._d || {};
+                const gMap = {
+                    gravity: DEFAULTS.gravity,
+                    candy_damping: DEFAULTS.candy_damping,
+                    constraint_iterations: DEFAULTS.constraint_iterations,
+                    sub_steps: DEFAULTS.sub_steps,
+                    max_drag_factor: DEFAULTS.max_drag_factor,
+                };
+                for (const k in gMap) {
+                    if (l[k] === undefined) { l[k] = gMap[k]; l._d[k] = true; }
+                    else { l._d[k] = false; }
+                }
+                // 泡泡：逐参数判定默认/显式
+                l.bubbles.forEach(b => {
+                    b._d = b._d || {};
+                    if (b.radius === undefined) { b.radius = DEFAULTS.bubble_radius; b._d.radius = true; } else b._d.radius = false;
+                    if (b.upward_gravity === undefined) { b.upward_gravity = DEFAULTS.bubble_upward_gravity; b._d.upward_gravity = true; } else b._d.upward_gravity = false;
+                    if (b.alpha === undefined) { b.alpha = DEFAULTS.bubble_alpha; b._d.alpha = true; } else b._d.alpha = false;
+                });
+                // 尖刺（矩形：width / length / rotation）
+                l.spikes.forEach(s => {
+                    s._d = s._d || {};
+                    if (s.width === undefined) { s.width = DEFAULTS.spike_width; s._d.width = true; } else s._d.width = false;
+                    if (s.length === undefined) { s.length = DEFAULTS.spike_length; s._d.length = true; } else s._d.length = false;
+                    if (s.rotation === undefined) { s.rotation = DEFAULTS.spike_rotation; s._d.rotation = true; } else s._d.rotation = false;
+                });
+                // 木板（矩形障碍：width / length / rotation）
+                l.boards.forEach(b => {
+                    b._d = b._d || {};
+                    if (b.width === undefined) { b.width = DEFAULTS.board_width; b._d.width = true; } else b._d.width = false;
+                    if (b.length === undefined) { b.length = DEFAULTS.board_length; b._d.length = true; } else b._d.length = false;
+                    if (b.rotation === undefined) { b.rotation = DEFAULTS.board_rotation; b._d.rotation = true; } else b._d.rotation = false;
+                });
+                // 文本框：text 始终显式（默认空），其余参数可默认
+                l.texts.forEach(t => {
+                    t._d = t._d || {};
+                    if (t.text === undefined) t.text = '';
+                    if (t.width === undefined) { t.width = DEFAULTS.text_width; t._d.width = true; } else t._d.width = false;
+                    if (t.length === undefined) { t.length = DEFAULTS.text_length; t._d.length = true; } else t._d.length = false;
+                    if (t.rotation === undefined) { t.rotation = DEFAULTS.text_rotation; t._d.rotation = true; } else t._d.rotation = false;
+                    if (t.font_size === undefined) { t.font_size = DEFAULTS.text_font_size; t._d.font_size = true; } else t._d.font_size = false;
+                    if (t.min_font_size === undefined) { t.min_font_size = DEFAULTS.text_min_font_size; t._d.min_font_size = true; } else t._d.min_font_size = false;
+                });
+                // 绳子：total_length（绳长=触发半径，可默认） / seg_length（可默认）
+                l.ropes.forEach(r => {
+                    r._d = r._d || {};
+                    if (r.total_length === undefined) { r.total_length = DEFAULTS.rope_total_length; r._d.total_length = true; } else r._d.total_length = false;
+                    if (r.seg_length === undefined) { r.seg_length = DEFAULTS.rope_seg_length; r._d.seg_length = true; } else r._d.seg_length = false;
+                    // 兼容旧数据：忽略独立的 trigger_radius（已合并进 total_length）
+                });
+            });
+            loadLevel(0);
+            document.getElementById('import-msg').textContent = '✅ 导入成功！';
+            document.getElementById('import-msg').style.color = '#4a6fa5';
+        } catch (e) {
+            document.getElementById('import-msg').textContent = '❌ 解析失败: ' + e.message;
+            document.getElementById('import-msg').style.color = '#c55a5a';
+        }
+    }
+
+    function generateLua() {
+        let lua = '';
+        levels.forEach((l, idx) => {
+            const name = l.name || `第${idx+1}关`;
+            lua += `    -- ===================== 关卡: ${name} =====================\n`;
+            lua += `    {\n`;
+            lua += `        name = "${name}",  -- 关卡名（必填，无默认选项）\n`;
+            lua += `        candy_position = {x = ${l.candy_position.x}, y = ${l.candy_position.y}},  -- 糖果起点\n`;
+            lua += `        target = {x = ${l.target.x}, y = ${l.target.y}, width = ${l.target.width||100}, height = ${l.target.height||50}},  -- 目标区域(宽,高)\n`;
+            if (l.stars.length) {
+                lua += `        stars = {\n`;
+                l.stars.forEach(s => lua += `            {x = ${s.x}, y = ${s.y}},\n`);
+                lua += `        },\n`;
+            }
+            if (l.bubbles.length) {
+                lua += `        bubbles = {  -- 泡泡: radius 半径 / upward_gravity 上浮力 / alpha 透明度\n`;
+                l.bubbles.forEach(b => {
+                    const parts = [`x = ${b.x}`, `y = ${b.y}`];
+                    if (!(b._d && b._d.radius)) parts.push(`radius = ${b.radius!=null?b.radius:DEFAULTS.bubble_radius}`);
+                    if (!(b._d && b._d.upward_gravity)) parts.push(`upward_gravity = ${b.upward_gravity!=null?b.upward_gravity:DEFAULTS.bubble_upward_gravity}`);
+                    if (!(b._d && b._d.alpha)) parts.push(`alpha = ${b.alpha!=null?b.alpha:DEFAULTS.bubble_alpha}`);
+                    lua += `            {${parts.join(', ')}},\n`;
+                });
+                lua += `        },\n`;
+            }
+            if (l.spikes.length) {
+                lua += `        spikes = {  -- 尖刺(矩形): width 宽 / length 长 / rotation 旋转°(绕中心逆时针)\n`;
+                l.spikes.forEach(s => {
+                    const parts = [`x = ${s.x}`, `y = ${s.y}`];
+                    if (!(s._d && s._d.width)) parts.push(`width = ${s.width!=null?s.width:DEFAULTS.spike_width}`);
+                    if (!(s._d && s._d.length)) parts.push(`length = ${s.length!=null?s.length:DEFAULTS.spike_length}`);
+                    if (!(s._d && s._d.rotation)) parts.push(`rotation = ${s.rotation!=null?s.rotation:DEFAULTS.spike_rotation}`);
+                    lua += `            {${parts.join(', ')}},\n`;
+                });
+                lua += `        },\n`;
+            }
+            if (l.texts.length) {
+                lua += `        texts = {  -- 文本框: x,y 位置 / width,length 宽高 / rotation 旋转° / font_size 字号 / min_font_size 自适应最小字号 / text 文本\n`;
+                l.texts.forEach(t => {
+                    const parts = [`x = ${t.x}`, `y = ${t.y}`];
+                    if (t.text != null) parts.push(`text = "${String(t.text).replace(/"/g,'\\"')}"`);
+                    if (!(t._d && t._d.width)) parts.push(`width = ${t.width!=null?t.width:DEFAULTS.text_width}`);
+                    if (!(t._d && t._d.length)) parts.push(`length = ${t.length!=null?t.length:DEFAULTS.text_length}`);
+                    if (!(t._d && t._d.rotation)) parts.push(`rotation = ${t.rotation!=null?t.rotation:DEFAULTS.text_rotation}`);
+                    if (!(t._d && t._d.font_size)) parts.push(`font_size = ${t.font_size!=null?t.font_size:DEFAULTS.text_font_size}`);
+                    if (!(t._d && t._d.min_font_size) && t.min_font_size != null) parts.push(`min_font_size = ${t.min_font_size}`);
+                    lua += `            {${parts.join(', ')}},\n`;
+                });
+                lua += `        },\n`;
+            }
+            if (l.boards.length) {
+                lua += `        boards = {  -- 木板(矩形障碍): width 宽 / length 长 / rotation 旋转°(糖果可碰撞)\n`;
+                l.boards.forEach(b => {
+                    const parts = [`x = ${b.x}`, `y = ${b.y}`];
+                    if (!(b._d && b._d.width)) parts.push(`width = ${b.width!=null?b.width:DEFAULTS.board_width}`);
+                    if (!(b._d && b._d.length)) parts.push(`length = ${b.length!=null?b.length:DEFAULTS.board_length}`);
+                    if (!(b._d && b._d.rotation)) parts.push(`rotation = ${b.rotation!=null?b.rotation:DEFAULTS.board_rotation}`);
+                    lua += `            {${parts.join(', ')}},\n`;
+                });
+                lua += `        },\n`;
+            }
+            if (l.ropes.length) {
+                lua += `        ropes = {  -- 绳子: total_length 绳长(=连接触发半径) / seg_length 分段长（均可勾选默认，未配置时省略用 config 默认）\n`;
+                l.ropes.forEach(r => {
+                    // total_length 已合并触发半径；未配置(默认)时省略，用 config 默认绳长
+                    const parts = [`fixed = {x = ${r.fixed.x}, y = ${r.fixed.y}}`];
+                    if (!(r._d && r._d.total_length)) parts.push(`total_length = ${r.total_length!=null?r.total_length:DEFAULTS.rope_total_length}`);
+                    if (!(r._d && r._d.seg_length)) parts.push(`seg_length = ${r.seg_length!=null?r.seg_length:DEFAULTS.rope_seg_length}`);
+                    lua += `            {${parts.join(', ')}},\n`;
+                });
+                lua += `        },\n`;
+            }
+            // 全局参数：_d 为 true（使用默认值）时导出时省略；附注释说明含义
+            const gParams = [
+                ['gravity', l.gravity, '重力'],
+                ['candy_damping', l.candy_damping, '阻尼(允许6位小数精度)'],
+                ['constraint_iterations', l.constraint_iterations, '约束迭代次数'],
+                ['sub_steps', l.sub_steps, '物理子步数'],
+                ['max_drag_factor', l.max_drag_factor, '最大拖拽因子'],
+            ];
+            gParams.forEach(([key, val, cmt]) => {
+                if (!(l._d && l._d[key])) {
+                    lua += `        ${key} = ${val},  -- ${cmt}\n`;
+                }
+            });
+            lua += `    },\n`;
+        });
+        return `-- 割绳子关卡配置（由关卡编辑器导出，可直接覆盖 config.lua 的 LEVELS 表）\n` +
+               `-- 字段说明: name 关卡名 / candy_position 糖果起点 / target 目标 / stars 星星 / bubbles 泡泡 / spikes 尖刺(矩形) / texts 文本框 / boards 木板(矩形障碍) / ropes 绳子\n` +
+               `-- 非位置参数若使用默认值则省略（游戏自动用 config.lua 的 DEFAULT_* 覆盖）\n` +
+               `LEVELS = {\n${lua}}`;
+    }
+
+    // ---------- 事件绑定 ----------
+    document.querySelectorAll('.tool-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
+            this.classList.add('active');
+            currentTool = this.dataset.tool;
+            selectedItem = null;
+            updatePropPanel();
+            render();
+        });
+    });
+
+    canvas.addEventListener('click', handleCanvasClick);
+    canvas.addEventListener('mousedown', onMouseDown);
+    canvas.addEventListener('mousemove', onMouseMove);
+    canvas.addEventListener('mouseup', onMouseUp);
+    canvas.addEventListener('mouseleave', () => {
+        if (isDragging) { isDragging = false; dragData = null; canvas.style.cursor = 'default'; }
+    });
+    canvas.addEventListener('contextmenu', e => { e.preventDefault(); selectedItem=null; updatePropPanel(); render(); });
+    canvas.addEventListener('wheel', handleWheel, { passive: false });
+
+    document.getElementById('zoomSlider').addEventListener('input', function() {
+        setZoom(parseFloat(this.value) / 100);
+    });
+    document.getElementById('zoomInBtn').addEventListener('click', () => setZoom(zoom + 0.1));
+    document.getElementById('zoomOutBtn').addEventListener('click', () => setZoom(zoom - 0.1));
+    document.getElementById('resetZoomBtn').addEventListener('click', () => setZoom(1.0));
+
+    document.getElementById('levelSelect').addEventListener('change', function() {
+        const idx = parseInt(this.value);
+        if (!isNaN(idx) && idx>=0 && idx<levels.length) loadLevel(idx);
+    });
+    document.getElementById('addLevelBtn').addEventListener('click', function() {
+        const n = createDefaultLevel();
+        n.name = `关卡 ${levels.length+1}`;
+        levels.push(n);
+        loadLevel(levels.length-1);
+    });
+    document.getElementById('delLevelBtn').addEventListener('click', function() {
+        if (levels.length <= 1) return;
+        if (confirm(`删除 "${levels[currentLevelIndex].name}"？`)) {
+            levels.splice(currentLevelIndex, 1);
+            if (currentLevelIndex >= levels.length) currentLevelIndex = levels.length-1;
+            loadLevel(currentLevelIndex);
+        }
+    });
+    document.getElementById('copyLevelBtn').addEventListener('click', function() {
+        const src = levels[currentLevelIndex];
+        const copy = JSON.parse(JSON.stringify(src));
+        copy.name = src.name + '(副本)';
+        levels.push(copy);
+        loadLevel(levels.length-1);
+    });
+    document.getElementById('clearBtn').addEventListener('click', function() {
+        if (!confirm('清空当前关卡除糖果和目标外的所有物品？')) return;
+        currentLevel.stars = [];
+        currentLevel.bubbles = [];
+        currentLevel.spikes = [];
+        currentLevel.texts = [];
+        currentLevel.boards = [];
+        currentLevel.ropes = [];
+        selectedItem = null;
+        render();
+        updateUI();
+        updatePropPanel();
+    });
+
+    document.getElementById('importBtn').addEventListener('click', function() {
+        document.getElementById('importArea').value = '';
+        document.getElementById('import-msg').textContent = '';
+        document.getElementById('import-dialog').style.display = 'flex';
+    });
+    document.getElementById('closeImportBtn').addEventListener('click', function() {
+        document.getElementById('import-dialog').style.display = 'none';
+    });
+    document.getElementById('importConfirmBtn').addEventListener('click', function() {
+        const text = document.getElementById('importArea').value;
+        if (!text.trim()) {
+            document.getElementById('import-msg').textContent = '请粘贴 Lua 代码';
+            document.getElementById('import-msg').style.color = '#c55a5a';
+            return;
+        }
+        importLevels(text);
+    });
+
+    document.getElementById('exportBtn').addEventListener('click', function() {
+        document.getElementById('codeArea').value = generateLua();
+        document.getElementById('export-code').style.display = 'flex';
+    });
+    document.getElementById('closeExportBtn').addEventListener('click', function() {
+        document.getElementById('export-code').style.display = 'none';
+    });
+    document.getElementById('copyCodeBtn').addEventListener('click', function() {
+        const area = document.getElementById('codeArea');
+        area.select();
+        document.execCommand('copy');
+        alert('已复制！');
+    });
+
+    window.addEventListener('resize', render);
+    initData();
+    render();
+    updateUI();
+    setZoom(1.0);
+</script>
+</body>
+</html>

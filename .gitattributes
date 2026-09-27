@@ -1,0 +1,35 @@
+# ============================================================
+#  千星奇域小游戏工作区 · Git 属性规则
+#  两台机器都是 Windows，统一用 CRLF，避免「整文件全变了」的假 diff。
+# ============================================================
+
+# 默认：按内容自动识别文本文件，检出时统一 CRLF
+* text=auto eol=crlf
+
+# ---- 必须是 LF 的脚本（在 Git Bash / CI 里执行）----
+*.sh    text eol=lf
+
+# ---- 二进制：禁止任何换行符转换与文本 diff ----
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.bmp   binary
+*.ico   binary
+*.mp4   binary
+*.mov   binary
+*.mp3   binary
+*.wav   binary
+*.docx  binary
+*.xlsx  binary
+*.pptx  binary
+*.zip   binary
+*.7z    binary
+*.exe   binary
+*.dll   binary
+*.ttf   binary
+*.otf   binary
+
+# ---- 让 diff 更易读 ----
+*.md    diff=markdown
+*.json  -diff

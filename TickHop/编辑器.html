@@ -1,0 +1,1013 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>TickHop 关卡编辑器</title>
+<style>
+    * { box-sizing: border-box; font-family: "Microsoft YaHei", sans-serif; user-select: none; }
+    body { background:#14141c; color:#e8e8f0; margin:0; display:flex; flex-direction:column; height:100vh; overflow:hidden; }
+    #header { display:flex; align-items:center; padding:8px 14px; background:#1e1e2a; border-bottom:1px solid #33334a; flex-shrink:0; gap:10px; flex-wrap:wrap; }
+    #header label { font-size:12px; color:#9a9ab0; display:flex; align-items:center; gap:5px; }
+    #header input, #header select, #header button { background:#2a2a3a; color:#e8e8f0; border:1px solid #44445c; padding:4px 8px; border-radius:4px; font-size:12px; }
+    #header button { cursor:pointer; background:#3f5f8f; border-color:#4f6f9f; }
+    #header button:hover { background:#4f6f9f; }
+    #header .sep { width:1px; height:22px; background:#33334a; margin:0 4px; }
+    #main { display:flex; flex:1; overflow:hidden; }
+    #toolbar { width:146px; background:#1e1e2a; padding:8px 6px; border-right:1px solid #33334a; flex-shrink:0; overflow-y:auto; }
+    #toolbar .grp { font-size:11px; color:#7a7a95; padding:8px 6px 4px; }
+    #toolbar .tool-btn { display:block; width:100%; margin:3px 0; padding:7px 6px; background:#2a2a3a; border:1px solid #44445c; border-radius:4px; color:#e8e8f0; font-size:12px; cursor:pointer; text-align:left; }
+    #toolbar .tool-btn:hover { background:#35354a; }
+    #toolbar .tool-btn.active { background:#3f5f8f; border-color:#6f8fbf; }
+    #canvas-container { flex:1; position:relative; background:#0d0d14; overflow:hidden; }
+    #canvas-container canvas { display:block; width:100%; height:100%; cursor:crosshair; }
+    #properties { width:290px; background:#1e1e2a; padding:12px 14px; border-left:1px solid #33334a; overflow-y:auto; flex-shrink:0; font-size:12px; }
+    #properties h3 { margin:0 0 10px; color:#8ab4f8; border-bottom:1px solid #33334a; padding-bottom:6px; font-size:13px; }
+    .prop-row { display:flex; align-items:center; margin:5px 0; gap:6px; }
+    .prop-row label { width:96px; flex-shrink:0; color:#9a9ab0; font-size:12px; }
+    .prop-row input, .prop-row select { flex:1; min-width:0; background:#2a2a3a; color:#e8e8f0; border:1px solid #44445c; padding:4px 6px; border-radius:4px; font-size:12px; }
+    .prop-row input[type=checkbox] { flex:none; width:15px; height:15px; }
+    .tip { color:#6a6a85; font-size:11px; line-height:1.7; margin-top:10px; border-top:1px dashed #33334a; padding-top:8px; }
+    .badge { display:inline-block; padding:1px 6px; border-radius:3px; background:#2f4f7f; color:#bcd4f8; font-size:11px; }
+    #modal { position:fixed; inset:0; background:rgba(0,0,0,.72); display:none; align-items:center; justify-content:center; z-index:50; }
+    #modal.show { display:flex; }
+    #modal .box { background:#1e1e2a; border:1px solid #44445c; border-radius:8px; width:760px; max-width:92vw; max-height:86vh; display:flex; flex-direction:column; padding:14px 16px; }
+    #modal h3 { margin:0 0 10px; color:#8ab4f8; font-size:14px; }
+    #modal textarea { flex:1; min-height:380px; background:#14141c; color:#c8e0c8; border:1px solid #44445c; border-radius:6px; padding:10px; font-family:Consolas,monospace; font-size:12px; resize:vertical; line-height:1.5; }
+    #modal .btns { display:flex; gap:8px; margin-top:10px; justify-content:flex-end; }
+    #modal button { background:#3f5f8f; color:#fff; border:1px solid #4f6f9f; padding:6px 14px; border-radius:4px; cursor:pointer; font-size:12px; }
+    #modal button.ghost { background:#2a2a3a; border-color:#44445c; }
+</style>
+</head>
+<body>
+
+<div id="header">
+    <label>关卡 <select id="levelSelect"></select></label>
+    <button id="addLevelBtn">新建</button>
+    <button id="dupLevelBtn">复制</button>
+    <button id="delLevelBtn">删除</button>
+    <span class="sep"></span>
+    <label>名称 <input id="levelName" style="width:90px"></label>
+    <label>时间 <input id="levelTime" type="number" step="0.01" min="0" style="width:70px"></label>
+    <label>配色 <select id="levelPalette"></select></label>
+    <span class="sep"></span>
+    <label>秒数预览 <input id="tickPreview" type="range" min="0" max="20" step="1" value="0" style="width:150px"></label>
+    <span class="badge" id="tickBadge">0</span>
+    <span class="sep"></span>
+    <button id="midBtn">居中</button>
+    <button id="importBtn">导入</button>
+    <button id="exportBtn">导出</button>
+</div>
+
+<div id="main">
+    <div id="toolbar">
+        <div class="grp">选择</div>
+        <button class="tool-btn active" data-tool="select">选择 / 移动</button>
+        <div class="grp">平台</div>
+        <button class="tool-btn" data-tool="platform">计时平台</button>
+        <button class="tool-btn" data-tool="always">永驻平台</button>
+        <div class="grp">关卡要素</div>
+        <button class="tool-btn" data-tool="spawn">玩家起点</button>
+        <button class="tool-btn" data-tool="goal">终点门</button>
+        <button class="tool-btn" data-tool="pickupTime">加时道具</button>
+        <button class="tool-btn" data-tool="pickupReverse">反转道具</button>
+        <button class="tool-btn" data-tool="text">提示文本</button>
+        <div class="grp">操作</div>
+        <button class="tool-btn" id="deleteBtn">删除选中 (Del)</button>
+        <button class="tool-btn" id="clearBtn">清空本关</button>
+    </div>
+    <div id="canvas-container"><canvas id="canvas"></canvas></div>
+    <div id="properties"></div>
+</div>
+
+<div id="modal">
+    <div class="box">
+        <h3 id="modalTitle">导出</h3>
+        <textarea id="modalText" spellcheck="false"></textarea>
+        <div class="btns">
+            <button class="ghost" id="modalDownload" style="margin-right:auto">下载 .lua 文件</button>
+            <button class="ghost" id="modalClose">关闭</button>
+            <button id="modalAction">确定</button>
+        </div>
+    </div>
+</div>
+
+<script>
+// ================================================================
+// ★ DEFAULTS：与 config.lua 的 DEFAULT_* 逐项数值一致
+//   （key 与 DEFAULT_<KEY 大写> 机械对应，由 _check_refs.py 校验）
+// ================================================================
+const DEFAULTS = {
+    time_limit: 10.00,
+    time_direction: -1,
+    player_width: 34,
+    player_height: 44,
+    move_speed: 520,
+    ground_accel: 7000,
+    ground_friction: 9000,
+    air_accel: 4500,
+    air_friction: 900,
+    jump_speed: 1450,
+    gravity: 6000,
+    fall_gravity_mult: 1.20,
+    max_fall_speed: 1800,
+    coyote_time: 0.10,
+    jump_buffer_time: 0.12,
+    jump_cut_mult: 0.45,
+    jump_edge_trigger: 1,
+    physics_substeps: 4,
+    platform_width: 120,
+    platform_height: 22,
+    platform_alpha: 255,
+    platform_ghost_alpha: 40,
+    platform_tick: -1,
+    platform_label_size: 26,
+    platform_label_ghost_alpha: 130,
+    goal_width: 56,
+    goal_height: 84,
+    goal_alpha: 255,
+    pickup_size: 30,
+    pickup_time_value: 3.00,
+    pickup_respawn: 1,
+    switch_cooldown: 0.06,
+    land_cooldown: 0.10,
+    view_width: 800,
+    view_height: 600,
+    kill_margin: 260,
+    fade_in_time: 0.20,
+    fade_hold_time: 0.35,
+    fade_out_time: 0.20,
+    fade_max_alpha: 255,
+    touch_btn_size: 88,
+    touch_btn_alpha: 110,
+    touch_btn_margin: 60,
+    menu_overlay_alpha: 215,
+    menu_panel_w: 600,
+    menu_panel_h: 420,
+    menu_title_size: 44,
+    menu_text_size: 24,
+    menu_hint_size: 18,
+    menu_btn_w: 200,
+    menu_btn_h: 60,
+    menu_btn_gap: 24,
+    menu_card_w: 150,
+    menu_card_h: 62,
+    menu_card_gap_x: 18,
+    menu_card_gap_y: 16,
+    menu_card_text_size: 20,
+    menu_cols: 3,
+    menu_rows: 2,
+    menu_page_btn_w: 44,
+    menu_page_btn_h: 44,
+    menu_input_enabled: 1,
+    menu_auto_win: 1,
+};
+
+// label = 平台亮起时压在亮色平台上的深色；labelGhost = 平台熄灭时压在暗色平台上的浅色
+const PALETTES = {
+    "默认 · 极简黑白": null,
+    "暗夜蓝": { bg:"0E1420", platform:"5BC8F5", ghost:"1E3040", label:"0E1420", labelGhost:"7A93A8", player:"F2F7FF", goal:"5BF5A0", hud:"F2F7FF", pickup:"7AD6A0", reverse:"E0A85A" },
+    "暖阳黄紫": { bg:"3A2B45", platform:"F5D96B", ghost:"4E3A5C", label:"3A2B45", labelGhost:"C9B2DA", player:"F5D96B", goal:"F5D96B", hud:"F5D96B", pickup:"8FE07A", reverse:"E88A5A" },
+    "霓虹青绿": { bg:"0B1A18", platform:"4FE0B0", ghost:"14302C", label:"0B1A18", labelGhost:"8FC0B0", player:"E8FFF8", goal:"B8F55B", hud:"E8FFF8", pickup:"4FE0B0", reverse:"F5A05B" },
+    "深海紫": { bg:"14102A", platform:"B08AF5", ghost:"241C44", label:"14102A", labelGhost:"B0A0D0", player:"F0E8FF", goal:"5BE0F5", hud:"F0E8FF", pickup:"8AF5C8", reverse:"F5B05B" },
+};
+
+const WORLD_W = DEFAULTS.view_width;
+const WORLD_H = DEFAULTS.view_height;
+const MIN_ZOOM = 0.25, MAX_ZOOM = 3.0;
+
+// ================================================================
+// 数据
+// ================================================================
+let levels = [];
+let curLevel = 0;
+let selected = null;      // {type:'platform'|'spawn'|'goal'|'pickup'|'text', index:n}
+let tool = "select";
+let zoom = 1, camX = 0, camY = 0;
+let previewTick = 0;
+let dragging = null;      // {type,index,offX,offY,moved}
+let panning = null;
+
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const container = document.getElementById("canvas-container");
+
+// ================================================================
+// 坐标换算（世界 Y 向上，画布 Y 向下）
+// ================================================================
+function toCanvas(wx, wy) {
+    return [canvas.clientWidth / 2 + (wx - camX) * zoom,
+            canvas.clientHeight / 2 - (wy - camY) * zoom];
+}
+function toWorld(cx, cy) {
+    return [(cx - canvas.clientWidth / 2) / zoom + camX,
+            -(cy - canvas.clientHeight / 2) / zoom + camY];
+}
+function r(v) { return Math.round(v); }
+
+// ================================================================
+// 默认关卡 / 默认对象
+// ================================================================
+function defaultLevel(name) {
+    return {
+        name: name || "新关卡",
+        time: DEFAULTS.time_limit,
+        palette: null,
+        spawn: { x: -300, y: -180 },
+        goal: { x: 280, y: -140, width: DEFAULTS.goal_width, height: DEFAULTS.goal_height },
+        platforms: [
+            { x: 0, y: -240, width: 640, height: 24, tick: -1 },
+        ],
+        pickups: [],
+        texts: [],
+    };
+}
+
+function defaultPlatform(tick) {
+    return { x: 0, y: -120, width: DEFAULTS.platform_width, height: DEFAULTS.platform_height, tick: tick };
+}
+
+// ================================================================
+// 关卡列表
+// ================================================================
+function refreshLevelSelect() {
+    const sel = document.getElementById("levelSelect");
+    sel.innerHTML = "";
+    levels.forEach((lv, i) => {
+        const o = document.createElement("option");
+        o.value = i;
+        o.textContent = "第" + String(i + 1).padStart(2, "0") + "关 · " + lv.name;
+        sel.appendChild(o);
+    });
+    sel.value = curLevel;
+}
+
+function selectLevel(i) {
+    curLevel = Math.max(0, Math.min(levels.length - 1, i));
+    selected = null;
+    refreshLevelSelect();
+    syncHeaderFromLevel();
+    updateProperties();
+    draw();
+}
+
+function syncHeaderFromLevel() {
+    const lv = levels[curLevel];
+    if (!lv) return;
+    document.getElementById("levelName").value = lv.name || "";
+    document.getElementById("levelTime").value = lv.time != null ? lv.time : DEFAULTS.time_limit;
+    const sel = document.getElementById("levelPalette");
+    sel.value = lv.paletteKey || "默认 · 极简黑白";
+}
+
+// ================================================================
+// 属性面板
+// ================================================================
+function row(label, id, value, type, step) {
+    const t = type || "number";
+    if (t === "text") {
+        return `<div class="prop-row"><label>${label}</label><input data-k="${id}" type="text" value="${value == null ? "" : String(value).replace(/"/g,'&quot;')}"></div>`;
+    }
+    const s = step != null ? `step="${step}"` : "";
+    return `<div class="prop-row"><label>${label}</label><input data-k="${id}" type="number" ${s} value="${value}"></div>`;
+}
+
+function updateProperties() {
+    const p = document.getElementById("properties");
+    const lv = levels[curLevel];
+    if (!lv) { p.innerHTML = ""; return; }
+
+    if (!selected) {
+        p.innerHTML = `<h3>关卡属性</h3>
+            ${row("关卡名", "name", lv.name, "text")}
+            ${row("倒计时(秒)", "time", lv.time, "number", "0.01")}
+            <div class="prop-row"><label>配色</label><select data-k="palette"><option value="">默认 · 极简黑白</option>${Object.keys(PALETTES).filter(k => k !== "默认 · 极简黑白").map(k => `<option value="${k}"${lv.paletteKey === k ? " selected" : ""}>${k}</option>`).join("")}</select></div>
+            <div class="tip">
+                平台数：${lv.platforms.length} · 道具：${lv.pickups.length} · 提示：${lv.texts.length}<br>
+                左侧选择工具后在画布点击即可放置；点击已有物件可选中拖动。<br>
+                顶部「秒数预览」可查看任意秒数下哪些平台是实心的。
+            </div>`;
+        bindLevelInputs();
+        return;
+    }
+
+    const t = selected.type, i = selected.index;
+    let html = "";
+    if (t === "platform") {
+        const o = lv.platforms[i];
+        html = `<h3>计时平台 #${i + 1}</h3>
+            ${row("X", "x", o.x)}${row("Y", "y", o.y)}
+            ${row("宽", "width", o.width)}${row("高", "height", o.height)}
+            ${row("绑定秒数", "tick", o.tick)}
+            <div class="tip">绑定秒数为 <b>-1</b> 时是永驻平台；<b>0 及以上</b>表示仅在倒计时整数部分等于该值的瞬间为实体。</div>`;
+    } else if (t === "spawn") {
+        const o = lv.spawn;
+        html = `<h3>玩家起点</h3>${row("X", "x", o.x)}${row("Y", "y", o.y)}
+            <div class="tip">一关只有一个玩家起点，再次放置会覆盖。</div>`;
+    } else if (t === "goal") {
+        const o = lv.goal;
+        html = `<h3>终点门</h3>
+            ${row("X", "x", o.x)}${row("Y", "y", o.y)}
+            ${row("宽", "width", o.width)}${row("高", "height", o.height)}`;
+    } else if (t === "pickup") {
+        const o = lv.pickups[i];
+        html = `<h3>道具 #${i + 1}</h3>
+            <div class="prop-row"><label>类型</label><select data-k="type">
+                <option value="time"${o.type === "time" ? " selected" : ""}>加时</option>
+                <option value="reverse"${o.type === "reverse" ? " selected" : ""}>时间反转</option>
+            </select></div>
+            ${row("X", "x", o.x)}${row("Y", "y", o.y)}
+            ${o.type === "time" ? row("补充秒数", "value", o.value, "number", "0.01") : ""}`;
+    } else if (t === "text") {
+        const o = lv.texts[i];
+        html = `<h3>提示文本 #${i + 1}</h3>
+            ${row("文本", "text", o.text, "text")}
+            ${row("X", "x", o.x)}${row("Y", "y", o.y)}`;
+    }
+    html += `<div class="tip">按 <b>Delete</b> 删除该物件。</div>`;
+    p.innerHTML = html;
+    bindObjectInputs();
+}
+
+function bindLevelInputs() {
+    document.querySelectorAll("#properties [data-k]").forEach(el => {
+        el.addEventListener("input", () => {
+            const lv = levels[curLevel];
+            const k = el.dataset.k;
+            if (k === "name") lv.name = el.value;
+            else if (k === "time") lv.time = parseFloat(el.value) || 0;
+            else if (k === "palette") {
+                lv.paletteKey = el.value || null;
+                lv.palette = el.value ? JSON.parse(JSON.stringify(PALETTES[el.value])) : null;
+            }
+            refreshLevelSelect();
+            syncHeaderFromLevel();
+            draw();
+        });
+    });
+}
+
+function bindObjectInputs() {
+    document.querySelectorAll("#properties [data-k]").forEach(el => {
+        el.addEventListener("input", () => {
+            const lv = levels[curLevel];
+            const k = el.dataset.k;
+            const num = parseFloat(el.value);
+            let o = null;
+            if (selected.type === "platform") o = lv.platforms[selected.index];
+            else if (selected.type === "spawn") o = lv.spawn;
+            else if (selected.type === "goal") o = lv.goal;
+            else if (selected.type === "pickup") o = lv.pickups[selected.index];
+            else if (selected.type === "text") o = lv.texts[selected.index];
+            if (!o) return;
+            if (k === "type") { o.type = el.value; updateProperties(); draw(); return; }
+            if (k === "text") { o.text = el.value; }
+            else if (!isNaN(num)) { o[k] = k === "tick" ? Math.round(num) : num; }
+            draw();
+        });
+    });
+}
+
+// ================================================================
+// 拾取判定
+// ================================================================
+function hitTest(wx, wy) {
+    const lv = levels[curLevel];
+    for (let i = lv.platforms.length - 1; i >= 0; i--) {
+        const o = lv.platforms[i];
+        if (Math.abs(wx - o.x) <= o.width / 2 && Math.abs(wy - o.y) <= o.height / 2)
+            return { type: "platform", index: i };
+    }
+    for (let i = lv.pickups.length - 1; i >= 0; i--) {
+        const o = lv.pickups[i], s = (DEFAULTS.pickup_size / 2) + 6;
+        if (Math.abs(wx - o.x) <= s && Math.abs(wy - o.y) <= s) return { type: "pickup", index: i };
+    }
+    if (lv.goal) {
+        const o = lv.goal;
+        if (Math.abs(wx - o.x) <= o.width / 2 && Math.abs(wy - o.y) <= o.height / 2) return { type: "goal", index: 0 };
+    }
+    if (lv.spawn) {
+        const s = DEFAULTS.player_width / 2 + 8, sh = DEFAULTS.player_height / 2 + 8;
+        if (Math.abs(wx - lv.spawn.x) <= s && Math.abs(wy - lv.spawn.y) <= sh) return { type: "spawn", index: 0 };
+    }
+    for (let i = lv.texts.length - 1; i >= 0; i--) {
+        const o = lv.texts[i];
+        if (Math.abs(wx - o.x) <= 90 && Math.abs(wy - o.y) <= 18) return { type: "text", index: i };
+    }
+    return null;
+}
+
+// ================================================================
+// 绘制
+// ================================================================
+function draw() {
+    const W = canvas.clientWidth, H = canvas.clientHeight;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+
+    const lv = levels[curLevel];
+    if (!lv) return;
+    const pal = lv.palette || {};
+
+    // 画布世界范围背景
+    const [bx, by] = toCanvas(-WORLD_W / 2, WORLD_H / 2);
+    ctx.fillStyle = "#0d0d14";
+    ctx.fillRect(bx, by, WORLD_W * zoom, WORLD_H * zoom);
+
+    // 网格
+    ctx.strokeStyle = "rgba(120,120,160,.10)";
+    ctx.lineWidth = 1;
+    for (let gx = -WORLD_W / 2; gx <= WORLD_W / 2; gx += 100) {
+        const [cx] = toCanvas(gx, 0);
+        ctx.beginPath(); ctx.moveTo(cx, 0); ctx.lineTo(cx, H); ctx.stroke();
+    }
+    for (let gy = -WORLD_H / 2; gy <= WORLD_H / 2; gy += 100) {
+        const [, cy] = toCanvas(0, gy);
+        ctx.beginPath(); ctx.moveTo(0, cy); ctx.lineTo(W, cy); ctx.stroke();
+    }
+
+    // 平台（与运行时一致：本体走 imageColor + alpha，秒数标签走 fontColor 并随状态反色）
+    lv.platforms.forEach((o, i) => {
+        const lit = (o.tick === -1) || (o.tick === previewTick);
+        ctx.globalAlpha = (lit ? DEFAULTS.platform_alpha : DEFAULTS.platform_ghost_alpha) / 255;
+        drawRect(o.x, o.y, o.width, o.height,
+                 lit ? (pal.platform || "#F2F2F2") : (pal.ghost || "#3A3A44"));
+        ctx.globalAlpha = 1;
+        if (o.tick >= 0) {
+            const [cx, cy] = toCanvas(o.x, o.y);
+            ctx.fillStyle = lit ? (pal.label || "#111114") : (pal.labelGhost || "#9AA0AE");
+            ctx.globalAlpha = lit ? 1 : (DEFAULTS.platform_label_ghost_alpha / 255);
+            ctx.font = `bold ${Math.max(10, 18 * zoom)}px Consolas, monospace`;
+            ctx.textAlign = "center"; ctx.textBaseline = "middle";
+            ctx.fillText(String(o.tick), cx, cy);
+            ctx.globalAlpha = 1;
+        }
+        if (isSel("platform", i)) outline(o.x, o.y, o.width, o.height);
+    });
+
+    // 终点门
+    if (lv.goal) {
+        const o = lv.goal;
+        drawRect(o.x, o.y, o.width, o.height, pal.goal || "#F2F2F2");
+        const [cx, cy] = toCanvas(o.x, o.y);
+        ctx.fillStyle = pal.bg || "#111114";
+        ctx.beginPath();
+        ctx.arc(cx, cy, Math.max(3, 5 * zoom), 0, Math.PI * 2);
+        ctx.fill();
+        if (isSel("goal", 0)) outline(o.x, o.y, o.width, o.height);
+    }
+
+    // 玩家起点
+    if (lv.spawn) {
+        const o = lv.spawn;
+        drawRect(o.x, o.y, DEFAULTS.player_width, DEFAULTS.player_height, pal.player || "#F2F2F2");
+        const [cx, cy] = toCanvas(o.x, o.y);
+        ctx.fillStyle = pal.bg || "#111114";
+        const ew = Math.max(2, 4 * zoom), eh = Math.max(3, 5 * zoom);
+        ctx.fillRect(cx - 5 * zoom - ew / 2, cy - 6 * zoom - eh / 2, ew, eh);
+        ctx.fillRect(cx + 5 * zoom - ew / 2, cy - 6 * zoom - eh / 2, ew, eh);
+        if (isSel("spawn", 0)) outline(o.x, o.y, DEFAULTS.player_width, DEFAULTS.player_height);
+    }
+
+    // 道具
+    lv.pickups.forEach((o, i) => {
+        const s = DEFAULTS.pickup_size;
+        drawRect(o.x, o.y, s, s, o.type === "reverse" ? (pal.reverse || "#E0A85A") : (pal.pickup || "#7AD6A0"));
+        const [cx, cy] = toCanvas(o.x, o.y);
+        ctx.fillStyle = "#111114";
+        ctx.font = `bold ${Math.max(9, 15 * zoom)}px Consolas, monospace`;
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText(o.type === "reverse" ? "↺" : "+", cx, cy);
+        if (isSel("pickup", i)) outline(o.x, o.y, s, s);
+    });
+
+    // 提示文本
+    lv.texts.forEach((o, i) => {
+        const [cx, cy] = toCanvas(o.x, o.y);
+        ctx.fillStyle = pal.hud || "#F2F2F2";
+        ctx.font = `${Math.max(11, 15 * zoom)}px "Microsoft YaHei"`;
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText(o.text || "(空)", cx, cy);
+        if (isSel("text", i)) {
+            const w = 180 * zoom, h = 30 * zoom;
+            ctx.strokeStyle = "#FFD166"; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]);
+            ctx.strokeRect(cx - w / 2, cy - h / 2, w, h);
+            ctx.setLineDash([]);
+        }
+    });
+
+    // 提示条
+    ctx.fillStyle = "rgba(200,200,220,.45)";
+    ctx.font = "12px Consolas, monospace";
+    ctx.textAlign = "left"; ctx.textBaseline = "top";
+    ctx.fillText(`缩放 ${(zoom * 100).toFixed(0)}%   预览秒=${previewTick}   关卡「${lv.name}」`, 10, 8);
+}
+
+function drawRect(wx, wy, w, h, fill) {
+    const [cx, cy] = toCanvas(wx, wy);
+    const pw = w * zoom, ph = h * zoom;
+    ctx.fillStyle = fill;
+    ctx.fillRect(cx - pw / 2, cy - ph / 2, pw, ph);
+}
+
+function outline(wx, wy, w, h) {
+    const [cx, cy] = toCanvas(wx, wy);
+    ctx.strokeStyle = "#FFD166";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(cx - w * zoom / 2 - 2, cy - h * zoom / 2 - 2, w * zoom + 4, h * zoom + 4);
+}
+
+function isSel(type, index) {
+    return selected && selected.type === type && selected.index === index;
+}
+
+// ================================================================
+// 鼠标交互
+// ================================================================
+function resize() {
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = container.clientWidth * dpr;
+    canvas.height = container.clientHeight * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    draw();
+}
+
+canvas.addEventListener("mousedown", e => {
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+
+    if (e.button === 1) {   // 中键平移
+        panning = { mx, my, camX, camY };
+        e.preventDefault();
+        return;
+    }
+    if (e.button !== 0) return;
+
+    const [wx, wy] = toWorld(mx, my);
+    const hit = hitTest(wx, wy);
+
+    if (tool === "select" || hit) {
+        if (hit) {
+            selected = hit;
+            const o = getObj(hit);
+            dragging = { type: hit.type, index: hit.index, offX: wx - o.x, offY: wy - o.y };
+        } else {
+            selected = null;
+        }
+        updateProperties();
+        draw();
+        return;
+    }
+
+    // 放置新物件
+    placeObject(wx, wy);
+});
+
+canvas.addEventListener("mousemove", e => {
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+
+    if (panning) {
+        const dx = (mx - panning.mx) / zoom, dy = (my - panning.my) / zoom;
+        camX = panning.camX - dx;
+        camY = panning.camY + dy;
+        draw();
+        return;
+    }
+    if (dragging) {
+        const [wx, wy] = toWorld(mx, my);
+        const o = getObj(dragging);
+        o.x = r(wx - dragging.offX);
+        o.y = r(wy - dragging.offY);
+        updateProperties();
+        draw();
+    }
+});
+
+window.addEventListener("mouseup", () => { dragging = null; panning = null; });
+
+canvas.addEventListener("contextmenu", e => e.preventDefault());
+canvas.addEventListener("wheel", e => {
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    const [wx, wy] = toWorld(mx, my);
+    const before = zoom;
+    zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom * (e.deltaY > 0 ? 0.9 : 1.1)));
+    // 以鼠标位置为锚点缩放
+    camX += wx - ((mx - canvas.clientWidth / 2) / zoom + camX);
+    camY += wy - (-(my - canvas.clientHeight / 2) / zoom + camY);
+    draw();
+}, { passive: false });
+
+function getObj(hit) {
+    const lv = levels[curLevel];
+    if (hit.type === "platform") return lv.platforms[hit.index];
+    if (hit.type === "pickup") return lv.pickups[hit.index];
+    if (hit.type === "text") return lv.texts[hit.index];
+    if (hit.type === "goal") return lv.goal;
+    if (hit.type === "spawn") return lv.spawn;
+    return { x: 0, y: 0 };
+}
+
+function placeObject(wx, wy) {
+    const lv = levels[curLevel];
+    const x = r(wx), y = r(wy);
+
+    if (tool === "platform" || tool === "always") {
+        const tick = tool === "always" ? -1 : previewTick;
+        const o = defaultPlatform(tick);
+        o.x = x; o.y = y;
+        lv.platforms.push(o);
+        selected = { type: "platform", index: lv.platforms.length - 1 };
+    } else if (tool === "spawn") {
+        lv.spawn = { x, y };
+        selected = { type: "spawn", index: 0 };
+    } else if (tool === "goal") {
+        lv.goal = { x, y, width: DEFAULTS.goal_width, height: DEFAULTS.goal_height };
+        selected = { type: "goal", index: 0 };
+    } else if (tool === "pickupTime" || tool === "pickupReverse") {
+        const o = {
+            x, y,
+            type: tool === "pickupReverse" ? "reverse" : "time",
+            value: tool === "pickupReverse" ? 0 : DEFAULTS.pickup_time_value,
+        };
+        lv.pickups.push(o);
+        selected = { type: "pickup", index: lv.pickups.length - 1 };
+    } else if (tool === "text") {
+        lv.texts.push({ x, y, text: "新提示" });
+        selected = { type: "text", index: lv.texts.length - 1 };
+    }
+    updateProperties();
+    draw();
+}
+
+function deleteSelected() {
+    if (!selected) return;
+    const lv = levels[curLevel];
+    if (selected.type === "platform") lv.platforms.splice(selected.index, 1);
+    else if (selected.type === "pickup") lv.pickups.splice(selected.index, 1);
+    else if (selected.type === "text") lv.texts.splice(selected.index, 1);
+    else if (selected.type === "spawn") lv.spawn = null;
+    else if (selected.type === "goal") lv.goal = null;
+    selected = null;
+    updateProperties();
+    draw();
+}
+
+window.addEventListener("keydown", e => {
+    if (e.key === "Delete" || e.key === "Backspace") { deleteSelected(); }
+    if (e.ctrlKey && e.key.toLowerCase() === "s") { e.preventDefault(); openExport(); }
+});
+
+// ================================================================
+// 工具栏
+// ================================================================
+document.querySelectorAll(".tool-btn[data-tool]").forEach(btn => {
+    btn.addEventListener("click", () => {
+        document.querySelectorAll(".tool-btn[data-tool]").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        tool = btn.dataset.tool;
+    });
+});
+
+document.getElementById("deleteBtn").addEventListener("click", deleteSelected);
+document.getElementById("clearBtn").addEventListener("click", () => {
+    if (!confirm("清空当前关卡的全部物件？")) return;
+    levels[curLevel] = defaultLevel(levels[curLevel].name);
+    selected = null;
+    updateProperties();
+    draw();
+});
+document.getElementById("midBtn").addEventListener("click", () => {
+    zoom = 1; camX = 0; camY = 0; draw();
+});
+
+// 关卡管理
+document.getElementById("levelSelect").addEventListener("change", e => selectLevel(parseInt(e.target.value)));
+document.getElementById("addLevelBtn").addEventListener("click", () => {
+    levels.push(defaultLevel("第" + String(levels.length + 1).padStart(2, "0") + "关"));
+    selectLevel(levels.length - 1);
+});
+document.getElementById("dupLevelBtn").addEventListener("click", () => {
+    levels.splice(curLevel + 1, 0, JSON.parse(JSON.stringify(levels[curLevel])));
+    selectLevel(curLevel + 1);
+});
+document.getElementById("delLevelBtn").addEventListener("click", () => {
+    if (levels.length <= 1) { alert("至少保留一个关卡"); return; }
+    if (!confirm("删除当前关卡？")) return;
+    levels.splice(curLevel, 1);
+    selectLevel(Math.max(0, curLevel - 1));
+});
+
+// 头部字段
+document.getElementById("levelName").addEventListener("input", e => {
+    levels[curLevel].name = e.target.value;
+    refreshLevelSelect();
+    draw();
+});
+document.getElementById("levelTime").addEventListener("input", e => {
+    levels[curLevel].time = parseFloat(e.target.value) || 0;
+    if (!selected) updateProperties();
+});
+document.getElementById("levelPalette").addEventListener("change", e => {
+    const lv = levels[curLevel];
+    lv.paletteKey = e.target.value || null;
+    lv.palette = e.target.value ? JSON.parse(JSON.stringify(PALETTES[e.target.value])) : null;
+    if (!selected) updateProperties();
+    draw();
+});
+document.getElementById("tickPreview").addEventListener("input", e => {
+    previewTick = parseInt(e.target.value) || 0;
+    document.getElementById("tickBadge").textContent = previewTick;
+    draw();
+});
+
+// ================================================================
+// 导入 / 导出
+// ================================================================
+const modal = document.getElementById("modal");
+const modalTitle = document.getElementById("modalTitle");
+const modalText = document.getElementById("modalText");
+const modalAction = document.getElementById("modalAction");
+let modalMode = "export";
+
+function openExport() {
+    modalMode = "export";
+    modalTitle.textContent = "导出 Lua 关卡配置（下载后跑 node _tools/apply_levels.mjs <文件> 自动落盘校验）";
+    modalText.value = generateLua();
+    modalAction.textContent = "复制";
+    modal.classList.add("show");
+}
+
+function openImport() {
+    modalMode = "import";
+    modalTitle.textContent = "导入 Lua 关卡配置（粘贴 M.LEVELS = { ... } 片段）";
+    modalText.value = "";
+    modalAction.textContent = "导入";
+    modal.classList.add("show");
+}
+
+document.getElementById("exportBtn").addEventListener("click", openExport);
+document.getElementById("importBtn").addEventListener("click", openImport);
+document.getElementById("modalClose").addEventListener("click", () => modal.classList.remove("show"));
+modalDownload.addEventListener("click", () => {
+    if (modalMode !== "export") return;
+    const blob = new Blob([generateLua()], { type: "text/x-lua;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "TickHop.levels.lua";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 3000);
+    modalDownload.textContent = "已下载";
+    setTimeout(() => { modalDownload.textContent = "下载 .lua 文件"; }, 1200);
+});
+modalAction.addEventListener("click", () => {
+    if (modalMode === "export") {
+        modalText.select();
+        document.execCommand("copy");
+        modalAction.textContent = "已复制";
+        setTimeout(() => { modalAction.textContent = "复制"; }, 1200);
+    } else {
+        const parsed = parseLuaLevels(modalText.value);
+        if (!parsed.length) { alert("未解析到任何关卡，请检查粘贴内容。"); return; }
+        levels = parsed;
+        curLevel = 0;
+        selected = null;
+        refreshLevelSelect();
+        syncHeaderFromLevel();
+        updateProperties();
+        draw();
+        modal.classList.remove("show");
+    }
+});
+
+// ================================================================
+// Lua 生成
+// ================================================================
+function num(v) {
+    const n = Number(v) || 0;
+    return Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+}
+function q(s) { return '"' + String(s == null ? "" : s).replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"'; }
+
+function generateLua() {
+    const out = [];
+    out.push("-- TickHop 关卡配置（由关卡编辑器导出，可直接在千星沙箱中执行）");
+    out.push("-- 用法 A（推荐）：下载成 .lua 后，在工作区根目录跑一行命令自动落盘并校验：");
+    out.push("--        node _tools/apply_levels.mjs TickHop.levels.lua");
+    out.push("-- 用法 B（手工）：整段替换 TickHop/config.lua 里现有的 M.LEVELS = { ... } 片段。");
+    out.push("-- 字段说明: name 关卡名 / time 倒计时初始值(秒) / spawn 玩家起点 / goal 终点门{宽高}");
+    out.push("--           platforms 平台{x,y,width,height,tick}（tick=-1 永驻，>=0 仅在对应秒数为实体）");
+    out.push("--           pickups 道具{type=\"time\"|\"reverse\",value} / texts 提示文本{x,y,text}");
+    out.push("--           palette 可选配色覆盖；label=平台亮起时的标签色，labelGhost=平台熄灭时的标签色");
+    out.push("M.LEVELS = {");
+    levels.forEach((lv, i) => {
+        out.push(`    -- ===================== 关卡 ${i + 1}: ${lv.name} =====================`);
+        out.push("    {");
+        out.push(`        name = ${q(lv.name)},`);
+        out.push(`        time = ${num(lv.time)},`);
+        if (lv.palette) {
+            const keys = Object.keys(lv.palette);
+            out.push("        palette = {");
+            keys.forEach(k => out.push(`            ${k} = ${q(lv.palette[k])},`));
+            out.push("        },");
+        }
+        if (lv.spawn) out.push(`        spawn = {x = ${num(lv.spawn.x)}, y = ${num(lv.spawn.y)}},`);
+        if (lv.goal) out.push(`        goal = {x = ${num(lv.goal.x)}, y = ${num(lv.goal.y)}, width = ${num(lv.goal.width)}, height = ${num(lv.goal.height)}},`);
+        out.push("        platforms = {");
+        lv.platforms.forEach(o => {
+            out.push(`            {x = ${num(o.x)}, y = ${num(o.y)}, width = ${num(o.width)}, height = ${num(o.height)}, tick = ${num(o.tick)}},`);
+        });
+        out.push("        },");
+        out.push("        pickups = {");
+        lv.pickups.forEach(o => {
+            if (o.type === "reverse") out.push(`            {x = ${num(o.x)}, y = ${num(o.y)}, type = "reverse", value = 0},`);
+            else out.push(`            {x = ${num(o.x)}, y = ${num(o.y)}, type = "time", value = ${num(o.value)}},`);
+        });
+        out.push("        },");
+        out.push("        texts = {");
+        lv.texts.forEach(o => {
+            out.push(`            {x = ${num(o.x)}, y = ${num(o.y)}, text = ${q(o.text)}},`);
+        });
+        out.push("        },");
+        out.push("    },");
+    });
+    out.push("}");
+    return out.join("\n");
+}
+
+// ================================================================
+// Lua 解析（针对 M.LEVELS 结构，宽松匹配）
+// ================================================================
+function parseLuaLevels(text) {
+    const result = [];
+    const levelsBlock = text.match(/M\.LEVELS\s*=\s*\{([\s\S]*)\}/);
+    const body = levelsBlock ? levelsBlock[1] : text;
+
+    // 按顶层 "{" 块切分关卡：以注释行 -- ==== 或形如 "    {" 开头
+    const levelChunks = [];
+    let depth = 0, cur = "", inStr = false, esc = false;
+    for (let i = 0; i < body.length; i++) {
+        const c = body[i];
+        cur += c;
+        if (inStr) {
+            if (esc) esc = false;
+            else if (c === "\\") esc = true;
+            else if (c === '"') inStr = false;
+            continue;
+        }
+        if (c === '"') { inStr = true; continue; }
+        if (c === "{") depth++;
+        else if (c === "}") {
+            depth--;
+            if (depth === 0) { levelChunks.push(cur); cur = ""; }
+        }
+    }
+
+    levelChunks.forEach(chunk => {
+        const lv = {
+            name: "", time: DEFAULTS.time_limit, palette: null, paletteKey: null,
+            spawn: null, goal: null, platforms: [], pickups: [], texts: [],
+        };
+        const nm = chunk.match(/name\s*=\s*"([^"]*)"/);
+        if (nm) lv.name = nm[1];
+        const tm = chunk.match(/time\s*=\s*([\d.]+)/);
+        if (tm) lv.time = parseFloat(tm[1]);
+
+        // 配色覆盖块：palette = { bg = "RRGGBB", ... }
+        const palSec = chunk.match(/palette\s*=\s*\{([\s\S]*?)\}/);
+        if (palSec) {
+            const pal = {};
+            const pre = /(\w+)\s*=\s*"([0-9A-Fa-f]{6})"/g;
+            let pm;
+            while ((pm = pre.exec(palSec[1])) !== null) pal[pm[1]] = pm[2].toUpperCase();
+            if (Object.keys(pal).length) {
+                lv.palette = pal;
+                // 若是内置预设，回填预设名，便于编辑器下拉框正确显示
+                if (typeof PALETTES !== "undefined") {
+                    for (const k in PALETTES) {
+                        if (PALETTES[k] && JSON.stringify(PALETTES[k]) === JSON.stringify(pal)) { lv.paletteKey = k; break; }
+                    }
+                }
+            }
+        }
+
+        const sp = chunk.match(/spawn\s*=\s*\{\s*x\s*=\s*(-?[\d.]+)\s*,\s*y\s*=\s*(-?[\d.]+)/);
+        if (sp) lv.spawn = { x: parseFloat(sp[1]), y: parseFloat(sp[2]) };
+
+        const gl = chunk.match(/goal\s*=\s*\{\s*x\s*=\s*(-?[\d.]+)\s*,\s*y\s*=\s*(-?[\d.]+)\s*,\s*width\s*=\s*(-?[\d.]+)\s*,\s*height\s*=\s*(-?[\d.]+)/);
+        if (gl) lv.goal = { x: +gl[1], y: +gl[2], width: +gl[3], height: +gl[4] };
+
+        // 平台：匹配 "platforms = { ... }" 段
+        const platSec = chunk.match(/platforms\s*=\s*\{([\s\S]*?)\n\s*\},\s*\n\s*pickups/);
+        if (platSec) {
+            const re = /\{\s*x\s*=\s*(-?[\d.]+)\s*,\s*y\s*=\s*(-?[\d.]+)([^}]*)\}/g;
+            let m;
+            while ((m = re.exec(platSec[1])) !== null) {
+                const rest = m[3] || "";
+                const w = rest.match(/width\s*=\s*(-?[\d.]+)/);
+                const h = rest.match(/height\s*=\s*(-?[\d.]+)/);
+                const t = rest.match(/tick\s*=\s*(-?[\d.]+)/);
+                lv.platforms.push({
+                    x: +m[1], y: +m[2],
+                    width: w ? +w[1] : DEFAULTS.platform_width,
+                    height: h ? +h[1] : DEFAULTS.platform_height,
+                    tick: t ? Math.round(+t[1]) : DEFAULTS.platform_tick,
+                });
+            }
+        }
+
+        const pickSec = chunk.match(/pickups\s*=\s*\{([\s\S]*?)\n\s*\},\s*\n\s*texts/);
+        if (pickSec) {
+            const re = /\{\s*x\s*=\s*(-?[\d.]+)\s*,\s*y\s*=\s*(-?[\d.]+)([^}]*)\}/g;
+            let m;
+            while ((m = re.exec(pickSec[1])) !== null) {
+                const rest = m[3] || "";
+                const ty = rest.match(/type\s*=\s*"([^"]*)"/);
+                const va = rest.match(/value\s*=\s*(-?[\d.]+)/);
+                lv.pickups.push({
+                    x: +m[1], y: +m[2],
+                    type: ty ? ty[1] : "time",
+                    value: va ? +va[1] : DEFAULTS.pickup_time_value,
+                });
+            }
+        }
+
+        const textSec = chunk.match(/texts\s*=\s*\{([\s\S]*?)\n\s*\},?\s*\n?\s*\}/);
+        if (textSec) {
+            const re = /\{\s*x\s*=\s*(-?[\d.]+)\s*,\s*y\s*=\s*(-?[\d.]+)[^}]*?text\s*=\s*"([^"]*)"/g;
+            let m;
+            while ((m = re.exec(textSec[1])) !== null) {
+                lv.texts.push({ x: +m[1], y: +m[2], text: m[3] });
+            }
+        }
+
+        if (lv.name || lv.platforms.length) result.push(lv);
+    });
+    return result;
+}
+
+// ================================================================
+// 初始化
+// ================================================================
+function init() {
+    // 与 config.lua 的初始三关保持一致
+    levels = [
+        {
+            name: "第01关", time: 12.00, palette: null, paletteKey: null,
+            spawn: { x: -300, y: -180 },
+            goal: { x: 200, y: -100, width: 56, height: 84 },
+            platforms: [
+                { x: -200, y: -240, width: 420, height: 24, tick: -1 },
+                { x: 180, y: -160, width: 150, height: 22, tick: 4 },
+            ],
+            pickups: [],
+            texts: [{ x: -140, y: 120, text: "平台上的数字 = 它会亮起的秒数" }],
+        },
+        {
+            name: "第02关", time: 10.00, palette: null, paletteKey: null,
+            spawn: { x: -330, y: -200 },
+            goal: { x: 330, y: -180, width: 56, height: 84 },
+            platforms: [
+                { x: -320, y: -240, width: 180, height: 24, tick: -1 },
+                { x: -110, y: -210, width: 120, height: 20, tick: 4 },
+                { x: 60, y: -150, width: 120, height: 20, tick: 5 },
+                { x: 220, y: -90, width: 120, height: 20, tick: 6 },
+                { x: 330, y: -240, width: 150, height: 24, tick: -1 },
+            ],
+            pickups: [],
+            texts: [{ x: 0, y: 180, text: "踏点只在对应秒数亮起" }],
+        },
+        {
+            name: "第03关", time: 8.00, palette: null, paletteKey: null,
+            spawn: { x: -330, y: -180 },
+            goal: { x: 320, y: 60, width: 56, height: 84 },
+            platforms: [
+                { x: -300, y: -240, width: 200, height: 24, tick: -1 },
+                { x: -120, y: -150, width: 110, height: 20, tick: 3 },
+                { x: 40, y: -60, width: 110, height: 20, tick: 6 },
+                { x: 200, y: 30, width: 110, height: 20, tick: 3 },
+                { x: 320, y: -10, width: 160, height: 24, tick: -1 },
+            ],
+            pickups: [
+                { x: -120, y: -80, type: "time", value: 4.00 },
+                { x: 40, y: 10, type: "reverse", value: 0 },
+            ],
+            texts: [{ x: 0, y: 200, text: "加时道具补充时间，反转道具让时间倒流" }],
+        },
+    ];
+
+    refreshLevelSelect();
+    syncHeaderFromLevel();
+    updateProperties();
+    resize();
+    window.addEventListener("resize", resize);
+}
+
+init();
+</script>
+</body>
+</html>
