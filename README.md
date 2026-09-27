@@ -19,6 +19,21 @@
 └── _simulator/          ← 模拟器存档与试玩截图（非交付物）
 ```
 
+## 版本管理与协作
+
+代码托管在 <https://github.com/sks-super/qianxing>（public），默认分支 `main`。
+
+| 你是…… | 看这份 |
+| --- | --- |
+| 第一次加入的队友 | [`队友接入指南.md`](./队友接入指南.md) —— 装环境 → 认证 → clone → 提交 → PR → 解冲突 |
+| 维护本机 / 管理仓库 | [`版本管理与协作指南.md`](./版本管理与协作指南.md) —— 邀请协作者、分支保护、合并与冲突处理 |
+
+**三条最容易踩的规则**：
+
+1. 开工先 `git pull`，收工必 `git push`
+2. 大改动开分支走 PR，别直接怼 `main`
+3. `config.lua` / `state.lua` / `编辑器.html` 同一时刻只由一个人改
+
 ## 本地试玩与调试（千星沙箱模拟器）
 
 用 [miliastra-beyond-simulator](https://github.com/1475505/miliastra-beyond-simulator) 在**游戏之外**
