@@ -111,6 +111,12 @@
   `safe.directory` 已覆盖 `E:/千星/*`。换机器要重设。
 - **★ 沙箱到 github.com 的 TLS 被本地代理中间人**（`HTTPS_PROXY=127.0.0.1:52682`）：
   只有 **`GIT_SSL_NO_VERIFY=true git ...`** 能通，`curl` 要加 `-k`。属沙箱特性，用户本机不受影响。
+- **★ 另一条沙箱怪癖：git 自己写 `refs/remotes/**` 会被静默吞掉**
+  （`git fetch` 打印 `[new branch] main -> origin/main`、`update-ref` 退出码 0，但磁盘上什么也没有，
+  且 git 会顺手删掉变空的 `refs/remotes/origin` 目录 → `git status` 显示 `[gone]`，`git pull` 直接失败）。
+  **`refs/heads/**` 不受影响**（`git branch`/`commit` 正常），且**手工写入的 loose ref 能持久化并被 git 正确读取**。
+  应急：`mkdir -p .git/refs/remotes/origin && echo <sha> > .git/refs/remotes/origin/main`。
+  已如此修复过一次 `origin/main`。**换到用户本机/队友机器上不会出现**（非仓库问题）。
 - 仓库配置：`core.longpaths=true`（嵌套深，**必须**）、`core.quotepath=false`、`core.autocrlf=false`
   （换行交给 `.gitattributes` 的 `* text=auto eol=crlf`）。
 - `.gitignore` 三块重点：`_simulator/`、`_tools/miliastra-beyond-simulator/`（**独立上游仓库**，
