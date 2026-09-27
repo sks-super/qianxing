@@ -94,8 +94,9 @@
   安全的：`← → ↑`(2190/2192/2191)、`√`(221A)、`★`(2605)、`◆`(25C6)、`·`(B7)、`×`(D7)。
   新增符号前跑 `node _tools/glyph_check.mjs`（位图比对私用区码位，比「比宽度」可靠）。
 - 同一文件的多处改动**不要并行下发 Edit**：会互相覆盖，出现「报成功但磁盘没变」的静默失败 → 改完必须复核。
-- 本会话 Bash 工具 PATH 会丢（`ls`/`head` 找不到）→ 命令前先
-  `export PATH="/c/Windows/System32:/usr/bin:/bin"`。
+- 本会话 Bash 工具 PATH 会丢（`ls`/`head` 找不到）→ 命令前先 `export PATH=...`。
+  **顺序有讲究**：`/usr/bin:/bin:/c/Windows/System32`——把 System32 放前面会让 `find`/`sort`/`file`
+  被 Windows 同名程序抢走（`sort -k2` 报「-k2系统找不到指定的文件」）。
 
 ## 版本管理（Git / GitHub）
 - 仓库根 = 工作区根，分支 `main`；**远程** `https://github.com/sks-super/qianxing`（public）。
@@ -125,6 +126,19 @@
   凭据已存 Windows 凭据管理器（`git credential fill` 可验）。
 - **★ `dubious ownership`**：E 盘目录 owner SID 与当前账户不一致 → 所有 git 命令失败。
   `safe.directory` 已覆盖 `E:/千星/*`。换机器要重设。
+- **★ 队友已接入**：协作者 **hzy372 `<1192696713@qq.com>`**，专属分支 **`hzy`**（远端已建）。
+  **合并权只归 `sks-super`**。产出统一放 **`_inbox/<用户名>/`** + 必附 `说明.md`；复核清单见指南 §3.8。
+  第 1 批（`719abec` 浮岛借木）已核验通过并落位为仓库根 `浮岛借木/`。
+- **★ GitHub Desktop 与本机 shell 是同一工作树的两个写者**：它会在后台自行
+  `fetch` / `pull --ff` / `checkout` / `set-head`，**排查「引用对不上」前先读它的日志**
+  `%APPDATA%\GitHub Desktop\logs\*.log`（逐条记录命令与耗时；fetch 从 1.8s 跳到 4.6s＝那次真拉到新对象）。
+  **它不实时同步**：分支列表与 History 都是上次 fetch 的快照 → 队友推完先点 Fetch origin 再 Pull origin（指南 §3.9）。
+- **★ `.git` 曾整个消失过一次（2026-09-28 00:42）**，工作文件完好。抢救法：
+  `git clone` 到临时目录 → `cp -r 临时/.git 工作区/.git` → 用 `git config` 补回本地项
+  （longpaths / quotepath / autocrlf=false / safecrlf=false / filemode=false / ignorecase /
+  logallrefupdates / i18n / diff.renames / fetch.prune / pull.rebase）。
+  ⚠️ 移植后所有文件会显示成 `M`，那是 **stat 缓存陈旧**（`git diff --name-only` 为空即证）；
+  `rm -f .git/index && git reset` 重建索引即消除。**前提：所有提交都已 push**（否则本地独有提交会丢）。
 - **★ 沙箱到 github.com 的 TLS 被本地代理中间人**（`HTTPS_PROXY=127.0.0.1:52682`）：
   只有 **`GIT_SSL_NO_VERIFY=true git ...`** 能通，`curl` 要加 `-k`。属沙箱特性，用户本机不受影响。
 - **★ 另一条沙箱怪癖：git 自己写 `refs/remotes/**` 会被静默吞掉**
