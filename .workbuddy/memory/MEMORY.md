@@ -140,8 +140,11 @@ Web 通道与 MCP 是**两套独立实例**（Web 从磁盘读存档 JSON，Lua 
 
 ## 版本管理（Git / GitHub）
 - 工作区根即仓库根，分支 `main`；协作说明见根目录 `版本管理与协作指南.md`。
-- **★ 2026-09-27 工作区已改名**：`E:\千星\千星割绳子游戏` → `E:\千星\千星游戏`。
-  硬编码旧路径已同步（`_tools/qxqy.mjs`/`qxqy_mount.mjs`/`qxqy_simsave.mjs`/`qxqy_websave.mjs`
+- **★ 2026-09-27 工作区改名（⏳ 待用户手动执行）**：`E:\千星\千星割绳子游戏` → `E:\千星\千星游戏`。
+  代码与配置里的引用**已全部改成新路径**；但根目录重命名失败：
+  `mv` 报 `Device or resource busy`，实测**子目录与同级目录都能改名，唯根目录不行**
+  → 被 WorkBuddy 作为会话工作区打开的进程占用。需**关闭应用后**再改名（Explorer 或 `ren`）。
+  已同步的位置：`_tools/qxqy.mjs`/`qxqy_mount.mjs`/`qxqy_simsave.mjs`/`qxqy_websave.mjs`
   默认值、`割绳子/_*.py`、各 README）；`启动千星模拟器.bat` 用 `%~dp0` 无需改；
   `~/.workbuddy/mcp.json` 的 `qxqy-simulator` 两处路径已同步。
 - **Git 已正式安装**：`D:\git\Git\cmd\git.exe`（2.55.0.windows.5，静默装：
