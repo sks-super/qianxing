@@ -128,17 +128,27 @@
   `safe.directory` 已覆盖 `E:/千星/*`。换机器要重设。
 - **★ 队友已接入**：协作者 **hzy372 `<1192696713@qq.com>`**，专属分支 **`hzy`**（远端已建）。
   **合并权只归 `sks-super`**。产出统一放 **`_inbox/<用户名>/`** + 必附 `说明.md`；复核清单见指南 §3.8。
-  第 1 批（`719abec` 浮岛借木）已核验通过并落位为仓库根 `浮岛借木/`。
+  第 1 批（`719abec` 浮岛借木）已核验通过，落位为仓库根 **`浮岛借木/`**（游戏三，与 `割绳子/`、`TickHop/` 平级）。
+  **★ 每批合并后必须把 `hzy` 快进回 `main`**（`git push origin main:refs/heads/hzy`），
+  否则对方下一批基于旧基线，会把已落位/已删除的文件又带回来。批次台账记在 `_inbox/README.md`。
 - **★ GitHub Desktop 与本机 shell 是同一工作树的两个写者**：它会在后台自行
   `fetch` / `pull --ff` / `checkout` / `set-head`，**排查「引用对不上」前先读它的日志**
   `%APPDATA%\GitHub Desktop\logs\*.log`（逐条记录命令与耗时；fetch 从 1.8s 跳到 4.6s＝那次真拉到新对象）。
   **它不实时同步**：分支列表与 History 都是上次 fetch 的快照 → 队友推完先点 Fetch origin 再 Pull origin（指南 §3.9）。
-- **★ `.git` 曾整个消失过一次（2026-09-28 00:42）**，工作文件完好。抢救法：
-  `git clone` 到临时目录 → `cp -r 临时/.git 工作区/.git` → 用 `git config` 补回本地项
-  （longpaths / quotepath / autocrlf=false / safecrlf=false / filemode=false / ignorecase /
-  logallrefupdates / i18n / diff.renames / fetch.prune / pull.rebase）。
-  ⚠️ 移植后所有文件会显示成 `M`，那是 **stat 缓存陈旧**（`git diff --name-only` 为空即证）；
-  `rm -f .git/index && git reset` 重建索引即消除。**前提：所有提交都已 push**（否则本地独有提交会丢）。
+- **★★ 本环境对 `.git` 的写入不可靠（2026-09-28 实证）**：
+  **loose ref（`.git/refs/**` 单文件）随时会消失，但 `.git/packed-refs` 稳定**；
+  严重时 `.git` 目录会整个不见（工作文件还在）。**push 是唯一保险**。
+  - 引用保险：push / merge / 建分支后，**把引用写进 `packed-refs`**（格式
+    `<40位sha><空格><refname>`，四行：heads/main、heads/hzy、remotes/origin/main、remotes/origin/hzy），
+    或跑 `git pack-refs --all`；核对用 `git show-ref`。
+  - `git merge` 曾无故被 SIGTERM 打断（留 `AUTO_MERGE`/`ORIG_HEAD` 残留）→ **`rm` 掉残留后重试即可**。
+  - `.git` 整个消失时的抢救：`git clone` 到临时目录 → `cp -r 临时/.git 工作区/.git` →
+    用 `git config` 补回本地项（`core.longpaths`/`quotepath`/`autocrlf=false`/`safecrlf=false`/
+    `filemode=false`/`ignorecase`/`logallrefupdates`/`i18n.*`/`diff.renames`/`fetch.prune`/`pull.rebase`）。
+    移植后所有文件会显示成 `M`，那是 **stat 缓存陈旧**（`git diff --name-only` 为空即证）→
+    `rm -f .git/index && git reset` 消除。
+  - 结论：**重活（merge / 大 push）优先让用户在 GitHub Desktop 或自己终端里做**；
+    在沙箱里做完必须三处核对一致：`git show-ref` + `git ls-remote` + GitHub API。
 - **★ 沙箱到 github.com 的 TLS 被本地代理中间人**（`HTTPS_PROXY=127.0.0.1:52682`）：
   只有 **`GIT_SSL_NO_VERIFY=true git ...`** 能通，`curl` 要加 `-k`。属沙箱特性，用户本机不受影响。
 - **★ 另一条沙箱怪癖：git 自己写 `refs/remotes/**` 会被静默吞掉**
