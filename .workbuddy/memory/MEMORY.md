@@ -164,6 +164,7 @@ Web 通道与 MCP 是**两套独立实例**（Web 从磁盘读存档 JSON，Lua 
   `_tools/miliastra-beyond-simulator/`（**独立上游 git 仓库**，直接 add 会变成空壳子模块 →
   需 `git clone https://github.com/1475505/miliastra-beyond-simulator.git`，本机固定 d5e1663）、`node_modules/`。
 - `_shared/千星沙箱客户端脚本使用指南.docx` 10.7MB 已入库（占比最大），是双机都要的权威参考。
-- 提交历史：`fba63e2` 初始化（92 文件/31695 行）、`c6394da` 记录踩坑，其后为改名同步提交。
+- 提交历史：`76614f0` 初始化（93 文件）、`4ff36cb` 记录装 Git/改名/恢复过程；
+  作者均为 `sks-super`。旧仓库曾因 `rebase --exec` 损坏，备份在 `D:\git\_backup-dotgit-20260927`。
 - **Windows 版 curl 不认 `/d/git` 这类 MSYS 路径**，`-o` 必须写 `D:/git/...`（否则报 No such file）。
 - 本会话 Bash 工具 PATH 会丢失（`ls`/`head` 找不到），需先 `export PATH="/c/Windows/System32:/usr/bin:/bin"`。
