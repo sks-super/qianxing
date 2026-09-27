@@ -99,11 +99,27 @@
 
 ## 版本管理（Git / GitHub）
 - 仓库根 = 工作区根，分支 `main`；**远程** `https://github.com/sks-super/qianxing`（public）。
+- **★ 协作模型（2026-09-27 定）**：一人一分支、与 GitHub 用户名同名。
+  `hzy` 归协作者 hzy（远端已建，起点 = `main`）；`main` 只归 `sks-super`。
+  **所有合并由 sks-super 做**；协作者产出统一放 `_inbox/<用户名>/`（**不改仓库已有文件**），
+  流程 = 留档 → 归集到 `_inbox/hzy/` → 推 `hzy` → 开 PR（不合并）→ 用户合并。
+  文档：`队友接入指南.md`（开头「★ 协作铁律」= 给协作者和他的 AI 看，可直接转发）、
+  `_inbox/README.md`、`版本管理与协作指南.md` §3.4~§3.7。
+- **★ `main` 已在服务器端锁死**（classic 分支保护，非 rulesets）：
+  `PUT /repos/{o}/{r}/branches/main/protection`，payload 关键项 =
+  `required_pull_request_reviews.required_approving_review_count=1`（**审批人不能是 PR 作者**
+  → 协作者无法自合并）、`dismiss_stale_reviews=true`、`allow_force_pushes=false`、
+  `allow_deletions=false`、`restrictions=null`、**`enforce_admins=false`（管理员旁路，
+  用户仍可直推 main）**。代价：用户自己的 PR 自己批不了，所以大改动要么直推 main、
+  要么让协作者 review。**public + GitHub Free 才免费支持**；改私有则需 Pro。
+  验证痕迹：管理员推送时服务器回显 `Bypassed rule violations for refs/heads/main`。
 - **★ 仓库名演进**：最初由 API 建成名为 `-` 的仓库，后改名 `qianxing`（GitHub 保留旧名重定向，
   故 `-.git` 也能通）→ remote 已 `set-url` 为正名；换机后若见 `-.git` 需重设。
 - **★ 工作区改名已完成**：`E:\千星\千星割绳子游戏` → `E:\千星\千星游戏`（2026-09-27）。
   当初失败是因根目录被运行中的 WorkBuddy 占用（`mv` 报 `Device or resource busy`；
   子目录/同级目录都能改，**唯工作区根不行**）→ **退出应用后再改**。
+- 取 PAT：`printf 'protocol=https\nhost=github.com\n\n' | git credential fill | sed -n 's/^password=//p'`
+  （可用来调 GitHub API；当前是 40 字符 classic PAT）。
 - **Git 在 `D:\git\Git\cmd\git.exe`**（2.55.0.windows.5）。全局身份 `sks-super <sks.super@outlook.com>`。
 - **★ GitHub 认证只能用 PAT**（账号密码自 2021-08-13 对 Git 操作完全失效，不要再索要密码）；
   凭据已存 Windows 凭据管理器（`git credential fill` 可验）。
