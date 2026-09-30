@@ -1,0 +1,52 @@
+--- a/浮岛借木/game.lua
++++ b/浮岛借木/game.lua
+@@ -1,6 +1,7 @@
+ -- ================================================================
+ -- 浮岛借木（Float & Fathom）主脚本
+---   玩法内核：撞树、推木桩、立桩、铺桥 —— 让小岛之间借一根木头连起来。
++--   玩法内核：撞倒立着的树 → 侧面推着树干滑一格 / 正面推让它在前一格立起来
++--             → 让树干落进水道当桥，把两座浮岛连起来。
+ --   架构沿用本工作区「割绳子 / TickHop」工程的既有分层：
+ --     容器化父节点管理层级 → 黑幕过渡掩护关卡切换 → 模块各司其职。
+ --   ★ 挂载位置：客户端控件容器的「容器节点」上（script.object 即父节点）。
+@@ -71,7 +72,7 @@
+ end
+ 
+ -- ================================================================
+--- ★ 检查 7 个层级容器，缺失的补建（创建顺序即显示层级，从下到上）
++-- ★ 检查 5 个层级容器，缺失的补建（创建顺序即显示层级，从下到上）
+ -- ================================================================
+ local function ensureContainers()
+     local order = {
+@@ -120,17 +121,18 @@
+             audio.playStep()
+         else
+             utils.setMessage(act.msg or "")
++            -- 撞倒立着的树是「砰」，推动树干是「咕咚」—— 两套音效
+             if kind == "knock" then audio.playKnock() else audio.playPush() end
+             if act.changed then state.actionLock = config.DEFAULT_ACTION_COOLDOWN or 0.1 end
+         end
+ 
+         -- 出站：把玩家的关键动作报给服务器（便于外部统计/成就/关卡校验）
+         if kind == "knock" then
+-            signal.send("撞断树木")
++            signal.send("撞倒树木")
++        elseif kind == "slide" then
++            signal.send("推滑树干")
+         elseif kind == "raise" then
+-            signal.send("木桩立起")
+-        elseif kind == "fall" then
+-            signal.send("木桩倒下")
++            signal.send("树干立起")
+         end
+ 
+         if world.isWin() then state.won = true end
+@@ -429,7 +431,7 @@
+     -- ★ 容器节点模板（可选）：5 个层级容器由它创建；留空则回退到矩形元件
+     --   真机内置模板索引 1073741876（内部名 SoloTurnPoolHost），零配置即可命中
+     state.containerPrefabId = getParamNumber("containerPrefabId", config.DEFAULT_PREFAB_CONTAINER)
+-    -- ★ 纯色底图模板：沙滩 / 木桩 / 立桩 / 树根 / 石头 / 终点旗 / HUD 底衬 / 涟漪 / 黑幕
++    -- ★ 纯色底图模板：沙滩 / 树根 / 倒下的树 / 石头 / 终点旗 / HUD 底衬 / 涟漪 / 黑幕
+     --   全靠它 + imageColor 染色画出来。
+     --   首选「矩形」元件（1073741894，自带矩形图元，真机不需要再配白图）；
+     --   当前存档里没有它时，utils.instantiateRect 会自动回退「图片」元件（1073741870）。

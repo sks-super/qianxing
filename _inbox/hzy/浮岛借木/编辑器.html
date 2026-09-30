@@ -1,0 +1,884 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>浮岛借木 · 关卡编辑器</title>
+<style>
+    :root {
+        --bg: #10171c;
+        --panel: #182229;
+        --panel2: #1e2b33;
+        --line: #2b3b45;
+        --text: #e6f2f7;
+        --dim: #8fa6b2;
+        --accent: #4fc3d9;
+        --warn: #e8a24c;
+        --err: #e86c5a;
+    }
+    * { box-sizing: border-box; }
+    body {
+        margin: 0; background: var(--bg); color: var(--text);
+        font: 13px/1.5 "Microsoft YaHei", "PingFang SC", sans-serif;
+    }
+    #header {
+        display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+        padding: 10px 14px; background: var(--panel); border-bottom: 1px solid var(--line);
+    }
+    #header label { display: flex; align-items: center; gap: 5px; color: var(--dim); }
+    select, input, textarea, button {
+        font: inherit; color: var(--text); background: var(--panel2);
+        border: 1px solid var(--line); border-radius: 5px; padding: 5px 8px;
+    }
+    button { cursor: pointer; }
+    button:hover { border-color: var(--accent); color: var(--accent); }
+    #main { display: flex; align-items: flex-start; gap: 12px; padding: 12px; }
+    #toolbar { display: flex; flex-direction: column; gap: 6px; width: 168px; flex: 0 0 auto; }
+    .tool-btn { text-align: left; }
+    .tool-btn.on { border-color: var(--accent); color: var(--accent); background: #123039; }
+    #stage { flex: 0 0 auto; }
+    canvas { background: #0b1216; border: 1px solid var(--line); border-radius: 6px; display: block; }
+    #side { flex: 1 1 auto; min-width: 260px; display: flex; flex-direction: column; gap: 10px; }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; }
+    .card h3 { margin: 0 0 8px; font-size: 13px; color: var(--accent); font-weight: 600; }
+    #report div { padding: 2px 0; }
+    .ok { color: #7ad6a0; }
+    .bad { color: var(--err); }
+    .tip { color: var(--warn); }
+    textarea { width: 100%; height: 92px; resize: vertical; }
+    #modal { position: fixed; inset: 0; background: rgba(0,0,0,.66); display: none; align-items: center; justify-content: center; }
+    #modal.show { display: flex; }
+    #modalBox { width: 760px; max-width: 92vw; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
+    #modalBox h3 { margin: 0 0 10px; color: var(--accent); }
+    #modalText { height: 320px; font: 12px/1.5 Consolas, monospace; white-space: pre; }
+    #modalBar { display: flex; gap: 8px; margin-top: 10px; }
+    .hint { color: var(--dim); font-size: 12px; }
+</style>
+</head>
+<body>
+
+<div id="header">
+    <label>关卡 <select id="levelSelect"></select></label>
+    <button id="addLevelBtn">新建</button>
+    <button id="dupLevelBtn">复制</button>
+    <button id="delLevelBtn">删除</button>
+    <label>名称 <input id="levelName" style="width:180px"></label>
+    <label>列 <input id="colsInput" type="number" min="6" max="40" style="width:58px"></label>
+    <label>行 <input id="rowsInput" type="number" min="6" max="30" style="width:58px"></label>
+    <button id="resizeBtn">应用尺寸</button>
+    <span style="flex:1"></span>
+    <button id="importBtn">导入</button>
+    <button id="exportBtn">导出</button>
+</div>
+
+<div id="main">
+    <div id="toolbar">
+        <button class="tool-btn" data-tool="land">草地 (1)</button>
+        <button class="tool-btn" data-tool="water">海水 (2)</button>
+        <button class="tool-btn" data-tool="tree">树木 (3)</button>
+        <button class="tool-btn" data-tool="log">倒下的树 (4)</button>
+        <button class="tool-btn" data-tool="root">树根 (5)</button>
+        <button class="tool-btn" data-tool="rock1">石头·1格 (6)</button>
+        <button class="tool-btn" data-tool="rock2">石头·2格 (7)</button>
+        <button class="tool-btn" data-tool="spawn">小人出生点 (8)</button>
+        <button class="tool-btn" data-tool="goal">终点旗 (9)</button>
+        <button class="tool-btn" data-tool="erase">擦除 (0 / 右键)</button>
+        <div class="hint" id="toolHint"></div>
+    </div>
+
+    <div id="stage"><canvas id="canvas"></canvas></div>
+
+    <div id="side">
+        <div class="card">
+            <h3>提示文本（每行一条，游戏里按 F 显示）</h3>
+            <textarea id="hintsText" spellcheck="false"></textarea>
+        </div>
+        <div class="card">
+            <h3>结构自检</h3>
+            <div id="report"></div>
+        </div>
+        <div class="card">
+            <h3>本关解法参考</h3>
+            <div class="hint">
+                编辑器只做结构检查，不判定可解性。改完地图后请跑
+                <code>python _tools/solve_浮岛借木.py</code>
+                复核三关可解、并取出最短解口令（_tools/e2e_浮岛借木.sh 用的就是它）。
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="modal">
+    <div id="modalBox">
+        <h3 id="modalTitle">导出</h3>
+        <textarea id="modalText" spellcheck="false"></textarea>
+        <div id="modalBar">
+            <button class="ghost" id="modalDownload" style="margin-right:auto">下载 .lua 文件</button>
+            <button class="ghost" id="modalClose">关闭</button>
+            <button id="modalAction">确定</button>
+        </div>
+    </div>
+</div>
+
+<script>
+// ================================================================
+// ★ DEFAULTS：与 config.lua 的 DEFAULT_* 逐项数值一致
+//   （key 与 DEFAULT_<KEY 大写> 机械对应，由 _shared/_check_refs.py 校验）
+// ================================================================
+const DEFAULTS = {
+    cell_size: 44,
+    cell_min: 22,
+    cell_max: 64,
+    board_scale: 0.90,
+    board_margin_x: 40,
+    hud_bottom_reserve: 124,
+    view_width: 1280,
+    view_height: 720,
+    max_step: 0.25,
+    h_root: 0.25,
+    h_log_land: 0.5,
+    h_log_float: 0.25,
+    h_rock1: 1.0,
+    h_rock2: 2.0,
+    h_tree: 1.0,
+    step_anim_time: 0.10,
+    action_anim_time: 0.16,
+    action_cooldown: 0.10,
+    ripple_time: 0.45,
+    ripple_size: 70,
+    fx_alpha: 170,
+    coast_pad: 5,
+    water_grid_alpha: 96,
+    // ---- 2.5D 视角（与 config.lua 的 DEFAULT_* 逐项一致）----
+    view_25d: 1,
+    tile_side_ratio: 0.30,
+    tile_rim_ratio: 0.17,
+    tile_shadow_alpha: 54,
+    tile_foot_ratio: 0.18,
+    obj_shadow_alpha: 50,
+    water_grid_lines: 1,
+    water_line_alpha: 70,
+    hint_wrap: 26,
+    hud_title_size: 30,
+    hud_info_size: 22,
+    hud_hint_size: 20,
+    hud_bar_height: 74,
+    hud_alpha: 130,
+    hud_text_alpha: 255,
+    fade_in_time: 0.18,
+    fade_hold_time: 0.28,
+    fade_out_time: 0.18,
+    fade_max_alpha: 255,
+    touch_btn_size: 84,
+    touch_btn_alpha: 120,
+    touch_btn_margin: 56,
+};
+
+// ★ 配色镜像：与 config.lua 的 DEFAULT_PALETTE 保持一致（仅供预览）
+const PALETTE = {
+    water: "2B8FA4", waterDeep: "1F7288",
+    waterLine: "9BDCE8", waterShade: "0E4A5A",
+    land: "6DB03C", landDark: "5E9E33", sand: "E6D69C", soil: "AB8B55",
+    shadowLand: "33421F",
+    treeCanopy: "2F6B3A", treeTrunk: "7E5A32",
+    logSide: "9C6C36", logTop: "C09455", logEnd: "5C4020",
+    rock1Top: "E7DFC6", rock2Top: "BEB49A", rockSide: "8C846C",
+    rootTop: "C9A26B", rootRing: "7A5A34",
+    playerBody: "F2A03C", playerHead: "3A2A20",
+    goalFlag: "F5E05A", goalPole: "6E5A38",
+    hud: "F4F8FF", hudBar: "0B1A20", hint: "DFF0FF", ripple: "FFFFFF",
+};
+
+const DEFAULT_COLS = 22, DEFAULT_ROWS = 13;
+
+// ★ 初始关卡：与 config.lua 的 M.LEVELS 逐项一致（编辑器打开即可看到真实关卡）
+const INITIAL_LEVELS = [
+    {
+        name: "第01关 · 起点草地",
+        map: [
+            "......................",
+            ".......######.........",
+            "......#######.#####...",
+            ".....########.######..",
+            "##.##########.######..",
+            "##.##########.######..",
+            "##.##########.######..",
+            "##.##########.######..",
+            "...##########.#####...",
+            "....########.....##...",
+            ".....######...........",
+            "......####............",
+            "......................",
+        ],
+        spawn: { c: 8, r: 4 }, goal: { c: 19, r: 7 },
+        trees: [{ c: 13, r: 4 }],
+        rocks: [{ c: 7, r: 3, h: 1 }, { c: 13, r: 6, h: 1 }, { c: 16, r: 3, h: 2 }, { c: 19, r: 4, h: 1 }],
+        roots: [{ c: 7, r: 6 }],
+        logs: [{ c: 3, r: 7, dir: "W" }],
+        hints: ["WASD 走一格。朝树撞过去，树就倒进前面的那一格", "树干落进水道里就漂在水面上 —— 踩着它就能过水道", "矮的（树根 / 漂着的树干）能踩；半格高以上的只能推"],
+    },
+    {
+        name: "第02关 · 侧着推",
+        map: [
+            "......................",
+            ".......######.........",
+            "......#######.#####...",
+            ".....########.######..",
+            "##.##########.######..",
+            "##.##########.######..",
+            "##.##########.######..",
+            "##.##########.######..",
+            "...##########.#####...",
+            "....########.....##...",
+            ".....######...........",
+            "......####............",
+            "......................",
+        ],
+        spawn: { c: 8, r: 4 }, goal: { c: 19, r: 7 },
+        trees: [],
+        rocks: [{ c: 7, r: 3, h: 1 }, { c: 13, r: 6, h: 1 }, { c: 16, r: 3, h: 2 }, { c: 19, r: 4, h: 1 }],
+        roots: [{ c: 7, r: 6 }],
+        logs: [{ c: 11, r: 5, dir: "W" }, { c: 3, r: 7, dir: "W" }],
+        hints: ["倒在陆地上的树干半格高，爬不上去 —— 只能推", "从侧面推（朝它身体横着的方向推）→ 它整根滑一格，躺着的样子不变"],
+    },
+    {
+        name: "第03关 · 立起来的树",
+        map: [
+            "......................",
+            ".......######.........",
+            "......#######.#####...",
+            ".....########.######..",
+            "##.##########.######..",
+            "##.##########.######..",
+            "##.##########.######..",
+            "##.##########.######..",
+            "...##########.#####...",
+            "....########.....##...",
+            ".....######...........",
+            "......####............",
+            "......................",
+        ],
+        spawn: { c: 8, r: 4 }, goal: { c: 19, r: 7 },
+        trees: [],
+        rocks: [{ c: 7, r: 3, h: 1 }, { c: 13, r: 6, h: 1 }, { c: 16, r: 3, h: 2 }, { c: 19, r: 4, h: 1 }],
+        roots: [{ c: 7, r: 6 }],
+        logs: [{ c: 12, r: 5, dir: "D" }, { c: 3, r: 7, dir: "W" }],
+        hints: ["顺着树干躺的方向推，它会在前面一格重新立成一棵树", "立起来再撞一次，树干就又倒下去、往前落一格 —— 木头能这样一格一格送出去"],
+    },
+];
+
+const TOOL_HINT = {
+    land: "按住拖动可连续刷草地",
+    water: "按住拖动可连续刷海水",
+    tree: "点一格种一棵树（1 格高，撞倒后倒进前一格、原地留下树根）",
+    log: "先点树干所在格，再点相邻的一格表示它朝那边躺着（只取横竖）",
+    root: "点一格放一个 0.25 格高的树根（可踩）",
+    rock1: "点一格放一颗一格高的石头",
+    rock2: "点一格放一颗两格高的石头（上方格必须是水，否则会盖住可行走的格子）",
+    spawn: "点一格放小人出生点（每关只能有一个）",
+    goal: "点一格放终点旗（每关只能有一个）",
+    erase: "点一格清掉上面的物体；草地上再点一次变成海水",
+};
+
+// ================================================================
+// 数据模型
+// ================================================================
+let levels = JSON.parse(JSON.stringify(INITIAL_LEVELS));
+let curLevel = 0;
+let tool = "land";
+let selected = null;     // {kind, i} 预留
+let pendingLog = null;   // 倒下的树：已经点下的那一格 {c, r}，等第二格定躺向
+let painting = false;
+
+function makeLevel(name, cols, rows) {
+    const map = [];
+    for (let r = 0; r < rows; r++) map.push(".".repeat(cols));
+    return {
+        name: name, map: map,
+        spawn: { c: 2, r: 2 }, goal: { c: cols - 1, r: rows - 1 },
+        trees: [], rocks: [], roots: [], logs: [], hints: [],
+    };
+}
+function colsOf(lv) { return lv.map[0].length; }
+function rowsOf(lv) { return lv.map.length; }
+function isLand(lv, c, r) {
+    if (r < 1 || r > rowsOf(lv) || c < 1 || c > colsOf(lv)) return false;
+    return lv.map[r - 1][c - 1] === "#";
+}
+function setLand(lv, c, r, v) {
+    if (r < 1 || r > rowsOf(lv) || c < 1 || c > colsOf(lv)) return;
+    const row = lv.map[r - 1];
+    lv.map[r - 1] = row.slice(0, c - 1) + (v ? "#" : ".") + row.slice(c);
+}
+function cur() { return levels[curLevel]; }
+
+// ================================================================
+// 画布
+// ================================================================
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+let CELL = 34;
+
+let PAD = 0;
+
+function layout() {
+    const lv = cur();
+    const maxW = Math.max(360, Math.min(880, window.innerWidth - 168 - 300));
+    CELL = Math.max(14, Math.min(40, Math.floor(maxW / colsOf(lv))));
+    // 2.5D 下地块会向外多出「岛缘描边 + 侧面厚度」，canvas 要留出这一圈，否则会被裁掉
+    PAD = Math.ceil(CELL * (DEFAULTS.tile_rim_ratio + DEFAULTS.tile_side_ratio) + 3);
+    canvas.width = colsOf(lv) * CELL + PAD * 2;
+    canvas.height = rowsOf(lv) * CELL + PAD * 2;
+}
+function cx(c) { return PAD + (c - 0.5) * CELL; }     // 格子中心 x（画布坐标）
+function cy(r) { return PAD + (r - 0.5) * CELL; }
+function baseY(r) { return PAD + r * CELL; }          // 格底边 y（画布坐标，向下为正）
+// UI 的 y 向上为正；画布里翻过来画：画布 y = 格底边 - height
+// ★ 2.5D 下物体站在「脚线」上（顶面靠前处），不是格子正中心
+function footY(r) { return cy(r) + DEFAULTS.tile_foot_ratio * CELL; }
+
+function rect(x, y, w, h, hex, alpha) {
+    ctx.globalAlpha = alpha == null ? 1 : alpha;
+    ctx.fillStyle = "#" + hex;
+    ctx.fillRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h));
+    ctx.globalAlpha = 1;
+}
+// 接触阴影：贴在脚线上的扁方块
+function shadow(c, r, wCells, alpha) {
+    if (alpha <= 0) return;
+    const w = wCells * CELL, h = 0.13 * CELL;
+    rect(cx(c) - w / 2, footY(r) - h / 2, w, h, PALETTE.shadowLand, alpha / 255);
+}
+// ★ 以「脚线为 0、中心抬高 offCells 格」画一块 wCells × hCells 的矩形（与 level.lua 同源）
+//   dxCells = 相对格中心的横向偏移（格）。所有物体的几何都用它表达，改一处两边一起改。
+function blk(cellC, cellR, offCells, wCells, hCells, hex, alpha, dxCells) {
+    const w = wCells * CELL, h = hCells * CELL;
+    rect(cx(cellC) + (dxCells || 0) * CELL - w / 2,
+         footY(cellR) - (offCells + hCells / 2) * CELL, w, h, hex, alpha);
+}
+
+function draw() {
+    const lv = cur();
+    layout();
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // ① 海面
+    rect(0, 0, canvas.width, canvas.height, PALETTE.water, 1);
+    const V25 = DEFAULTS.view_25d > 0;
+    const RIM = V25 ? DEFAULTS.tile_rim_ratio * CELL : DEFAULTS.coast_pad / 2;
+    const SIDE = V25 ? DEFAULTS.tile_side_ratio * CELL : 0;
+    const SHADOW = V25 ? DEFAULTS.tile_shadow_alpha / 255 : 0;
+    const OBJ_SHADOW = DEFAULTS.obj_shadow_alpha;
+
+    // ② 水面网格
+    if (V25 && DEFAULTS.water_grid_lines > 0) {
+        // 细网格线（参考图那种屏幕水平/垂直的线），铺满整块画布
+        const lw = Math.max(1, Math.floor(CELL * 0.035));
+        const a = DEFAULTS.water_line_alpha / 255;
+        const gx0 = cx(1) - CELL / 2, gy0 = cy(1) - CELL / 2;
+        for (let c = -2; c <= colsOf(lv) + 2; c++)
+            rect(gx0 + c * CELL - lw / 2, 0, lw, canvas.height, PALETTE.waterLine, a);
+        for (let r = -2; r <= rowsOf(lv) + 2; r++)
+            rect(0, gy0 + r * CELL - lw / 2, canvas.width, lw, PALETTE.waterLine, a);
+    } else {
+        // 旧的水下深色棋盘
+        for (let r = 1; r <= rowsOf(lv); r++)
+            for (let c = 1; c <= colsOf(lv); c++)
+                if (c % 2 === 1 && r % 2 === 1 && !isLand(lv, c, r))
+                    rect(cx(c) - CELL / 2 + 1, cy(r) - CELL / 2 + 1, CELL - 2, CELL - 2,
+                         PALETTE.waterDeep, DEFAULTS.water_grid_alpha / 255);
+    }
+    // ③ 地块装饰趟：岛缘投影 → 侧面厚度 → 沙滩描边
+    //    （必须整趟画完再画顶面，否则岛内相邻格之间会露出描边，像带缝的地砖）
+    for (let r = 1; r <= rowsOf(lv); r++)
+        for (let c = 1; c <= colsOf(lv); c++) {
+            if (!isLand(lv, c, r)) continue;
+            const x = cx(c), bottom = cy(r) + CELL / 2;
+            if (V25 && SHADOW > 0) {
+                const sh = SIDE * 0.5;
+                rect(x - (CELL + RIM * 2 + 4) / 2, bottom + RIM + SIDE, CELL + RIM * 2 + 4, sh,
+                     PALETTE.waterShade, SHADOW);
+            }
+            if (V25) rect(x - (CELL + RIM * 2) / 2, bottom + RIM, CELL + RIM * 2, SIDE, PALETTE.soil, 1);
+            rect(x - CELL / 2 - RIM, cy(r) - CELL / 2 - RIM, CELL + RIM * 2, CELL + RIM * 2,
+                 PALETTE.sand, 1);
+        }
+    // ④ 草地顶面
+    for (let r = 1; r <= rowsOf(lv); r++)
+        for (let c = 1; c <= colsOf(lv); c++)
+            if (isLand(lv, c, r))
+                rect(cx(c) - CELL / 2, cy(r) - CELL / 2, CELL, CELL,
+                     (c + r) % 2 === 0 ? PALETTE.landDark : PALETTE.land, 1);
+
+    // ⑤ 物体（顺序与 level.lua 一致：树根 → 倒下的树 → 石头 → 树 → 终点旗 → 小人）
+    //    一律站在「脚线」上，并带一块接触阴影（2.5D 的贴地感）
+    //    ★ 几何逐项镜像 level.lua 的 rebuildObjects，改一处要同步另一处。
+    lv.roots.forEach(o => {
+        blk(o.c, o.r, 0.035, 0.74, 0.07, PALETTE.rootRing, 1);
+        blk(o.c, o.r, 0.14, 0.60, 0.21, PALETTE.rootTop, 1);
+    });
+    lv.logs.forEach(lg => {
+        // 压在陆地上 0.5 格高 / 漂在水面上 0.25 格（半浸在水里）—— 与 world.logHeightAt 一致
+        const h = isLand(lv, lg.c, lg.r) ? DEFAULTS.h_log_land : DEFAULTS.h_log_float;
+        const alongX = (lg.dir === "A" || lg.dir === "D");   // 东西躺 / 南北躺
+        const thick = 0.50, long = 0.96;
+        const wCells = alongX ? long : thick;
+        const hCells = alongX ? thick : long;
+        const off = h - 0.25;                                 // 中心相对脚线的高度（格）
+        shadow(lg.c, lg.r, 0.80, OBJ_SHADOW);
+        blk(lg.c, lg.r, off, wCells, hCells, PALETTE.logSide, 1);
+        if (alongX) {
+            blk(lg.c, lg.r, off + hCells * 0.24, wCells * 0.98, hCells * 0.30, PALETTE.logTop, 1);
+            blk(lg.c, lg.r, off, 0.09, hCells, PALETTE.logEnd, 1, -wCells / 2);
+            blk(lg.c, lg.r, off, 0.09, hCells, PALETTE.logEnd, 1, wCells / 2);
+        } else {
+            blk(lg.c, lg.r, off, wCells * 0.30, hCells * 0.98, PALETTE.logTop, 1, -wCells * 0.18);
+            blk(lg.c, lg.r, off - hCells / 2, wCells, 0.09, PALETTE.logEnd, 1);
+            blk(lg.c, lg.r, off + hCells / 2, wCells, 0.09, PALETTE.logEnd, 1);
+        }
+    });
+    lv.rocks.forEach(o => {
+        const hh = o.h >= 2 ? DEFAULTS.h_rock2 : DEFAULTS.h_rock1;
+        const hex = o.h >= 2 ? PALETTE.rock2Top : PALETTE.rock1Top;
+        shadow(o.c, o.r, 0.80, OBJ_SHADOW);
+        blk(o.c, o.r, hh / 2, 0.86, hh, PALETTE.rockSide, 1);
+        // 顶部高光：贴着石头顶面往下一点，和 level.lua 的观感一致
+        blk(o.c, o.r, hh - 0.11, 0.70, 0.22, hex, 1);
+    });
+    // 树木 1 格高（纯色回退画法：树干 0..0.62 + 树冠 0.44..1.00）
+    lv.trees.forEach(o => {
+        shadow(o.c, o.r, 0.72, OBJ_SHADOW);
+        blk(o.c, o.r, 0.31, 0.22, 0.62, PALETTE.treeTrunk, 1);
+        blk(o.c, o.r, 0.72, 0.78, 0.56, PALETTE.treeCanopy, 1);
+    });
+    // 终点旗（1.24 格高）
+    shadow(lv.goal.c, lv.goal.r, 0.92, OBJ_SHADOW);
+    blk(lv.goal.c, lv.goal.r, 0.07, 0.92, 0.14, PALETTE.goalFlag, 0.55);
+    blk(lv.goal.c, lv.goal.r, 0.62, 0.08, 1.24, PALETTE.goalPole, 1, -0.20);
+    blk(lv.goal.c, lv.goal.r, 1.02, 0.50, 0.32, PALETTE.goalFlag, 1, 0.08);
+    // 出生点小人（0.94 格高的身体 + 压在上部的头）
+    shadow(lv.spawn.c, lv.spawn.r, 0.62, OBJ_SHADOW);
+    blk(lv.spawn.c, lv.spawn.r, 0.47, 0.42, 0.94, PALETTE.playerBody, 1);
+    blk(lv.spawn.c, lv.spawn.r, 0.81, 0.34, 0.26, PALETTE.playerHead, 1);
+
+    // ⑥ 网格线 + 树干待定向的格
+    ctx.strokeStyle = "rgba(255,255,255,.10)";
+    ctx.lineWidth = 1;
+    const gx0 = cx(1) - CELL / 2, gy0 = cy(1) - CELL / 2;
+    for (let c = 0; c <= colsOf(lv); c++) {
+        ctx.beginPath(); ctx.moveTo(gx0 + c * CELL + .5, gy0); ctx.lineTo(gx0 + c * CELL + .5, gy0 + rowsOf(lv) * CELL); ctx.stroke();
+    }
+    for (let r = 0; r <= rowsOf(lv); r++) {
+        ctx.beginPath(); ctx.moveTo(gx0, gy0 + r * CELL + .5); ctx.lineTo(gx0 + colsOf(lv) * CELL, gy0 + r * CELL + .5); ctx.stroke();
+    }
+    if (pendingLog) {
+        ctx.strokeStyle = "#4fc3d9"; ctx.lineWidth = 3;
+        ctx.strokeRect(cx(pendingLog.c) - CELL / 2 + 2, cy(pendingLog.r) - CELL / 2 + 2, CELL - 4, CELL - 4);
+    }
+
+    // ⑦ HUD 参考条
+    rect(0, 0, canvas.width, DEFAULTS.hud_bar_height * 0.5, PALETTE.hudBar, DEFAULTS.hud_alpha / 255);
+    ctx.fillStyle = "#" + PALETTE.hud;
+    ctx.font = "12px 'Microsoft YaHei'";
+    ctx.textBaseline = "middle";
+    ctx.fillText(lv.name, 8, DEFAULTS.hud_bar_height * 0.25);
+
+    updateReport();
+}
+
+// ================================================================
+// 鼠标交互
+// ================================================================
+function cellAt(ev) {
+    const r = canvas.getBoundingClientRect();
+    const x = ev.clientX - r.left, y = ev.clientY - r.top;
+    const c = Math.floor((x - PAD) / CELL) + 1, rr = Math.floor((y - PAD) / CELL) + 1;
+    if (c < 1 || c > colsOf(cur()) || rr < 1 || rr > rowsOf(cur())) return null;
+    return { c: c, r: rr };
+}
+function removeAt(lv, c, r) {
+    lv.trees = lv.trees.filter(o => !(o.c === c && o.r === r));
+    lv.roots = lv.roots.filter(o => !(o.c === c && o.r === r));
+    lv.rocks = lv.rocks.filter(o => !(o.c === c && o.r === r));
+    lv.logs = lv.logs.filter(lg => !(lg.c === c && lg.r === r));
+}
+function occupy(lv, c, r, kind) {
+    if ((lv.spawn.c === c && lv.spawn.r === r) && kind !== "spawn") return false;
+    if ((lv.goal.c === c && lv.goal.r === r) && kind !== "goal") return false;
+    if (kind === "tree") { if (lv.trees.some(o => o.c === c && o.r === r)) return false; }
+    if (kind === "root") { if (lv.roots.some(o => o.c === c && o.r === r)) return false; }
+    if (kind === "rock") { if (lv.rocks.some(o => o.c === c && o.r === r)) return false; }
+    if (kind === "log") {
+        if (lv.logs.some(lg => lg.c === c && lg.r === r)) return false;
+    }
+    return true;
+}
+
+function applyTool(cell, isErase) {
+    const lv = cur();
+    const t = isErase ? "erase" : tool;
+    if (!cell) return;
+
+    if (t === "land" || t === "water") {
+        setLand(lv, cell.c, cell.r, t === "land");
+        if (t === "water") removeAt(lv, cell.c, cell.r);
+        pendingLog = null;
+        draw();
+        return;
+    }
+    if (t === "erase") {
+        const had = lv.trees.length + lv.roots.length + lv.rocks.length + lv.logs.length;
+        removeAt(lv, cell.c, cell.r);
+        if (lv.trees.length + lv.roots.length + lv.rocks.length + lv.logs.length === had) {
+            setLand(lv, cell.c, cell.r, !isLand(lv, cell.c, cell.r));
+        }
+        pendingLog = null;
+        draw();
+        return;
+    }
+    if (t === "spawn") { lv.spawn = { c: cell.c, r: cell.r }; pendingLog = null; draw(); return; }
+    if (t === "goal") { lv.goal = { c: cell.c, r: cell.r }; pendingLog = null; draw(); return; }
+
+    if (t === "log") {
+        // ★ 两次点击：第一格 = 树干所在的格，第二格 = 它朝哪边躺着（只取上下左右）
+        //   dir 就是「从第一格指向第二格」的那个方向，也是它躺着的走向。
+        if (!pendingLog) {
+            if (!occupy(lv, cell.c, cell.r, "log")) return;
+            pendingLog = cell; draw(); return;
+        }
+        const a = pendingLog;
+        if (a.c === cell.c && a.r === cell.r) { pendingLog = null; draw(); return; }
+        const dc = cell.c - a.c, dr = cell.r - a.r;
+        let dir = null;
+        if (dc === 0 && dr === -1) dir = "W";
+        else if (dc === 0 && dr === 1) dir = "S";
+        else if (dc === -1 && dr === 0) dir = "A";
+        else if (dc === 1 && dr === 0) dir = "D";
+        if (!dir) {   // 点的不是相邻格 → 当成重新选第一格
+            pendingLog = occupy(lv, cell.c, cell.r, "log") ? cell : null;
+            draw(); return;
+        }
+        if (!occupy(lv, a.c, a.r, "log")) { pendingLog = null; draw(); return; }
+        lv.logs.push({ c: a.c, r: a.r, dir: dir });
+        pendingLog = null;
+        draw();
+        return;
+    }
+
+    const kind = (t === "tree") ? "tree" : (t === "root") ? "root" : "rock";
+    if (!occupy(lv, cell.c, cell.r, kind)) return;
+    removeAt(lv, cell.c, cell.r);
+    if (kind === "tree") lv.trees.push({ c: cell.c, r: cell.r });
+    else if (kind === "root") lv.roots.push({ c: cell.c, r: cell.r });
+    else lv.rocks.push({ c: cell.c, r: cell.r, h: t === "rock2" ? 2 : 1 });
+    pendingLog = null;
+    draw();
+}
+
+canvas.addEventListener("contextmenu", e => e.preventDefault());
+canvas.addEventListener("mousedown", e => {
+    painting = true;
+    applyTool(cellAt(e), e.button === 2);
+});
+canvas.addEventListener("mousemove", e => {
+    if (!painting) return;
+    if (tool === "land" || tool === "water" || tool === "erase") applyTool(cellAt(e), e.button === 2);
+});
+window.addEventListener("mouseup", () => { painting = false; });
+
+// ================================================================
+// 工具切换 / 工具栏
+// ================================================================
+document.querySelectorAll(".tool-btn").forEach(btn => {
+    btn.addEventListener("click", () => setTool(btn.dataset.tool));
+});
+function setTool(t) {
+    tool = t;
+    pendingLog = null;
+    document.querySelectorAll(".tool-btn").forEach(b => b.classList.toggle("on", b.dataset.tool === t));
+    document.getElementById("toolHint").textContent = TOOL_HINT[t] || "";
+    draw();
+}
+window.addEventListener("keydown", e => {
+    const map = { "1": "land", "2": "water", "3": "tree", "4": "log", "5": "root",
+                  "6": "rock1", "7": "rock2", "8": "spawn", "9": "goal", "0": "erase" };
+    if (map[e.key]) setTool(map[e.key]);
+    if (e.key === "Escape") { pendingLog = null; draw(); }
+});
+
+// ================================================================
+// 关卡管理
+// ================================================================
+const levelSelect = document.getElementById("levelSelect");
+const levelName = document.getElementById("levelName");
+const hintsText = document.getElementById("hintsText");
+
+function refreshLevelSelect() {
+    levelSelect.innerHTML = "";
+    levels.forEach((lv, i) => {
+        const o = document.createElement("option");
+        o.value = String(i);
+        o.textContent = lv.name;
+        levelSelect.appendChild(o);
+    });
+    levelSelect.value = String(curLevel);
+}
+function syncFromLevel() {
+    const lv = cur();
+    levelName.value = lv.name;
+    hintsText.value = (lv.hints || []).join("\n");
+    document.getElementById("colsInput").value = colsOf(lv);
+    document.getElementById("rowsInput").value = rowsOf(lv);
+}
+levelSelect.addEventListener("change", () => { curLevel = +levelSelect.value; pendingLog = null; syncFromLevel(); draw(); });
+levelName.addEventListener("input", () => { cur().name = levelName.value; refreshLevelSelect(); draw(); });
+hintsText.addEventListener("input", () => {
+    cur().hints = hintsText.value.split("\n").map(s => s.trim()).filter(s => s.length > 0);
+});
+document.getElementById("addLevelBtn").addEventListener("click", () => {
+    levels.push(makeLevel("第" + String(levels.length + 1).padStart(2, "0") + "关 · 未命名", DEFAULT_COLS, DEFAULT_ROWS));
+    curLevel = levels.length - 1; pendingLog = null; refreshLevelSelect(); syncFromLevel(); draw();
+});
+document.getElementById("dupLevelBtn").addEventListener("click", () => {
+    const copy = JSON.parse(JSON.stringify(cur()));
+    copy.name = copy.name + " 副本";
+    levels.splice(curLevel + 1, 0, copy);
+    curLevel++; pendingLog = null; refreshLevelSelect(); syncFromLevel(); draw();
+});
+document.getElementById("delLevelBtn").addEventListener("click", () => {
+    if (levels.length <= 1) { alert("至少保留一关。"); return; }
+    if (!confirm("删除「" + cur().name + "」？")) return;
+    levels.splice(curLevel, 1);
+    curLevel = Math.max(0, curLevel - 1);
+    pendingLog = null; refreshLevelSelect(); syncFromLevel(); draw();
+});
+document.getElementById("resizeBtn").addEventListener("click", () => {
+    const lv = cur();
+    const nc = Math.max(6, Math.min(40, +document.getElementById("colsInput").value || colsOf(lv)));
+    const nr = Math.max(6, Math.min(30, +document.getElementById("rowsInput").value || rowsOf(lv)));
+    const nm = [];
+    for (let r = 0; r < nr; r++) {
+        const old = lv.map[r] || "";
+        nm.push((old + ".".repeat(nc)).slice(0, nc));
+    }
+    lv.map = nm;
+    lv.spawn = { c: Math.min(lv.spawn.c, nc), r: Math.min(lv.spawn.r, nr) };
+    lv.goal = { c: Math.min(lv.goal.c, nc), r: Math.min(lv.goal.r, nr) };
+    ["trees", "roots", "rocks"].forEach(k => {
+        lv[k] = lv[k].filter(o => o.c <= nc && o.r <= nr);
+    });
+    lv.logs = lv.logs.filter(lg => lg.c <= nc && lg.r <= nr);
+    pendingLog = null; draw();
+});
+
+// ================================================================
+// 结构自检
+// ================================================================
+function updateReport() {
+    const lv = cur();
+    const out = [];
+    let badCount = 0;
+    const bad = (s) => { out.push('<div class="bad">× ' + s + "</div>"); badCount++; };
+    const ok = (s) => out.push('<div class="ok">√ ' + s + "</div>");
+    const tip = (s) => out.push('<div class="tip">! ' + s + "</div>");
+
+    const spawnLand = isLand(lv, lv.spawn.c, lv.spawn.r);
+    const goalLand = isLand(lv, lv.goal.c, lv.goal.r);
+    spawnLand ? ok("出生点在陆地上 (" + lv.spawn.c + "," + lv.spawn.r + ")")
+              : bad("出生点不在陆地上 (" + lv.spawn.c + "," + lv.spawn.r + ")");
+    goalLand ? ok("终点在陆地上 (" + lv.goal.c + "," + lv.goal.r + ")")
+             : bad("终点不在陆地上 (" + lv.goal.c + "," + lv.goal.r + ")");
+    out.push('<div class="hint">树 ' + lv.trees.length + " · 倒下的树 " + lv.logs.length +
+             " · 树根 " + lv.roots.length + " · 石头 " + lv.rocks.length + "</div>");
+
+    lv.trees.forEach(o => {
+        if (!isLand(lv, o.c, o.r)) tip("树 (" + o.c + "," + o.r + ") 长在水里，撞倒后树干落进水里");
+    });
+    lv.rocks.filter(o => o.h >= 2).forEach(o => {
+        if (isLand(lv, o.c, o.r - 1)) bad("两格高石头 (" + o.c + "," + o.r + ") 上方是陆地，会盖住可行走的格子");
+    });
+    lv.logs.forEach(lg => {
+        if (!["W", "S", "A", "D"].includes(lg.dir)) {
+            bad("倒下的树 (" + lg.c + "," + lg.r + ") 的躺向 dir=" + lg.dir + " 不合法（只能是 W/S/A/D）");
+        }
+        if (!isLand(lv, lg.c, lg.r)) {
+            tip("倒下的树 (" + lg.c + "," + lg.r + ") 漂在水面上：0.25 格高、能踩，可以当桥");
+        }
+    });
+    lv.trees.forEach(o => { if (o.c === lv.spawn.c && o.r === lv.spawn.r) bad("树和出生点重叠"); });
+    lv.rocks.forEach(o => { if (o.c === lv.spawn.c && o.r === lv.spawn.r) bad("石头和出生点重叠"); });
+    lv.trees.forEach(o => { if (o.c === lv.goal.c && o.r === lv.goal.r) bad("树和终点重叠"); });
+    if (!lv.trees.length && !lv.logs.length) tip("本关没有任何树或倒下的树，可能不构成「借木过水」的玩法");
+    if (badCount === 0) ok("结构检查通过（可解性请用 _tools/solve_浮岛借木.py 另测）");
+
+    document.getElementById("report").innerHTML = out.join("");
+}
+
+// ================================================================
+// 导入 / 导出
+// ================================================================
+const modal = document.getElementById("modal");
+const modalText = document.getElementById("modalText");
+const modalTitle = document.getElementById("modalTitle");
+const modalAction = document.getElementById("modalAction");
+let modalMode = "export";
+
+function q(s) { return '"' + String(s == null ? "" : s).replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"'; }
+
+function generateLua() {
+    const out = [];
+    out.push("-- 浮岛借木 关卡配置（由关卡编辑器导出，可直接在千星沙箱中执行）");
+    out.push("-- 用法 A（推荐）：下载成 .lua 后，在工作区根目录跑一行命令自动落盘并校验：");
+    out.push("--        node _tools/apply_levels.mjs 浮岛借木.levels.lua --game 浮岛借木");
+    out.push("-- 用法 B（手工）：整段替换 浮岛借木/config.lua 里文件末尾那张关卡表。");
+    out.push("--   ★ 注意：本段不要出现「M.LEVELS 加等号加左花括号」的字面写法，");
+    out.push("--     否则 apply_levels.mjs 的括号配平会先命中注释、把空片段当成关卡表。");
+    out.push("-- 字段说明: name 关卡名 / map 字符画（'.'=水 '#'=陆地，1 行 = 1 个 row）");
+    out.push("--           spawn 小人出生格{c,r} / goal 终点格{c,r}");
+    out.push("--           trees 立着的树{c,r}（1 格高，撞倒后倒进前一格并留下 0.25 格树根）");
+    out.push("--           rocks 石头{c,r,h}（h=1/2 格高，不可移动、不可攀爬）");
+    out.push("--           roots 预置树根{c,r}（0.25 格高，可踩）");
+    out.push("--           logs 预置倒下的树{c,r,dir}（占一格；dir = 躺着的走向 W/S/A/D）");
+    out.push("--                从侧面推（垂直于 dir）→ 整根滑一格；");
+    out.push("--                从正面推（平行于 dir）→ 在「原格 + 推动方向」重新立起来。");
+    out.push("--           hints 提示文本（游戏里按 F 开关）/ palette 可选配色覆盖");
+    out.push("M.LEVELS = {");
+    levels.forEach((lv, i) => {
+        out.push("    -- ===================== 关卡 " + (i + 1) + ": " + lv.name + " =====================");
+        out.push("    {");
+        out.push("        name = " + q(lv.name) + ",");
+        out.push("        map = {");
+        lv.map.forEach(row => out.push("            " + q(row) + ","));
+        out.push("        },");
+        out.push("        spawn = { c = " + lv.spawn.c + ", r = " + lv.spawn.r + " },");
+        out.push("        goal = { c = " + lv.goal.c + ", r = " + lv.goal.r + " },");
+        out.push("        trees = {");
+        lv.trees.forEach(o => out.push("            { c = " + o.c + ", r = " + o.r + " },"));
+        out.push("        },");
+        out.push("        rocks = {");
+        lv.rocks.forEach(o => out.push("            { c = " + o.c + ", r = " + o.r + ", h = " + o.h + " },"));
+        out.push("        },");
+        out.push("        roots = {");
+        lv.roots.forEach(o => out.push("            { c = " + o.c + ", r = " + o.r + " },"));
+        out.push("        },");
+        out.push("        logs = {");
+        lv.logs.forEach(o => out.push("            { c = " + o.c + ", r = " + o.r + ", dir = " + q(o.dir) + " },"));
+        out.push("        },");
+        if (lv.hints && lv.hints.length) {
+            out.push("        hints = {");
+            lv.hints.forEach(h => out.push("            " + q(h) + ","));
+            out.push("        },");
+        }
+        out.push("        palette = {");
+        out.push("            -- 需要时在这里覆盖 DEFAULT_PALETTE 的任意项，例如：");
+        out.push("            -- water = \"2B8FA4\", land = \"6DB03C\",");
+        out.push("        },");
+        out.push("    },");
+    });
+    out.push("}");
+    return out.join("\n");
+}
+
+// ---------- 宽松解析（针对上面这套结构） ----------
+function parseLuaLevels(text) {
+    const res = [];
+    // 以 "name = " 为关卡切分锚点（导出与 config.lua 的写法一致）
+    const chunks = text.split(/\{\s*\n\s*name\s*=\s*"/).slice(1);
+    if (!chunks.length) return res;
+    chunks.forEach((chunk, idx) => {
+        const lv = makeLevel("关卡" + (idx + 1), DEFAULT_COLS, DEFAULT_ROWS);
+        const nm = /^([^"]*)"/.exec(chunk);
+        if (nm) lv.name = nm[1];
+        // map 字符画：map = { "....", "...." } 里所有以 . # 组成的字符串
+        const mapBlock = /\bmap\s*=\s*\{([\s\S]*?)\n\s*\}/.exec(chunk);
+        if (mapBlock) {
+            const rows = [...mapBlock[1].matchAll(/"([.#]+)"/g)].map(m => m[1]);
+            if (rows.length) lv.map = rows;
+        }
+        const num = (re, src) => { const m = re.exec(src); return m ? +m[1] : null; };
+        const g = (re) => { const m = re.exec(chunk); return m ? { c: +m[1], r: +m[2] } : null; };
+        const sp = g(/\bspawn\s*=\s*\{\s*c\s*=\s*(\d+)\s*,\s*r\s*=\s*(\d+)/);
+        const gl = g(/\bgoal\s*=\s*\{\s*c\s*=\s*(\d+)\s*,\s*r\s*=\s*(\d+)/);
+        if (sp) lv.spawn = sp;
+        if (gl) lv.goal = gl;
+        // ★ 花括号配对扫描取表体：不能用惰性正则 —— 表里还有一层 `{ c = .. }`，
+        //   而且空表 `trees = { }` 写成一行时会一路吃到后面 rocks 的表尾。
+        const block = (key) => {
+            const m = new RegExp("\\b" + key + "\\s*=\\s*\\{").exec(chunk);
+            if (!m) return "";
+            let depth = 1, i = m.index + m[0].length, out = "";
+            while (i < chunk.length) {
+                const ch = chunk[i];
+                if (ch === "{") depth++;
+                else if (ch === "}") { depth--; if (depth === 0) break; }
+                out += ch;
+                i++;
+            }
+            return out;
+        };
+        lv.trees = [...block("trees").matchAll(/\{\s*c\s*=\s*(\d+)\s*,\s*r\s*=\s*(\d+)\s*\}/g)]
+            .map(m => ({ c: +m[1], r: +m[2] }));
+        lv.rocks = [...block("rocks").matchAll(/\{\s*c\s*=\s*(\d+)\s*,\s*r\s*=\s*(\d+)\s*,\s*h\s*=\s*(\d+)\s*\}/g)]
+            .map(m => ({ c: +m[1], r: +m[2], h: +m[3] }));
+        lv.roots = [...block("roots").matchAll(/\{\s*c\s*=\s*(\d+)\s*,\s*r\s*=\s*(\d+)\s*\}/g)]
+            .map(m => ({ c: +m[1], r: +m[2] }));
+        lv.logs = [...block("logs").matchAll(/\{\s*c\s*=\s*(\d+)\s*,\s*r\s*=\s*(\d+)\s*,\s*dir\s*=\s*"([WSAD])"\s*\}/g)]
+            .map(m => ({ c: +m[1], r: +m[2], dir: m[3] }));
+        lv.hints = [...block("hints").matchAll(/"([^"]*)"/g)].map(m => m[1])
+            .filter(s => s && !s.startsWith("--"));
+        res.push(lv);
+    });
+    return res;
+}
+
+document.getElementById("exportBtn").addEventListener("click", () => {
+    modalMode = "export";
+    modalTitle.textContent = "导出 Lua 关卡配置（下载后跑 node _tools/apply_levels.mjs <文件> 自动落盘校验）";
+    modalText.value = generateLua();
+    modalAction.textContent = "复制";
+    modal.classList.add("show");
+});
+document.getElementById("importBtn").addEventListener("click", () => {
+    modalMode = "import";
+    modalTitle.textContent = "导入 Lua 关卡配置（粘贴 M.LEVELS = { ... } 片段）";
+    modalText.value = "";
+    modalAction.textContent = "导入";
+    modal.classList.add("show");
+});
+document.getElementById("modalClose").addEventListener("click", () => modal.classList.remove("show"));
+document.getElementById("modalDownload").addEventListener("click", () => {
+    if (modalMode !== "export") return;
+    const blob = new Blob([generateLua()], { type: "text/x-lua;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "浮岛借木.levels.lua";
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 3000);
+});
+modalAction.addEventListener("click", () => {
+    if (modalMode === "export") {
+        modalText.select();
+        document.execCommand("copy");
+        modalAction.textContent = "已复制";
+        setTimeout(() => { modalAction.textContent = "复制"; }, 1200);
+    } else {
+        const parsed = parseLuaLevels(modalText.value);
+        if (!parsed.length) { alert("未解析到任何关卡，请检查粘贴内容。"); return; }
+        levels = parsed;
+        curLevel = 0;
+        pendingLog = null;
+        refreshLevelSelect(); syncFromLevel(); draw();
+        modal.classList.remove("show");
+    }
+});
+
+// ================================================================
+// 启动
+// ================================================================
+refreshLevelSelect();
+syncFromLevel();
+setTool("land");
+window.addEventListener("resize", draw);
+</script>
+</body>
+</html>

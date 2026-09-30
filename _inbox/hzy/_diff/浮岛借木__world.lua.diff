@@ -1,0 +1,383 @@
+--- a/浮岛借木/world.lua
++++ b/浮岛借木/world.lua
+@@ -1,23 +1,32 @@
+ -- ================================================================
+ -- 浮岛借木 · 玩法内核（纯逻辑，不碰任何控件）
+ -- ================================================================
+--- 规则（与 _tmp/verify3.py 的定版参考实现逐条一致，三关解法均已验证）：
++-- 规则（与 _tools/solve_浮岛借木.py 的参考实现逐条一致，三关解法均已验证）：
+ --
+---   单位：1 格。小岛地面 = 0；小人高 2 格；树木高 2.5 格。
+---   小人每次只能向上跨 DEFAULT_MAX_STEP（0.5 格），下落不限高度。
++--   单位：1 格。小岛地面 = 0；小人高 1 格；立着的树高 1 格。
++--   小人每次只能向上跨 DEFAULT_MAX_STEP（0.25 格），下落不限高度。
++--   ★ 一切可视物体都只占**一格**（1×1）—— 没有「木桩」这个概念了，
++--     立着与倒下只是同一棵树的两个状态。
+ --
+---   ① 撞树      小人朝树木移动 → 树木朝该方向倒下，横躺两格，原地留 0.5 格树根。
+---               倒下位置（第 2、3 格）被占或越界时撞不动。
+---   ② 踩木桩    木桩顶面 - 小人脚下高度 ≤ 0.5 时可以走上去。
+---               木桩整根压在陆地上 → 顶面 1.0 格（跨不上去，得先踩树根再上）；
+---               木桩任意一端在水上 → 浮在水面，顶面 0.0 格（与岛面齐平，直接走）。
+---   ③ 立起      站在木桩某一端外侧、朝木桩方向推 → 木桩绕另一端立起（1×1 占地，2 格高）。
+---   ④ 倒下      朝立起的木桩推 → 木桩朝该方向横躺到前方两格。
+---   ⑤ 石头      不可移动、不可攀爬，挡住去路。
+---   ⑥ 胜利      小人所在格 == 终点格。
++--   ① 撞树（knock）   小人朝**立着的树**移动 → 树朝该方向倒下，
++--                     落在「树原来那一格 + 前进方向」的前一格，原地留下一个树根。
++--                     前方那一格被占或越界时撞不动。
++--   ② 踩（move）      目标格顶面 - 小人脚下高度 ≤ 0.25 时可以走上去：
++--                        · 树根                      0.25 格（能踩）
++--                        · 漂在水面上的树干          0.25 格（能踩 → 这就是「桥」）
++--                        · 陆地                      0
++--                     压在半格高以上的东西（陆地上的树干 / 树 / 石头）都跨不上去。
++--   ③ 侧面推（slide） 目标是**倒下的树**、且推动方向与它躺着的方向**垂直** →
++--                     整根滑一格，躺着的样子不变。
++--   ④ 正面推（raise） 目标是**倒下的树**、且推动方向与它躺着的方向**同轴** →
++--                     它在「原格 + 前进方向」那一格**重新立起来**（又变回一棵树）。
++--   ⑤ 石头            不可移动、不可攀爬，挡住去路。
++--   ⑥ 胜利            小人所在格 == 终点格。
+ --
+---   ★ 「木桩优先于树根」：撞断树木后木桩立刻占住原格，所以树根本身被压在
+---     木桩底下，踩不到 —— 只有把木桩推走（立起）之后，树根才露出来可以踩。
++--   ★ 为什么倒下的树要有**两个**高度（见 config 的高度模型）：
++--     压在陆地上 0.5 格（半格高，跨不上去 → 只能推）；
++--     漂在水面上 0.25 格（半浸在水里 → 能踩上去当桥）。
++--     只有一个高度的话，「推得动」和「踩得上」不可能同时成立。
+ -- ================================================================
+ 
+ ---@diagnostic disable: undefined-global
+@@ -36,6 +45,10 @@
+     D = { 1,  0 },
+ }
+ 
++-- 方向 → 轴向：0 = 南北（竖着躺），1 = 东西（横着躺）
++--   两根树干「躺着的方向」同轴 → 正面推（立起来）；垂直 → 侧面推（滑一格）
++M.AXIS = { W = 0, S = 0, A = 1, D = 1 }
++
+ -- ================================================================
+ -- ★ 基础查询
+ -- ================================================================
+@@ -60,9 +73,8 @@
+     return nil, nil
+ end
+ 
+-function M.treeIndexAt(c, r)  return findCell(state.trees, c, r) end
+-function M.stumpIndexAt(c, r) return findCell(state.stumps, c, r) end
+-function M.rootIndexAt(c, r)  return findCell(state.roots, c, r) end
++function M.treeIndexAt(c, r) return findCell(state.trees, c, r) end
++function M.rootIndexAt(c, r) return findCell(state.roots, c, r) end
+ 
+ -- 石头：返回高度（1 / 2），没有则 nil
+ function M.rockAt(c, r)
+@@ -71,26 +83,14 @@
+     return nil
+ end
+ 
+--- 木桩：返回所在下标（木桩占两格，命中任一端都算）
+-function M.logIndexOf(c, r)
+-    for i = 1, #state.logs do
+-        local lg = state.logs[i]
+-        if (lg.c1 == c and lg.r1 == r) or (lg.c2 == c and lg.r2 == r) then
+-            return i, lg
+-        end
+-    end
+-    return nil, nil
+-end
+-
+--- 木桩是否整根都在陆地上
+-function M.logOnLand(log)
+-    if not log then return false end
+-    return M.landAt(log.c1, log.r1) and M.landAt(log.c2, log.r2)
+-end
+-
+--- 木桩顶面高度：压陆地 1.0 格 / 浮水 0.0 格
+-function M.logHeight(log)
+-    if M.logOnLand(log) then
++-- 倒下的树：返回下标与那一项（占一格，dir = 它躺着的方向）
++function M.logIndexAt(c, r)
++    return findCell(state.logs, c, r)
++end
++
++-- 倒下的树的顶面高度：压陆地 0.5 格 / 漂在水面 0.25 格
++function M.logHeightAt(c, r)
++    if M.landAt(c, r) then
+         return config.DEFAULT_H_LOG_LAND
+     end
+     return config.DEFAULT_H_LOG_FLOAT
+@@ -99,42 +99,39 @@
+ -- ================================================================
+ -- ★ 该格「脚踩上去的顶面高度」
+ --   返回 nil 表示不可站立（水 / 被占）。
+---   ★ 判定顺序必须是：障碍物 → 木桩 → 树根 → 陆地。木桩排在树根前面，
+---     这样「撞断树木后木桩压住原格」才会自然成立。
++--   ★ 判定顺序：障碍物（树 / 石头）→ 倒下的树 → 树根 → 陆地。
++--     倒下的树排在树根前面：树根不挡路，所以树干可以直接压/滑过树根。
+ -- ================================================================
+ function M.heightAt(c, r)
+     if not M.inBounds(c, r) then return nil end
+     if M.treeIndexAt(c, r) then return nil end
+-    if M.stumpIndexAt(c, r) then return nil end
+     if M.rockAt(c, r) then return nil end
+-    local _, log = M.logIndexOf(c, r)
+-    if log then return M.logHeight(log) end
++    if M.logIndexAt(c, r) then return M.logHeightAt(c, r) end
+     if M.rootIndexAt(c, r) then return config.DEFAULT_H_ROOT end
+     if M.landAt(c, r) then return 0.0 end
+     return nil
+ end
+ 
+ -- ================================================================
+--- ★ 该格是否空着（用于判断树 / 木桩能否倒下去）
+---   只看「有没有东西占着」，不看是水还是陆地 —— 木桩可以倒进水里。
++-- ★ 该格是否空着（用于判断树 / 树干能否倒下去 / 滑过去）
++--   只看「有没有东西占着」，不看是水还是陆地 —— 木头可以落到水里。
++--   ★ 树根**不**算占位：它只有 0.25 格高，木头可以直接盖在它上面。
+ -- ================================================================
+ function M.isFree(c, r)
+     if not M.inBounds(c, r) then return false end
+     if M.treeIndexAt(c, r) then return false end
+-    if M.stumpIndexAt(c, r) then return false end
+     if M.rockAt(c, r) then return false end
+-    if M.logIndexOf(c, r) then return false end
++    if M.logIndexAt(c, r) then return false end
+     return true
+ end
+ 
+ -- ================================================================
+--- ★ 统计：该格上的「可视物体」类型（渲染层用，一个格最多一个）
++-- ★ 该格上的「可视物体」类型（渲染层用，一个格最多一个）
+ -- ================================================================
+ function M.occupantAt(c, r)
+     if M.treeIndexAt(c, r) then return "tree" end
+-    if M.stumpIndexAt(c, r) then return "stump" end
+     if M.rockAt(c, r) then return "rock" end
+-    if M.logIndexOf(c, r) then return "log" end
++    if M.logIndexAt(c, r) then return "log" end
+     if M.rootIndexAt(c, r) then return "root" end
+     return nil
+ end
+@@ -175,15 +172,17 @@
+         return out
+     end
+ 
+-    state.trees  = copyList(data.trees,  { "c", "r" })
+-    state.stumps = copyList(data.stumps, { "c", "r" })
+-    state.roots  = copyList(data.roots,  { "c", "r" })
+-    state.rocks  = copyList(data.rocks,  { "c", "r", "h" })
+-    state.logs   = copyList(data.logs,   { "c1", "r1", "c2", "r2" })
+-
+-    -- ③ 石头高度缺省补齐
++    state.trees = copyList(data.trees, { "c", "r" })
++    state.roots = copyList(data.roots, { "c", "r" })
++    state.rocks = copyList(data.rocks, { "c", "r", "h" })
++    state.logs  = copyList(data.logs,  { "c", "r", "dir" })
++
++    -- ③ 石头高度 / 倒树躺向的缺省补齐
+     for _, rock in ipairs(state.rocks) do
+         rock.h = tonumber(rock.h) or config.DEFAULT_H_ROCK1
++    end
++    for _, log in ipairs(state.logs) do
++        if not M.AXIS[log.dir] then log.dir = "D" end
+     end
+ 
+     -- ④ 小人与终点
+@@ -223,48 +222,54 @@
+ -- ================================================================
+ -- ★ 走一步（唯一的规则入口）
+ --   返回 action 表：
+---     kind   : "move" | "knock" | "step_on" | "raise" | "fall"
+---              | "blocked" | "rock" | "water" | "invalid"
+---     ok     : 是否成功
++--     kind   : "move"   走上可踩的一格（陆地 / 树根 / 漂在水面的树干）
++--              "knock"  撞倒立着的树
++--              "slide"  从侧面推倒下的树 → 整根滑一格
++--              "raise"  从正面推倒下的树 → 在前一格重新立起来
++--              | "blocked" | "rock" | "water" | "high" | "invalid"
++--     ok     : 是否成功（成功 = 世界确实变了 / 小人确实动了）
+ --     moved  : 小人是否换了格（表现层据此播位移动画）
+ --     changed: 世界是否发生结构变化（表现层据此重建物体层）
+ --     c, r   : 动作发生的目标格（涟漪特效定位用）
+ --     msg    : 中文描述（HUD 一次性消息）
++--
++--   ★ 顺序不是随意的：「先撞树 → 再能踩就踩 → 踩不上再推」。
++--     因为「倒下的树」在陆地上是 0.5 格，站得低时踩不上去、于是走到推的分支；
++--     而站在树根（0.25）上时它又刚好够得着，就变成踩过去 —— 两条路都合理。
+ -- ================================================================
+ function M.step(key)
+     local d = M.DIRS[key]
+     if not d then
+-        return { kind = "invalid", ok = false, moved = false, msg = "无效方向" }
++        return { kind = "invalid", ok = false, moved = false, changed = false, msg = "无效方向" }
+     end
+ 
+     local pc, pr = state.player.c, state.player.r
+     local hp = M.heightAt(pc, pr)
+     if hp == nil then
+-        return { kind = "invalid", ok = false, moved = false, msg = "当前格不可站立" }
++        return { kind = "invalid", ok = false, moved = false, changed = false, msg = "当前格不可站立" }
+     end
+ 
+     local qc, qr = pc + d[1], pr + d[2]
+     local base = { c = qc, r = qr, moved = false, changed = false }
+ 
+-    -- ① 目标是树木 → 撞断它
++    -- ① 目标是立着的树 → 朝前倒下一格，原地留下树根
+     local ti = M.treeIndexAt(qc, qr)
+     if ti then
+-        local fc1, fr1 = qc + d[1], qr + d[2]
+-        local fc2, fr2 = qc + 2 * d[1], qr + 2 * d[2]
+-        if not (M.isFree(fc1, fr1) and M.isFree(fc2, fr2)) then
++        local fc, fr = qc + d[1], qr + d[2]
++        if not M.isFree(fc, fr) then
+             base.kind = "blocked"
+             base.ok = false
+-            base.msg = "树倒不下去：后面被挡住了"
++            base.msg = "树倒不下去：前面那一格被挡住了"
+             return base
+         end
+         table.remove(state.trees, ti)
+-        state.logs[#state.logs + 1] = { c1 = qc, r1 = qr, c2 = fc1, r2 = fr1 }
++        state.logs[#state.logs + 1] = { c = fc, r = fr, dir = key }
+         state.roots[#state.roots + 1] = { c = qc, r = qr }
+         base.kind = "knock"
+         base.ok = true
+         base.changed = true
+-        base.msg = "撞断树木 → 木桩朝前横躺两格，原地留下树根"
+-        -- 木桩落下后可能正好压在树根上（顶面 1 格）→ 一般跨不上去，小人不移动
++        base.msg = "撞倒树木 → 树干朝前倒下一格，原地留下树根"
++        -- 树倒走后原地只剩 0.25 格树根，一般能顺势往前挪一步
+         local h2 = M.heightAt(qc, qr)
+         if h2 ~= nil and h2 - hp <= config.DEFAULT_MAX_STEP + EPS then
+             state.player.c, state.player.r, state.player.h = qc, qr, h2
+@@ -273,58 +278,41 @@
+         return base
+     end
+ 
+-    -- ② 目标格上有倒地木桩
+-    local li, log = M.logIndexOf(qc, qr)
++    -- ② 能踩就踩：顶面高度差在 0.25 之内 → 走上去
++    local h = M.heightAt(qc, qr)
++    if h ~= nil and h - hp <= config.DEFAULT_MAX_STEP + EPS then
++        state.player.c, state.player.r, state.player.h = qc, qr, h
++        base.kind = "move"
++        base.ok = true
++        base.moved = true
++        base.msg = "移动"
++        return base
++    end
++
++    -- ③ 踩不上去、目标格又正好是倒下的树 → 推它
++    local li, log = M.logIndexAt(qc, qr)
+     if li then
+-        local h = M.logHeight(log)
+-        if h - hp <= config.DEFAULT_MAX_STEP + EPS then
+-            state.player.c, state.player.r, state.player.h = qc, qr, h
+-            base.kind = "step_on"
+-            base.ok = true
+-            base.moved = true
+-            base.msg = "踩上木桩"
+-            return base
+-        end
+-        -- 踩不上去 → 只有站在端面外侧才算「推」，木桩才会立起来
+-        local ax, ar = log.c2 - log.c1, log.r2 - log.r1
+-        local sc = nil
+-        if d[1] == ax and d[2] == ar and pc == log.c1 - d[1] and pr == log.r1 - d[2] then
+-            sc = { c = log.c2, r = log.r2 }
+-        elseif d[1] == -ax and d[2] == -ar and pc == log.c2 - d[1] and pr == log.r2 - d[2] then
+-            sc = { c = log.c1, r = log.r1 }
+-        end
+-        if not sc then
++        local fc, fr = qc + d[1], qr + d[2]
++        if not M.isFree(fc, fr) then
+             base.kind = "blocked"
+             base.ok = false
+-            base.msg = "木桩横在这儿：踩不上去，也不是从端面推"
++            base.msg = "树干推不动：前面那一格被挡住了"
+             return base
+         end
+         table.remove(state.logs, li)
+-        state.stumps[#state.stumps + 1] = sc
+-        base.kind = "raise"
++        if M.AXIS[log.dir] == M.AXIS[key] then
++            -- 正面推（推动方向 ∥ 它躺着的方向）→ 在前一格重新立起来
++            state.trees[#state.trees + 1] = { c = fc, r = fr }
++            base.kind = "raise"
++            base.msg = "顺着树干推 → 它在前面一格重新立了起来"
++        else
++            -- 侧面推（推动方向 ⊥ 它躺着的方向）→ 整根滑一格，躺向不变
++            state.logs[#state.logs + 1] = { c = fc, r = fr, dir = log.dir }
++            base.kind = "slide"
++            base.msg = "从侧面推 → 树干整根滑了一格"
++        end
+         base.ok = true
+         base.changed = true
+-        base.msg = "从端面一推 → 木桩立了起来（1 格宽、2 格高）"
+-        return base
+-    end
+-
+-    -- ③ 目标格上是立起的木桩 → 推倒
+-    local si = M.stumpIndexAt(qc, qr)
+-    if si then
+-        local fc1, fr1 = qc + d[1], qr + d[2]
+-        local fc2, fr2 = qc + 2 * d[1], qr + 2 * d[2]
+-        if not (M.isFree(fc1, fr1) and M.isFree(fc2, fr2)) then
+-            base.kind = "blocked"
+-            base.ok = false
+-            base.msg = "木桩倒不下去：前面被挡住了"
+-            return base
+-        end
+-        table.remove(state.stumps, si)
+-        state.logs[#state.logs + 1] = { c1 = fc1, r1 = fr1, c2 = fc2, r2 = fr2 }
+-        base.kind = "fall"
+-        base.ok = true
+-        base.changed = true
+-        base.msg = "推倒立起的木桩 → 朝前横跨两格"
+         return base
+     end
+ 
+@@ -337,25 +325,16 @@
+         return base
+     end
+ 
+-    -- ⑤ 普通一格
+-    local h = M.heightAt(qc, qr)
++    -- ⑤ 水 / 台阶太高
+     if h == nil then
+         base.kind = "water"
+         base.ok = false
+-        base.msg = "前方是水 —— 先想办法把路铺过去"
+-        return base
+-    end
+-    if h - hp > config.DEFAULT_MAX_STEP + EPS then
+-        base.kind = "invalid"
+-        base.ok = false
+-        base.msg = "这个台阶比半格高，跨不上去"
+-        return base
+-    end
+-    state.player.c, state.player.r, state.player.h = qc, qr, h
+-    base.kind = "move"
+-    base.ok = true
+-    base.moved = true
+-    base.msg = "移动"
++        base.msg = "前方是水 —— 先想办法把木头推过去搭座桥"
++        return base
++    end
++    base.kind = "high"
++    base.ok = false
++    base.msg = "这里比脚下高出一大截，跨不上去 —— 撞上去试试能不能推动它"
+     return base
+ end
+ 
+@@ -364,9 +343,9 @@
+ -- ================================================================
+ function M.describe()
+     local p = state.player
+-    return string.format("小人(%d,%d,%.1f) 步数%d 树%d 木桩%d 立桩%d 树根%d",
++    return string.format("小人(%d,%d,%.2f) 步数%d 树%d 倒树%d 树根%d 石头%d",
+         p.c, p.r, p.h or 0, state.steps or 0,
+-        #state.trees, #state.logs, #state.stumps, #state.roots)
++        #state.trees, #state.logs, #state.roots, #state.rocks)
+ end
+ 
+ return M

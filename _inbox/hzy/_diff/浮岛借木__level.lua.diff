@@ -1,0 +1,311 @@
+--- a/浮岛借木/level.lua
++++ b/浮岛借木/level.lua
+@@ -2,7 +2,7 @@
+ -- 浮岛借木 · 关卡视觉层
+ --   把 world 的网格状态画成千星图片控件：
+ --     ① 地形层（海面 → 水面网格线 → 岛缘投影/侧面厚度/沙滩描边 → 草地顶面）
+---     ② 物体层（树根 → 木桩 → 立桩 → 石头 → 树木 → 终点旗）
++--     ② 物体层（树根 → 倒下的树 → 石头 → 树木 → 终点旗）
+ --     ③ 小人层（立绘 或 身体 + 头）
+ --     ④ 特效层（动作涟漪）
+ --
+@@ -19,7 +19,7 @@
+ --
+ --     深度键（见 restackWorld）：
+ --       0xxx 水面网格线 → 1xxx 地块装饰（投影 / 侧面 / 描边）→ 2xxx 草地顶面
+---       → 3xxx 物体与小人（同格内：树根 < 木桩 < 立桩 < 石头 < 树木 < 旗 < 小人）
++--       → 3xxx 物体与小人（同格内：树根 < 倒下的树 < 石头 < 树木 < 旗 < 小人）
+ --     每一段都用 `行号 × 10 + 层内次序`，行号是主序。
+ --
+ --   ★ 视觉槽位（素材优先、失败当场回退）
+@@ -41,6 +41,13 @@
+ local utils = require("utils")
+ local world = require("world")
+ 
++-- ★ 小人纯色回退的身高（格）：素材那条路的高度由 config.DEFAULT_ART_FIT.player 说了算，
++--   这里只管「没有素材时」画多高。
++--   ⚠️ 必须声明在文件顶部：下面的 playerFootOffset / playerAnchor 就要用它们。
++--      Lua 的 local 从**声明行**起才可见 —— 放到底部会让这几处静默读到 nil 全局。
++local PLAYER_BODY_RATIO = 0.94    -- 身体矩形就是「小人全身」的高度
++local PLAYER_HEAD_RATIO = 0.26    -- 头（一块深色块，压在身体上部，不是叠在上面）
++
+ -- ================================================================
+ -- ★ 格子 → UI 坐标（正交网格，不做菱形投影）
+ --   UI 坐标原点在画布中心，Y 向上为正；row 1 在最上，row 越大越靠下 = 越靠近镜头。
+@@ -81,7 +88,9 @@
+     end
+     local cell = state.cellSize or 1
+     local bodyH = state.playerBodyH
+-    if not bodyH or bodyH <= 0 then bodyH = cell * 1.88 end
++    if not bodyH or bodyH <= 0 then
++        bodyH = cell * PLAYER_BODY_RATIO
++    end
+     return bodyH / 2
+ end
+ 
+@@ -152,11 +161,14 @@
+ local SUB_SHADOW = -0.5
+ local SUB_ROOT   = 1
+ local SUB_LOG    = 2
+-local SUB_STUMP  = 3
++-- 3 空着：老版本这里是「立起的木桩」，现在立着与倒下只是同一棵树的两个状态
+ local SUB_ROCK   = 4
+ local SUB_TREE   = 5
+ local SUB_GOAL   = 6
+ local SUB_PLAYER = 7
++
++-- 小人纯色回退的身高常量 PLAYER_BODY_RATIO / PLAYER_HEAD_RATIO 声明在文件顶部
++-- （playerFootOffset 就要用，见那里的说明）。
+ 
+ local function depthKey(band, r, sub)
+     return band + (tonumber(r) or 0) * 10 + (tonumber(sub) or 0)
+@@ -436,10 +448,12 @@
+ end
+ 
+ -- ================================================================
+--- ★ 物体层：树根 → 木桩 → 立桩 → 石头 → 树木 → 终点旗
++-- ★ 物体层：树根 → 倒下的树 → 石头 → 树木 → 终点旗
+ --   world 每次发生结构变化后重建（对象池复用，控件不销毁）。
+ --   2.5D 下所有物体都站在「脚线」（cellFootY）上，并且每个都带一格深度键 ——
+ --   同一行内由下到上排，跨行则由行号决定谁压谁（见 restackWorld）。
++--   ★ 一切物体都只占一格（1×1）：立着的树 1 格高、倒下的树 0.5 格厚、
++--     树根 0.25 格高 —— 身高差全部体现在「控件高度」上。
+ -- ================================================================
+ function M.rebuildObjects()
+     local data = state.levelConfig or {}
+@@ -461,47 +475,52 @@
+                   w, cell * 0.13, palette.shadowLand, shadowAlpha, keyOf(r, SUB_SHADOW))
+     end
+ 
+-    -- ① 树根（半格高，贴地）
++    -- ① 树根（0.25 格高，贴地的一小簇）
+     for _, rt in ipairs(state.roots) do
+         local bx, foot = cellCenterX(rt.c), cellFootY(rt.r)
+-        i = paint(pool, i, parent, rect, bx, foot + cell * 0.06,
+-                  cell * 0.84, cell * 0.12, palette.rootRing, 255, keyOf(rt.r, SUB_ROOT))
+-        i = paint(pool, i, parent, rect, bx, foot + cell * 0.25,
+-                  cell * 0.72, cell * 0.34, palette.rootTop, 255, keyOf(rt.r, SUB_ROOT + 0.1))
+-    end
+-
+-    -- ② 倒地木桩（横躺两格；顶面高度 = 压陆地 1.0 格 / 浮水 0.0 格）
++        i = paint(pool, i, parent, rect, bx, foot + cell * 0.035,
++                  cell * 0.74, cell * 0.07, palette.rootRing, 255, keyOf(rt.r, SUB_ROOT))
++        i = paint(pool, i, parent, rect, bx, foot + cell * 0.14,
++                  cell * 0.60, cell * 0.21, palette.rootTop, 255, keyOf(rt.r, SUB_ROOT + 0.1))
++    end
++
++    -- ② 倒下的树（占一格；dir 决定它躺着的走向）
++    --    东西躺（A/D）＝长 1 格 × 厚 0.5 格；南北躺（W/S）＝宽 0.5 格 × 长 1 格
++    --    顶面高度（world.logHeightAt）：压陆地 0.5 格（半格高，跨不上去）
++    --                               漂水面 0.25 格（半浸在水里 → 画出来就是骑在脚线上）
+     for _, lg in ipairs(state.logs) do
+-        local h = world.logHeight(lg)
+-        local cx = (cellCenterX(lg.c1) + cellCenterX(lg.c2)) / 2
+-        local foot = math.min(cellFootY(lg.r1), cellFootY(lg.r2))
+-        local nr = math.max(lg.r1, lg.r2)          -- 深度键用更靠近镜头的那一行
+-        local thick = cell * 0.52
+-        local top = foot + h * cell
+-        local cy = top - thick / 2
+-        local len = cell * 2 - cell * 0.12
+-        shadow(cx, foot, len * 0.94, nr)
+-        i = paint(pool, i, parent, rect, cx, cy, len, thick, palette.logSide, 255, keyOf(nr, SUB_LOG))
+-        i = paint(pool, i, parent, rect, cx, cy + thick * 0.26, len, thick * 0.36,
+-                  palette.logTop, 255, keyOf(nr, SUB_LOG + 0.1))
+-        -- 两端切口
+-        i = paint(pool, i, parent, rect, cx - len / 2, cy, cell * 0.09, thick,
+-                  palette.logEnd, 255, keyOf(nr, SUB_LOG + 0.2))
+-        i = paint(pool, i, parent, rect, cx + len / 2, cy, cell * 0.09, thick,
+-                  palette.logEnd, 255, keyOf(nr, SUB_LOG + 0.3))
+-    end
+-
+-    -- ③ 立起的木桩（1×1 占地、2 格高）
+-    for _, st in ipairs(state.stumps) do
+-        local x, foot = cellCenterX(st.c), cellFootY(st.r)
+-        shadow(x, foot, cell * 0.8, st.r)
+-        i = paint(pool, i, parent, rect, x, foot + cell, cell * 0.78, cell * 2,
+-                  palette.stumpSide, 255, keyOf(st.r, SUB_STUMP))
+-        i = paint(pool, i, parent, rect, x, foot + cell * 1.88, cell * 0.86, cell * 0.24,
+-                  palette.stumpTop, 255, keyOf(st.r, SUB_STUMP + 0.1))
+-    end
+-
+-    -- ④ 石头（1 格 / 2 格高，不可移动、不可攀爬）
++        local h = world.logHeightAt(lg.c, lg.r)
++        local cx, foot = cellCenterX(lg.c), cellFootY(lg.r)
++        local thick = cell * 0.50
++        local cy = foot + (h - 0.25) * cell
++        local alongX = (world.AXIS[lg.dir] == 1)
++        local w  = alongX and cell * 0.96 or thick
++        local hh = alongX and thick or cell * 0.96
++        shadow(cx, foot, cell * 0.80, lg.r)
++        i = paint(pool, i, parent, rect, cx, cy, w, hh, palette.logSide, 255, keyOf(lg.r, SUB_LOG))
++        -- 受光的那条窄边（顺着长度方向）
++        if alongX then
++            i = paint(pool, i, parent, rect, cx, cy + hh * 0.24, w * 0.98, hh * 0.30,
++                      palette.logTop, 255, keyOf(lg.r, SUB_LOG + 0.1))
++        else
++            i = paint(pool, i, parent, rect, cx - w * 0.18, cy, w * 0.30, hh * 0.98,
++                      palette.logTop, 255, keyOf(lg.r, SUB_LOG + 0.1))
++        end
++        -- 两端的切口
++        if alongX then
++            i = paint(pool, i, parent, rect, cx - w / 2, cy, cell * 0.09, hh,
++                      palette.logEnd, 255, keyOf(lg.r, SUB_LOG + 0.2))
++            i = paint(pool, i, parent, rect, cx + w / 2, cy, cell * 0.09, hh,
++                      palette.logEnd, 255, keyOf(lg.r, SUB_LOG + 0.3))
++        else
++            i = paint(pool, i, parent, rect, cx, cy - hh / 2, w, cell * 0.09,
++                      palette.logEnd, 255, keyOf(lg.r, SUB_LOG + 0.2))
++            i = paint(pool, i, parent, rect, cx, cy + hh / 2, w, cell * 0.09,
++                      palette.logEnd, 255, keyOf(lg.r, SUB_LOG + 0.3))
++        end
++    end
++
++    -- ③ 石头（1 格 / 2 格高，不可移动、不可攀爬）
+     for _, rk in ipairs(state.rocks) do
+         local hh = tonumber(rk.h) or 1
+         local x, foot = cellCenterX(rk.c), cellFootY(rk.r)
+@@ -514,52 +533,53 @@
+                   cell * 0.70, cell * 0.22, hex, 255, keyOf(rk.r, SUB_ROCK + 0.1))
+     end
+ 
+-    -- ⑤ 树木（2.5 格高）
+-    --    素材模式：一张立绘（内容 1 格宽 × 2.5 格高），不染色，脚踩在顶面上
+-    --    回退模式：树干 + 树冠两块纯色矩形
++    -- ④ 树木（1 格高）
++    --    素材模式：一张立绘（内容 1 格宽 × 1 格高），不染色，脚踩在顶面上
++    --    回退模式：树干 + 树冠两块纯色矩形（合起来正好 1 格高）
+     local treeArt = slotUsesArt(state.treeCtrls, parent, treeSlot)
+     local ti = 1
+     for _, tr in ipairs(state.trees) do
+         local x, foot = cellCenterX(tr.c), cellFootY(tr.r)
+         shadow(x, foot, cell * 0.72, tr.r)
+         if treeArt then
+-            local fit = (config.DEFAULT_ART_FIT or {}).tree or { w = 1, h = 2.5, dy = 0 }
++            local fit = (config.DEFAULT_ART_FIT or {}).tree or { w = 1.82, h = 1.82, dy = 0.5 }
+             ti = paint(state.treeCtrls, ti, parent, treeSlot,
+                        x, foot + (fit.dy or 0) * cell,
+                        cell * (fit.w or 1), cell * (fit.h or 1), nil, nil, keyOf(tr.r, SUB_TREE))
+         else
+-            ti = paint(state.treeCtrls, ti, parent, treeSlot, x, foot + cell * 1.10,
+-                       cell * 0.30, cell * 2.20, palette.treeTrunk, 255, keyOf(tr.r, SUB_TREE))
+-            ti = paint(state.treeCtrls, ti, parent, treeSlot, x, foot + cell * 2.02,
+-                       cell * 0.96, cell * 1.05, palette.treeCanopy, 255, keyOf(tr.r, SUB_TREE + 0.1))
++            ti = paint(state.treeCtrls, ti, parent, treeSlot, x, foot + cell * 0.31,
++                       cell * 0.22, cell * 0.62, palette.treeTrunk, 255, keyOf(tr.r, SUB_TREE))
++            ti = paint(state.treeCtrls, ti, parent, treeSlot, x, foot + cell * 0.72,
++                       cell * 0.78, cell * 0.56, palette.treeCanopy, 255, keyOf(tr.r, SUB_TREE + 0.1))
+         end
+     end
+     poolTrim(state.treeCtrls, ti - 1)
+     state.treeUsed = ti - 1
+ 
+-    -- ⑥ 终点旗（单独一个池：同格内它必须压在木桩 / 石头 / 树木之上）
++    -- ⑤ 终点旗（单独一个池：同格内它必须压在石头 / 树木之上）
++    --    ★ 跟着新身高缩到 1.24 格高：比小人高一点，远处一眼认得出，又不会戳破画面
+     local gi = 1
+     local gx, gfoot = cellCenterX(state.goal.c), cellFootY(state.goal.r)
+-    gi = paint(state.goalCtrls, gi, parent, rect, gx, gfoot + cell * 0.12,
+-               cell * 1.02, cell * 0.24, palette.goalFlag, 90, keyOf(state.goal.r, SUB_GOAL))
+-    gi = paint(state.goalCtrls, gi, parent, rect, gx - cell * 0.24, gfoot + cell * 1.05,
+-               cell * 0.11, cell * 2.10, palette.goalPole, 255, keyOf(state.goal.r, SUB_GOAL + 0.1))
+-    gi = paint(state.goalCtrls, gi, parent, rect, gx + cell * 0.08, gfoot + cell * 1.72,
+-               cell * 0.66, cell * 0.52, palette.goalFlag, 255, keyOf(state.goal.r, SUB_GOAL + 0.2))
++    gi = paint(state.goalCtrls, gi, parent, rect, gx, gfoot + cell * 0.07,
++               cell * 0.92, cell * 0.14, palette.goalFlag, 90, keyOf(state.goal.r, SUB_GOAL))
++    gi = paint(state.goalCtrls, gi, parent, rect, gx - cell * 0.20, gfoot + cell * 0.62,
++               cell * 0.08, cell * 1.24, palette.goalPole, 255, keyOf(state.goal.r, SUB_GOAL + 0.1))
++    gi = paint(state.goalCtrls, gi, parent, rect, gx + cell * 0.08, gfoot + cell * 1.02,
++               cell * 0.50, cell * 0.32, palette.goalFlag, 255, keyOf(state.goal.r, SUB_GOAL + 0.2))
+     poolTrim(state.goalCtrls, gi - 1)
+     state.goalUsed = gi - 1
+ 
+     poolTrim(pool, i - 1)
+     state.objectUsed = i - 1
+ 
+-    -- ⑦ 全局重排：地块 → 物体 → 小人，全部按深度键点名顺序
++    -- ⑥ 全局重排：地块 → 物体 → 小人，全部按深度键点名顺序
+     M.restackWorld()
+ end
+ 
+ -- ================================================================
+ -- ★ 小人
+---   素材模式：一张人物立绘（内容 1 格宽 × 2 格高），不染色
+---   回退模式：身体 + 头两块纯色矩形（头是深色块，小尺寸下也能认出朝向）
++--   素材模式：一张人物立绘（内容 1 格宽 × 1 格高），不染色
++--   回退模式：身体 + 头两块纯色矩形（身体 0.94 格高就是全身，头压在身体上部）
+ --   两种模式都配一块脚下滑影（就是那一点点接触阴影，站在方块上才不飘）
+ --   ★ 控件跨关卡复用（形态在建出来的那一刻定死），否则连按 R 会留下一层层残影。
+ -- ================================================================
+@@ -581,10 +601,10 @@
+     -- 脚下滑影（只是个很淡的深色块，紧贴脚线）
+     if not state.playerShadowCtrl then
+         state.playerShadowCtrl = utils.createControl(
+-            state.rectPrefabId, 0, 0, cell * 0.7, cell * 0.16, nil, state.containerWorld)
++            state.rectPrefabId, 0, 0, cell * 0.70, cell * 0.13, nil, state.containerWorld)
+     end
+     local shadowAlpha = config.DEFAULT_OBJ_SHADOW_ALPHA or 0
+-    utils.setSize(state.playerShadowCtrl, cell * 0.70, cell * 0.13)
++    utils.setSize(state.playerShadowCtrl, cell * 0.62, cell * 0.11)
+     if shadowAlpha > 0 then
+         utils.setAlpha(state.playerShadowCtrl, palette.shadowLand, shadowAlpha)
+         utils.setVisible(state.playerShadowCtrl, true)
+@@ -593,21 +613,21 @@
+     end
+ 
+     if state.playerCtrlArt then
+-        local fit = (config.DEFAULT_ART_FIT or {}).player or { w = 1, h = 2, dy = 1 }
+-        state.playerBodyH = cell * (fit.h or 2.0)      -- 控件的实际高度（锚点换算用得到）
+-        utils.setSize(state.playerCtrl, cell * (fit.w or 1), cell * (fit.h or 2))
++        local fit = (config.DEFAULT_ART_FIT or {}).player or { w = 1.71, h = 1.71, dy = 0.5 }
++        state.playerBodyH = cell * (fit.h or 1.71)   -- 控件的实际高度（锚点换算用得到）
++        utils.setSize(state.playerCtrl, cell * (fit.w or 1.71), cell * (fit.h or 1.71))
+         utils.setVisible(state.playerCtrl, true)
+         utils.setVisible(state.playerHeadCtrl, false)   -- 立绘自带头部，不需要额外色块
+     else
+-        state.playerBodyH = cell * 1.88
+-        utils.setSize(state.playerCtrl, cell * 0.62, state.playerBodyH)
++        state.playerBodyH = cell * PLAYER_BODY_RATIO
++        utils.setSize(state.playerCtrl, cell * 0.42, cell * PLAYER_BODY_RATIO)
+         utils.setAlpha(state.playerCtrl, palette.playerBody, 255)
+         utils.setVisible(state.playerCtrl, true)
+         if not state.playerHeadCtrl then
+             state.playerHeadCtrl = utils.createControl(
+-                state.rectPrefabId, 0, 0, cell * 0.50, cell * 0.34, nil, state.containerWorld)
+-        end
+-        utils.setSize(state.playerHeadCtrl, cell * 0.50, cell * 0.34)
++                state.rectPrefabId, 0, 0, cell * 0.34, cell * PLAYER_HEAD_RATIO, nil, state.containerWorld)
++        end
++        utils.setSize(state.playerHeadCtrl, cell * 0.34, cell * PLAYER_HEAD_RATIO)
+         utils.setAlpha(state.playerHeadCtrl, palette.playerHead, 255)
+         utils.setVisible(state.playerHeadCtrl, true)
+     end
+@@ -691,8 +711,8 @@
+     utils.setPosition(state.playerShadowCtrl, px, py - playerFootOffset() - (state.cellSize or 1) * 0.01)
+     local cell = state.cellSize or 1
+     local bodyH = state.playerBodyH
+-    if not bodyH or bodyH <= 0 then bodyH = cell * 1.88 end
+-    utils.setPosition(state.playerHeadCtrl, px, py + bodyH * 0.5 - cell * 0.20)
++    if not bodyH or bodyH <= 0 then bodyH = cell * PLAYER_BODY_RATIO end
++    utils.setPosition(state.playerHeadCtrl, px, py + bodyH * 0.5 - cell * PLAYER_HEAD_RATIO * 0.5)
+ end
+ 
+ -- ================================================================
+@@ -713,7 +733,7 @@
+ function M.updateVisuals(dt)
+     local cell = state.cellSize or 1
+     local bodyH = state.playerBodyH
+-    if not bodyH or bodyH <= 0 then bodyH = cell * 1.88 end
++    if not bodyH or bodyH <= 0 then bodyH = cell * PLAYER_BODY_RATIO end
+ 
+     -- ① 小人
+     local tx, ty = playerAnchor()
+@@ -729,7 +749,8 @@
+     utils.setPosition(state.playerCtrl, state.playerVisX, state.playerVisY)
+     utils.setPosition(state.playerShadowCtrl, state.playerVisX,
+                       state.playerVisY - playerFootOffset() - cell * 0.01)
+-    utils.setPosition(state.playerHeadCtrl, state.playerVisX, state.playerVisY + bodyH * 0.5 - cell * 0.20)
++    utils.setPosition(state.playerHeadCtrl, state.playerVisX,
++                      state.playerVisY + bodyH * 0.5 - cell * PLAYER_HEAD_RATIO * 0.5)
+ 
+     -- ② 涟漪
+     if state.rippleActive and state.rippleCtrl then

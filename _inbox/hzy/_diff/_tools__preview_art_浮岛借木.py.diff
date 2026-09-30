@@ -1,0 +1,156 @@
+--- a/_tools/preview_art_浮岛借木.py
++++ b/_tools/preview_art_浮岛借木.py
+@@ -9,9 +9,12 @@
+ 
+     cellSize / boardCy / cellCenterX / cellCenterY / cellFootY
+     草地 = 一张 1.138×1.138 格的立绘（顶面在素材里是正方形，正好铺满一格）
+-    树木 = 内容 1 格宽 × 2.5 格高，脚踩在脚线上
+-    人物 = 内容 1 格宽 × 2 格高，脚踩在脚线上
++    树木 = 内容 1 格宽 × 1 格高，脚踩在脚线上（控件按 DEFAULT_ART_FIT 放大到 1.819 格）
++    人物 = 内容 1 格宽 × 1 格高，脚踩在脚线上（控件按 DEFAULT_ART_FIT 放大到 1.707 格）
+     其余 = 纯色矩形 + 调色板（与回退路径一致）
++           · 树根 0.25 格高、倒下的树按 dir 分东西躺 / 南北躺（厚 0.5 格、
++             顶面按水陆取 DEFAULT_H_LOG_LAND / DEFAULT_H_LOG_FLOAT）、
++             石头按 h 取 1 / 2 格、终点旗 1.24 格高
+ 
+ 用法：
+   python _tools/preview_art_浮岛借木.py [关卡号, 默认 1]
+@@ -69,6 +72,25 @@
+         if started:
+             cur.append(ch)
+ 
++    def table_body(block, key):
++        """取 `key = { ... }` 的表体：花括号配对扫描，不用惰性正则。
++        （惰性正则在 `trees = { },` 这种空表上会一路吞到后面某个 `},` 为止）"""
++        m = re.search(r"\b%s\s*=\s*\{" % key, block)
++        if not m:
++            return ""
++        depth, i = 0, m.end() - 1
++        start = i + 1
++        while i < len(block):
++            ch = block[i]
++            if ch == "{":
++                depth += 1
++            elif ch == "}":
++                depth -= 1
++                if depth == 0:
++                    return block[start:i]
++            i += 1
++        return ""
++
+     def parse_level(block):
+         lv = {}
+         lv["name"] = re.search(r'name\s*=\s*"([^"]*)"', block).group(1)
+@@ -77,11 +99,10 @@
+             m = re.search(r"%s\s*=\s*\{\s*c\s*=\s*(\d+)\s*,\s*r\s*=\s*(\d+)" % key, block)
+             lv[key] = (int(m.group(1)), int(m.group(2)))
+         for key in ("trees", "roots", "rocks", "logs"):
+-            m = re.search(r"%s\s*=\s*\{(.*?)\n\s*\},?\n" % key, block, re.S)
+-            body = m.group(1) if m else ""
++            body = table_body(block, key)
+             if key == "logs":
+-                lv[key] = [(int(a), int(b), int(c), int(d)) for a, b, c, d in
+-                           re.findall(r"c1\s*=\s*(\d+)\s*,\s*r1\s*=\s*(\d+)\s*,\s*c2\s*=\s*(\d+)\s*,\s*r2\s*=\s*(\d+)", body)]
++                lv[key] = [(int(a), int(b), d) for a, b, d in
++                           re.findall(r"c\s*=\s*(\d+)\s*,\s*r\s*=\s*(\d+)\s*,\s*dir\s*=\s*\"(\w)\"", body)]
+             else:
+                 lv[key] = [(int(a), int(b)) for a, b in re.findall(r"c\s*=\s*(\d+)\s*,\s*r\s*=\s*(\d+)", body)]
+             if key == "rocks":
+@@ -107,9 +128,9 @@
+         "h_root": num("DEFAULT_H_ROOT"),
+         "h_log_land": num("DEFAULT_H_LOG_LAND"),
+         "h_log_float": num("DEFAULT_H_LOG_FLOAT"),
++        "h_tree": num("DEFAULT_H_TREE"),
+         "h_rock1": num("DEFAULT_H_ROCK1"),
+         "h_rock2": num("DEFAULT_H_ROCK2"),
+-        "h_stump": num("DEFAULT_H_STUMP"),
+         "levels": [parse_level(b) for b in blocks],
+     }
+     return cfg
+@@ -230,38 +251,46 @@
+         rect(canvas, d, g.px(c), g.py(g.foot(r)) + cell * 0.01, cell * wcells, cell * 0.13,
+              p["shadowLand"], obj_a)
+ 
+-    # ④ 物体（与 level.lua 同序：树根 → 木桩 → 立桩 → 石头 → 树 → 旗 → 小人）
++    # ④ 物体（与 level.lua 同序：树根 → 倒下的树 → 石头 → 树 → 旗 → 小人）
++    #    ★ 一切物体都只占一格：树 1 格高、倒下的树 0.5 格厚、树根 0.25 格高。
+     for (c, r) in lv["roots"]:
+         x, fy = g.px(c), g.py(g.foot(r))
+-        rect(canvas, d, x, fy - cell * 0.06, cell * 0.84, cell * 0.12, p["rootRing"])
+-        rect(canvas, d, x, fy - cell * 0.25, cell * 0.72, cell * 0.34, p["rootTop"])
+-
+-    for (c1, r1, c2, r2) in lv["logs"]:
+-        on_land = g.land(lv, c1, r1) and g.land(lv, c2, r2)
+-        h = cfg["h_log_land"] if on_land else cfg["h_log_float"]
+-        mid = (g.px(c1) + g.px(c2)) / 2
+-        fy = max(g.py(g.foot(r1)), g.py(g.foot(r2)))
+-        thick = cell * 0.52
+-        top = fy - h * cell - thick
+-        rect(canvas, d, mid, fy - 0.01 * cell, cell * 2 * 0.94, cell * 0.13, p["shadowLand"], obj_a)
+-        rect(canvas, d, mid, top + thick / 2, cell * 2 - cell * 0.12, thick, p["logSide"])
+-        rect(canvas, d, mid, top + thick * 0.5 - thick * 0.26, cell * 2 - cell * 0.12,
+-             thick * 0.36, p["logTop"])
+-        rect(canvas, d, mid - (cell * 2 - cell * 0.12) / 2, top + thick / 2, cell * 0.09, thick, p["logEnd"])
+-        rect(canvas, d, mid + (cell * 2 - cell * 0.12) / 2, top + thick / 2, cell * 0.09, thick, p["logEnd"])
++        rect(canvas, d, x, fy - cell * 0.035, cell * 0.74, cell * 0.07, p["rootRing"])
++        rect(canvas, d, x, fy - cell * 0.14, cell * 0.60, cell * 0.21, p["rootTop"])
++
++    # 倒下的树：dir 决定躺着的走向（A/D 东西躺 → 长 1 格 × 厚 0.5 格；
++    # W/S 南北躺 → 宽 0.5 格 × 长 1 格）。顶面高度按脚下水陆取 0.5 / 0.25 格。
++    for (c, r, ldir) in lv["logs"]:
++        h = cfg["h_log_land"] if g.land(lv, c, r) else cfg["h_log_float"]
++        x, fy = g.px(c), g.py(g.foot(r))
++        thick = cell * 0.50
++        cy = fy - (h - 0.25) * cell
++        along_x = ldir in ("A", "D")
++        w = cell * 0.96 if along_x else thick
++        hh = thick if along_x else cell * 0.96
++        obj_shadow(c, r, 0.80)
++        rect(canvas, d, x, cy, w, hh, p["logSide"])
++        if along_x:
++            rect(canvas, d, x, cy - hh * 0.24, w * 0.98, hh * 0.30, p["logTop"])
++            rect(canvas, d, x - w / 2, cy, cell * 0.09, hh, p["logEnd"])
++            rect(canvas, d, x + w / 2, cy, cell * 0.09, hh, p["logEnd"])
++        else:
++            rect(canvas, d, x - w * 0.18, cy, w * 0.30, hh * 0.98, p["logTop"])
++            rect(canvas, d, x, cy - hh / 2, w, cell * 0.09, p["logEnd"])
++            rect(canvas, d, x, cy + hh / 2, w, cell * 0.09, p["logEnd"])
+ 
+     for (c, r) in lv["rocks"]:
+-        hh = cfg["h_rock2"] if r in () else cfg["h_rock1"]
++        hh = cfg["h_rock1"]
+         idx_h = lv.get("rockH")
+-        if idx_h:
+-            k = lv["rocks"].index((c, r))
+-            hh = cfg["h_rock2"] if idx_h[k] >= 2 else cfg["h_rock1"]
++        if idx_h and len(idx_h) > lv["rocks"].index((c, r)):
++            hh = cfg["h_rock2"] if idx_h[lv["rocks"].index((c, r))] >= 2 else cfg["h_rock1"]
+         hexcol = p["rock2Top"] if hh >= 2 else p["rock1Top"]
+         x, fy = g.px(c), g.py(g.foot(r))
+         obj_shadow(c, r, 0.80)
+         rect(canvas, d, x, fy - hh * cell / 2, cell * 0.86, hh * cell, p["rockSide"])
+         rect(canvas, d, x, fy - hh * cell + cell * 0.11, cell * 0.70, cell * 0.22, hexcol)
+ 
++    # 树（1 格高）：素材模式 = 一张立绘，脚踩在脚线上
+     ft = cfg["fit"]["tree"]
+     tree_img = scaled(os.path.join(ART, "树木.png"), cell * ft["w"], cell * ft["h"])
+     for (c, r) in lv["trees"]:
+@@ -269,12 +298,14 @@
+         paste_center(canvas, tree_img, g.px(c), g.py(g.foot(r) + ft["dy"] * cell))
+     d = ImageDraw.Draw(canvas, "RGBA")
+ 
++    # 终点旗（1.24 格高：比小人高一点，远处一眼认得出）
+     gc, gr = lv["goal"]
+     x, fy = g.px(gc), g.py(g.foot(gr))
+-    rect(canvas, d, x, fy - cell * 0.12, cell * 1.02, cell * 0.24, p["goalFlag"], 90)
+-    rect(canvas, d, x - cell * 0.24, fy - cell * 1.05, cell * 0.11, cell * 2.10, p["goalPole"])
+-    rect(canvas, d, x + cell * 0.08, fy - cell * 1.72, cell * 0.66, cell * 0.52, p["goalFlag"])
+-
++    rect(canvas, d, x, fy - cell * 0.07, cell * 0.92, cell * 0.14, p["goalFlag"], 90)
++    rect(canvas, d, x - cell * 0.20, fy - cell * 0.62, cell * 0.08, cell * 1.24, p["goalPole"])
++    rect(canvas, d, x + cell * 0.08, fy - cell * 1.02, cell * 0.50, cell * 0.32, p["goalFlag"])
++
++    # 小人（素材：内容 1 格高）
+     fp = cfg["fit"]["player"]
+     hero_img = scaled(os.path.join(ART, "人物.png"), cell * fp["w"], cell * fp["h"])
+     sc, sr = lv["spawn"]
