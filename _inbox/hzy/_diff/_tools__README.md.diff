@@ -1,0 +1,156 @@
+# 统一 diff：仓库现有版本(a) -> hzy 提交版本(b)
+# 换行符已归一化为 LF 后再比，因此本 diff 不含 CRLF/LF 噪音。
+# 生成方式： python + difflib.unified_diff，上下文 3 行。
+# 用法： git apply --check 本文件（若基线一致）或人工逐块 review。
+
+--- a/_tools/README.md
++++ b/_tools/README.md
+@@ -25,7 +25,7 @@
+ | `_webclient.mjs` | Web 模拟器的极小 HTTP 客户端 |
+ | `_webprobe.mjs` | Web 端综合探针：同时验证「平台标签两态反色」与「键盘驱动玩家位移」 |
+ | `apply_levels.mjs` | **把编辑器导出的关卡 Lua 落进 `config.lua`**（大括号配平精确替换 + 自动跑两道静态校验），`--extract` 可反向导出 |
+-| `verify_menu.mjs` | Web 端端到端回归 **选关 / 通关 / 失败** 三套面板（8 场景 17 项） |
++| `verify_menu.mjs` | Web 端端到端回归 **选关 / 通关 / 失败** 三套面板（8 场景 25 项） |
+ | `render_scene.mjs` | 把 `scene.nodes` 矢量数据渲染成 PNG 核对 UI 布局。场景 `none/select/win/fail/cleared` |
+ | `glyph_check.mjs` | **字形覆盖检测**：用「位图比对私用区码位」判断某字体是否真的有某符号（避免豆腐块） |
+ | `_px.mjs` | 采样 PNG 像素（核对截图真实配色，判断「哪一层盖住了画面」） |
+@@ -45,8 +45,8 @@
+ 
+ ```bash
+ # 1) 启动 Web 服务（后台常驻，改存档后网页会自动重载）
+-node "C:/Users/JingSu/.workbuddy/binaries/node/workspace/node_modules/beyond-simulator-web/dist/server.js" \
+-     --workspace "E:/千星/千星游戏" --port 4173
++node "C:/Users/lenovo/.workbuddy/binaries/node/workspace/node_modules/beyond-simulator-web/dist/server.js" \
++     --workspace "C:/Users/lenovo/Desktop/千星游戏/千星割绳子游戏" --port 4173
+ 
+ # 2) 生成「浏览器试玩就绪」存档（依赖上一步的 sim-ready.save.json）
+ node _tools/qxqy_websave.mjs --game TickHop \
+@@ -208,9 +208,9 @@
+ 
+ ## 安装位置（已就绪）
+ 
+-- MCP：`C:\Users\JingSu\.workbuddy\binaries\node\workspace\node_modules\beyond-simulator-mcp`
+-- Web：`C:\Users\JingSu\.workbuddy\binaries\node\workspace\node_modules\beyond-simulator-web`
+-- MCP 配置：`C:\Users\JingSu\.workbuddy\mcp.json`（服务名 `qxqy-simulator`，工作区指向本仓库根）
++- MCP：`C:\Users\lenovo\.workbuddy\binaries\node\workspace\node_modules\beyond-simulator-mcp`
++- Web：`C:\Users\lenovo\.workbuddy\binaries\node\workspace\node_modules\beyond-simulator-web`
++- MCP 配置：`C:\Users\lenovo\.workbuddy\mcp.json`（服务名 `qxqy-simulator`，工作区指向本仓库根）
+   → 需在 WorkBuddy「连接器管理」里对该服务点「信任」后，工具才会出现在会话中。
+   （未信任时用下面的 `qxqy*.mjs` 直接驱动即可，不依赖 MCP。）
+ 
+@@ -245,8 +245,11 @@
+ | `--params '<json>'` | 手动指定/覆盖脚本参数 |
+ | `--fix-zorder <帧>` | 抵消模拟器渲染器的 z 序反置 + 把平台标签提到最上层 + 隐藏默认工程脚手架 |
+ | `--signal <名> [--signal-str <值>]` | 模拟服务器下发一个客户端信号 |
+-| `--key <Enum.KeyEventType 名>` | 可重复；配合 `--key-at <帧>` 在第 N 帧注入按键事件 |
+-| `--probe-player <帧数>` | 逐帧打印玩家位姿 `x/y/vx/vy/ground`（验证输入是否真的驱动了角色） |
++| `--key <Enum.KeyEventType 名>` | 可重复；配合 `--key-at <帧>` 在第 N 帧注入按键事件。也可写 `--key Name@45` 逐键指定帧号（多键接力必备，如先空格进建造、再 F 放置） |
++| `--key-at <帧号>` | `--key` 未写 `@帧号` 时的默认注入帧 |
++| `--no-freeze` | 不冻结模拟器实时钟。默认**会**先 `pause` 掉那路 33ms 自动推进，使「`--steps n` 帧」==「引擎 frame n 帧」；见「注入帧号漂移」 |
++| `--probe-player <帧数>` | 逐帧打印玩家位姿 `x/y/vx/vy` + 输入链路（`keys`/`kR`/`ix`）+ 世界摘要（`mat`/`land`/`star`）+ `build`/`cur`/`won`/`mode`/`face`，并附 `[K]` 引擎派发打点 |
++| `--teleport-goal <帧号>` | 在第 N 帧把玩家直接放到星门格，验证 `checkGoal` → 结算面板（免去把整关建造编排硬编码进命令行） |
+ | `--probe <帧>` / `--probe start` | 用 `game.PrintClientUITree()` 转储控件树（进 logs） |
+ | `--probe-walk <帧>` | 逐控件打印 `act/vis/pos/size/color`（可定位「存在但不显示」） |
+ | `--probe-timeline <帧>` | 逐帧打印黑幕 alpha 与各容器子节点数 |
+@@ -254,6 +257,64 @@
+ | `--tree` | 打印 play `get` 返回的 state 概览 |
+ | `--stretch <帧>` / `--hide-bg <帧>` | 诊断用：撑大 / 隐藏指定容器 |
+ 
++## ⚠️ 注入帧号漂移：「第 N 圈循环」≠「引擎第 N 帧」
++
++**现象**：`--key KeyboardMoveRightKeyDown --key-at 20` 有时玩家纹丝不动，有时却能动，
++而且改个 `--steps` 结果又不一样，看起来像「按键随机失灵」。
++
++**根因**：模拟器 worker 里除了我们显式调用的 `step`，还有一个**独立的实时钟**在推进帧
++（`studio/host/worker.js`）：
++
++```js
++const CLOCK_INTERVAL_MS = 33
++const clockTimer = setInterval(tickClock, CLOCK_INTERVAL_MS)   // 按墙钟时间补帧
++function tickClock() {
++  const status = studio.playStatus()
++  if (!status.running || status.paused) { lastTick = 0; accumulator = 0; return }
++  accumulator += Math.min(0.25, Math.max(0, (now - lastTick) / 1000))
++  while (accumulator >= FIXED_DT && steps < MAX_CATCHUP_STEPS) { studio.playStep(FIXED_DT, …) }
++}
++```
++
++于是 `qxqy_mount.mjs` 的循环圈数（每次 `await` 一轮 MCP 往返）与引擎真实帧号会脱钩，
++**偏移量随往返耗时在 10~20 帧之间漂移**。实测对照（同一个 `--key-at 20`，`--probe-player` 里的 `[K]` 打点）：
++
++```
++# 引擎第 20 帧注入按键        ← 挂载循环自报的帧号
++[K] 引擎派发 … @f=30 keys=true kR=false   ← 引擎真实帧号是 30（漂了 10 帧）
++```
++
++**为什么以前没被发现**：`--probe-player` 的探针带 `__pFrame <= maxFrame` 截断，
++而调用时 `maxFrame` 恰好等于 `--steps`，多出来的帧**不会打印**，
++`grep -c` 出来的行数永远等于 `--steps`，看起来时序完全确定。
++
++**规避**（`qxqy_mount.mjs` 已内置）：推进前先 `action: 'pause'`。
++它只置 `session.debugPaused`，切掉上面那路自动推进；**显式 `step` 仍会正常调用
++`OnUpdate` / `OnLevelUpdate`**（`clock.paused` 是另一条由 Lua `SetLevelTimePaused` 控制的开关，
++`pause` 不会碰它）。冻结后：
++
++```
++引擎第 40 帧注入按键
++[K] 引擎派发 … @f=39 keys=true
++# 推进结束：引擎 frame=90 time=3.000s     ← 与 --steps 严格相等
++```
++
++于是 `--key-at` 变成**可精确复现的引擎帧号**。用 `--no-freeze` 可退回旧行为。
++
++### ⚠️ 配合它一起踩到的坑：黑幕过渡期会吞掉按键
++
++冻结帧号后暴露出来的真实行为——`loadLevel()` 会 `fadeScreen.start()` 并显式置
++`state.keysEnabled = false`，**待黑幕散尽（约 23 帧 ≈ 0.75s）才在 `OnUpdate` 里放开**：
++
++```
++f=26 keys=true        ← 黑幕散尽，开始接受操作
++f=20 注入 → keys=false → 监听器 return false → 被丢弃，玩家全程静止（正确行为）
++f=40 注入 → keys=true  → kR=true → vx 0→201.6 px/s，x 240→513.6（正确驱动）
++```
++
++所以**任何「按键没反应」的排查都要先看注入帧是否落在过渡期里**——
++`--probe-player` 的 `keys=` 列和 `[K]` 打点就是为这个加的。
++
+ ## 已解决：原「两个能力缺口」
+ 
+ ### 1. 脚本参数不传递 → 用参数兜底解决（不改工程源码）
+@@ -278,8 +339,23 @@
+ 
+ | guid | kind | 用途 |
+ |---|---|---|
+-| 2000001 | image（`imageId: 100001` = `rect` 原语） | 可被 `imageColor` 染色的纯色底图 → `rectPrefabId` |
+-| 2000002 | textbox | 文本 → `textPrefabId` |
++| 1073741870 | image（`imageId: 100001` = `rect` 原语） | 可被 `imageColor` 染色的纯色底图 → `rectPrefabId` |
++| 1073741868 | textbox | 文本 → `textPrefabId` |
++
++> ★ 这两个 guid **刻意与真机编辑器内置模板的元件索引同源**（原来的自造值 2000001/2000002
++> 已废弃）。这样游戏里 `config.DEFAULT_PREFAB_*` 的回退值在模拟器和真机**两边都能命中**，
++> 不会再出现「模拟器跑通、搬进真机还要另填参数」的错位。
++> 索引来源见 `_shared/编辑器元件索引.md`。
++> 改 guid 要同时改 `_sim_common.mjs` 的 `SIM_TEMPLATE_GUIDS` 与 `qxqy_simsave.mjs` 的两个
++> `GUID_*` 常量（前者的值会经 `--preset sim` 灌进参数兜底，两者必须一致），然后重新生成存档。
++
++> ⚠️ **别把「模拟器画面」当「真机画面」的担保。** 模拟器**只代理** `100001–100006` 六种
++> 基础图元（`100001` 矩形 / `100002` 圆 / `100003` 等腰三角 / `100004` 四角星 /
++> `100005` 五角星 / `100006` 圆环），其余 `imageId` 一律画成缺失框。这里
++> `imageId: 100001` 就是拿矩形代理替身，**不是官方素材 ID**，真机不认。
++> 所以「模拟器里格子是漂亮的纯色矩形」推不出「真机也是」——
++> 真机那边图片元件没配图的话，画面会是满屏彩色的 **`?`**。
++> 排查与修法见 `_shared/编辑器元件索引.md` 第二节。
+ 
+ 原型节点直接克隆存档里已有的 image / textbox 节点，保证 `giaRaw`、`transformByPlatform`
+ 等结构合法；再清空模板根 `n1` 的装饰子节点、清空脚本表（由挂载驱动重新灌入）。
+@@ -385,8 +461,8 @@
+ ## Web 编辑器
+ 
+ ```bash
+-node "C:/Users/JingSu/.workbuddy/binaries/node/workspace/node_modules/beyond-simulator-web/dist/server.js" \
+-     --workspace "E:/千星/千星游戏" --port 4173
++node "C:/Users/lenovo/.workbuddy/binaries/node/workspace/node_modules/beyond-simulator-web/dist/server.js" \
++     --workspace "C:/Users/lenovo/Desktop/千星游戏/千星割绳子游戏" --port 4173
+ ```
+ 
+ - `http://127.0.0.1:4173/` 只读预览工作区存档（配合 MCP 时自动刷新）

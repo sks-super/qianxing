@@ -1,0 +1,103 @@
+# 统一 diff：仓库现有版本(a) -> hzy 提交版本(b)
+# 换行符已归一化为 LF 后再比，因此本 diff 不含 CRLF/LF 噪音。
+# 生成方式： python + difflib.unified_diff，上下文 3 行。
+# 用法： git apply --check 本文件（若基线一致）或人工逐块 review。
+
+--- a/_shared/_check_refs.py
++++ b/_shared/_check_refs.py
+@@ -15,6 +15,10 @@
+ 4. config.<全大写常量> -> 是否在 config.lua 中定义
+ 5. 编辑器.html 的 DEFAULTS <-> config.lua 的 DEFAULT_* 数值同步
+    （key 与 DEFAULT_<KEY 大写> 机械对应；少数历史特例由 SPECIAL 表兜底）
++6. config.DEFAULT_PREFAB_* <-> _tools/_sim_common.mjs 的 SIM_TEMPLATE_GUIDS
++   <-> _tools/qxqy_simsave.mjs 的 GUID_*：真机元件索引与模拟器模板 guid 不许漂移
++   （含 纯色底图两级：矩形 / 图片；以及 海水/草地/树木/人物 四个美术素材元件）
++   ★ 某工程 config 里没有该常量时自动跳过，所以只有用到它的工程才需要补。
+ """
+ import re
+ import os
+@@ -190,6 +194,84 @@
+                 print(f"  [一致]   {k} = {cv}")
+         print(f"  -> {diff} 处不一致\n")
+ 
++
++# ---------- 7. 真机元件索引 ↔ 模拟器模板 guid（不许漂移） ----------
++#   见 _shared/编辑器元件索引.md 约定 2：
++#     同一个索引要在三处同时出现 —— config.DEFAULT_PREFAB_*、_sim_common.SIM_TEMPLATE_GUIDS、
++#     qxqy_simsave.GUID_*。任一处改了、别处没跟，就会出现
++#     「模拟器里跑通、搬进真机要另填参数」的错位。
++PREFAB_MAP = [
++    # config 常量名                    模拟器参数名             simsave 常量名
++    # 纯色底图有两级：首选「矩形」，拿不到控件就回退「图片」（见 utils.instantiateRect）
++    ("DEFAULT_PREFAB_RECT", "rectPrefabId", "GUID_RECT"),
++    ("DEFAULT_PREFAB_IMAGE", "imagePrefabId", "GUID_IMAGE"),
++    ("DEFAULT_PREFAB_TEXT", "textPrefabId", "GUID_TEXT"),
++    ("DEFAULT_PREFAB_CONTAINER", "containerPrefabId", "GUID_CONTAINER"),
++    # 美术素材元件（海水 / 草地 / 树木 / 人物）—— 只有 浮岛借木 在用，
++    # 其余工程 config 里没有这几个常量时会被下面的 `continue` 跳过。
++    ("DEFAULT_PREFAB_WATER", "waterPrefabId", "GUID_WATER"),
++    ("DEFAULT_PREFAB_LAND", "landPrefabId", "GUID_LAND"),
++    ("DEFAULT_PREFAB_TREE", "treePrefabId", "GUID_TREE"),
++    ("DEFAULT_PREFAB_PLAYER", "playerPrefabId", "GUID_PLAYER"),
++]
++WF = os.path.dirname(os.path.abspath(D))
++sim_common_p = os.path.join(WF, "_tools", "_sim_common.mjs")
++simsave_p = os.path.join(WF, "_tools", "qxqy_simsave.mjs")
++cfg_full = raw.get("config.lua", "")
++
++if not os.path.exists(sim_common_p) or not os.path.exists(simsave_p):
++    print("=== 元件索引一致性（config ↔ 模拟器模板 guid） ===")
++    print(f"  [跳过] 找不到 _tools/_sim_common.mjs 或 _tools/qxqy_simsave.mjs（工作区根={WF}）\n")
++else:
++    sim_src = open(sim_common_p, "r", encoding="utf-8", errors="replace").read()
++    sv_src = open(simsave_p, "r", encoding="utf-8", errors="replace").read()
++    print("=== 元件索引一致性（config ↔ 模拟器模板 guid） ===")
++    checked = 0
++    for cfg_name, sim_key, sv_name in PREFAB_MAP:
++        cm = re.search(rf'M\.{cfg_name}\s*=\s*(\d+)', cfg_full)
++        if not cm:
++            continue          # 本工程没用这个元件，跳过（如 TickHop 未用容器节点）
++        c_val = cm.group(1)
++        sm = re.search(rf'\b{sim_key}\s*:\s*(\d+)', sim_src)
++        vm = re.search(rf'\bconst\s+{sv_name}\s*=\s*(\d+)', sv_src)
++        if not sm:
++            problems.append(f"[索引漂移] {cfg_name}={c_val} 但 _sim_common.mjs 的 {sim_key} 未定义")
++            print(f"  [缺] {cfg_name} -> _sim_common.{sim_key} 不存在")
++            continue
++        if not vm:
++            problems.append(f"[索引漂移] {cfg_name}={c_val} 但 qxqy_simsave.mjs 的 {sv_name} 未定义")
++            print(f"  [缺] {cfg_name} -> qxqy_simsave.{sv_name} 不存在")
++            continue
++        bad = False
++        if sv_src and vm.group(1) != c_val:
++            bad = True
++            problems.append(
++                f"[索引漂移] {cfg_name}={c_val}，但 qxqy_simsave.{sv_name}={vm.group(1)}")
++        if sm.group(1) != c_val:
++            bad = True
++            problems.append(
++                f"[索引漂移] {cfg_name}={c_val}，但 _sim_common.{sim_key}={sm.group(1)}")
++        if bad:
++            print(f"  [不一致] {cfg_name}={c_val} / _sim_common.{sim_key}={sm.group(1)}"
++                  f" / qxqy_simsave.{sv_name}={vm.group(1)}")
++        else:
++            checked += 1
++            print(f"  [一致]   {cfg_name} = _sim_common.{sim_key} = {sv_name} = {c_val}")
++
++    # 同一个索引的两个名字（容器节点 / 脚本宿主）也要自洽
++    host = re.search(r'M\.DEFAULT_HOST_CONTAINER\s*=\s*(\d+)', cfg_full)
++    cont = re.search(r'M\.DEFAULT_PREFAB_CONTAINER\s*=\s*(\d+)', cfg_full)
++    if host and cont:
++        if host.group(1) != cont.group(1):
++            problems.append(
++                f"[索引漂移] DEFAULT_HOST_CONTAINER={host.group(1)} 与 "
++                f"DEFAULT_PREFAB_CONTAINER={cont.group(1)} 不是同一个索引")
++            print(f"  [不一致] DEFAULT_HOST_CONTAINER={host.group(1)} != "
++                  f"DEFAULT_PREFAB_CONTAINER={cont.group(1)}")
++        else:
++            print(f"  [一致]   DEFAULT_HOST_CONTAINER = DEFAULT_PREFAB_CONTAINER = {cont.group(1)}")
++    print(f"  -> 已核对 {checked} 个元件索引\n")
++
+ print("=== 引用一致性问题 ===")
+ if problems:
+     for p in problems:

@@ -1,0 +1,279 @@
+# 统一 diff：仓库现有版本(a) -> hzy 提交版本(b)
+# 换行符已归一化为 LF 后再比，因此本 diff 不含 CRLF/LF 噪音。
+# 生成方式： python + difflib.unified_diff，上下文 3 行。
+# 用法： git apply --check 本文件（若基线一致）或人工逐块 review。
+
+--- a/_tools/qxqy_mount.mjs
++++ b/_tools/qxqy_mount.mjs
+@@ -13,18 +13,31 @@
+ //   --signal / --signal-str  试玩启动后模拟服务器下发一个客户端信号（验证入站通道）
+ //   --key <Enum.KeyEventType 名>  [--key-at 帧号]  可重复；在第 N 帧注入按键事件
+ //                              （例：--key KeyboardMoveRightKeyDown --key-at 20）
+-//   --probe-player <帧数>    逐帧打印玩家位姿，验证输入是否真的驱动了角色
++//                              帧号以引擎真实帧为准（默认会先冻结实时钟，见下）
++//                              逐键指定帧号：--key KeyboardJumpKeyDown@40
++//                              （多键接力必备，例如先空格进建造、再 F 放置）
++//   --no-freeze              不冻结模拟器实时钟（默认冻结）。冻结后「--steps 帧」
++//                            == 「引擎 frame 帧」，注入点可精确复现；不冻结时
++//                            worker 的 33ms 实时钟会额外推进帧，帧号会漂移。
++//   --probe-player <帧数>    逐帧打印玩家位姿 + 输入链路 + 世界摘要，验证输入是否
++//                            真的驱动了角色/建造/收集（含 [K] 引擎派发打点）
++//   --teleport-goal <帧号>   在第 N 帧把玩家置于星门格，验证 checkGoal → 结算面板
+ //   --probe-walk <帧号> / --probe <帧号|start> / --probe-timeline <帧数>
+ //   --scene / --tree / --fix-zorder <帧> / --hide-bg <帧> / --stretch <帧>
+ 
+ import { spawn } from 'node:child_process';
+ import { mkdirSync, readdirSync, readFileSync, writeFileSync, statSync } from 'node:fs';
+ import path from 'node:path';
++import os from 'node:os';
++import { fileURLToPath } from 'node:url';
+ import { SIM_TEMPLATE_GUIDS, buildParamShim, buildZOrderFix, collectLua } from './_sim_common.mjs';
+ 
++// ★ 不再写死某台机器的绝对路径：默认按「本机用户目录」与「本脚本所在工作区」推导。
++const HERE = path.dirname(fileURLToPath(import.meta.url));
+ const MCP_ENTRY = process.env.QXQY_MCP_ENTRY
+-  || 'C:/Users/JingSu/.workbuddy/binaries/node/workspace/node_modules/beyond-simulator-mcp/dist/index.js';
+-const WORKSPACE = process.env.QXQY_WORKSPACE || 'E:/千星/千星游戏';
++  || path.join(os.homedir(), '.workbuddy', 'binaries', 'node', 'workspace',
++    'node_modules', 'beyond-simulator-mcp', 'dist', 'index.js');
++const WORKSPACE = process.env.QXQY_WORKSPACE || path.resolve(HERE, '..');
+ const OUTDIR = process.env.QXQY_OUTDIR || path.join(WORKSPACE, '_simulator', 'shots');
+ 
+ // ---------- 参数解析 ----------
+@@ -48,9 +61,15 @@
+ // 传给引擎的就是 Enum.KeyEventType 的名字（如 KeyboardMoveRightKeyDown）；
+ // 运行时按名字精确匹配 AddKeyEventListener 注册的事件，因此这里也是
+ // 「网页端键盘桥」所依赖的同一条链路，可用来做端到端验证。
+-const KEYS = [];
++// 帧号写法：--key Name            → 用 --key-at 指定的默认帧
++//           --key Name@45         → 单独指定在第 45 帧注入（多键接力必备）
++const KEYS = [];   // [{ name, at: number|null }]
+ for (let i = 0; i < argv.length; i++) {
+-  if (argv[i] === '--key' && argv[i + 1]) KEYS.push(argv[i + 1]);
++  if (argv[i] === '--key' && argv[i + 1]) {
++    const raw = argv[i + 1];
++    const m = /^(.+?)@(\d+)$/.exec(raw);
++    KEYS.push(m ? { name: m[1], at: parseInt(m[2], 10) } : { name: raw, at: null });
++  }
+ }
+ const KEY_AT = parseInt(opt('key-at', String(Math.max(1, STEPS - 10))), 10);
+ 
+@@ -187,7 +206,7 @@
+         if __origOnUpdate then __origOnUpdate(dt) end
+         __stFrame = __stFrame + 1
+         if __stFrame == ${frame} then
+-            local keys = { "containerBg", "containerPlatform", "containerGoal", "containerPickup", "containerPlayer", "containerHud", "containerFade" }
++            local keys = { "containerBg", "containerWorld", "containerFx", "containerHud", "containerFade" }
+             for _, k in ipairs(keys) do
+                 local c = state[k]
+                 if c then
+@@ -220,7 +239,7 @@
+         if not ok or not k then return -1 end
+         return #k
+     end
+-    local keys = { "containerBg", "containerPlatform", "containerGoal", "containerPickup", "containerPlayer", "containerHud", "containerFade" }
++    local keys = { "containerBg", "containerWorld", "containerFx", "containerHud", "containerFade" }
+     local __origOnUpdate = OnUpdate
+     OnUpdate = function(dt)
+         if __origOnUpdate then __origOnUpdate(dt) end
+@@ -246,27 +265,139 @@
+ }
+ 
+ // 玩家轨迹：每帧打印 state.player 的位置与速度，用来验证「按键是否真的驱动了角色」。
+-function buildPlayerProbe(maxFrame) {
++// probeKeyNames: 额外注册一批「派发打点」监听器，记录引擎真正派发按键时的帧号
++//（用于区分「按键没送到」与「送到了但被游戏逻辑拦下」）。
++// 注意：Lua 的数组字面量是 { "a", "b" }，不能直接用 JSON.stringify（那会产出 [ ... ]）。
++function luaStringList(names) {
++  // 去重：同一事件名注册多次会在引擎派发时打点多次，日志会变成噪声。
++  const uniq = [...new Set(names.map(n => String(n)))];
++  return '{ ' + uniq.map(n => `"${n.replace(/["\\]/g, '\\$&')}"`).join(', ') + ' }';
++}
++
++function buildPlayerProbe(maxFrame, probeKeyNames = []) {
++  const keyList = luaStringList(probeKeyNames);
+   return `
+ -- ===== [SIM_PLAYER] 逐帧打印玩家位姿（由 _tools/qxqy_mount.mjs 注入） =====
+ do
+     local __pFrame = 0
++    local __hooked = false
+     local __origOnUpdate = OnUpdate
++    local __origOnStart = OnStart
++
++    -- ★ 按键派发打点：在引擎「真正派发」的瞬间记录当时帧号。
++    --   必须注册在游戏自己的监听器之前（游戏命中后 return true，engine 的
++    --   emitKey 会 break，后面的监听器永远收不到），所以这里包一层 OnStart
++    --   抢先注册。宿主根节点来自 script.object（OnStart 本身没有入参）。
++    local function __hookDispatch()
++        if __hooked then return end
++        local __root = script and script.object
++        if not __root then return end
++        __hooked = true
++        for _, __evtName in ipairs(${keyList}) do
++            pcall(function()
++                local __evt = Enum.KeyEventType[__evtName]
++                if __evt ~= nil then
++                    __root:AddKeyEventListener(__evt, function()
++                        printerr("[K] 引擎派发 " .. __evtName .. " @f=" .. tostring(__pFrame)
++                            .. " keys=" .. tostring(state.keysEnabled)
++                            .. " kR=" .. tostring(state.keyRight)
++                            .. " kL=" .. tostring(state.keyLeft)
++                            .. " space=" .. tostring(state.keySpaceHeld)
++                            .. " build=" .. tostring(state.buildMode))
++                        return false
++                    end)
++                else
++                    printerr("[K] 警告：Enum.KeyEventType." .. __evtName .. " 不存在，无法打点")
++                end
++            end)
++        end
++    end
++    __hookDispatch()
++
++    OnStart = function(...)
++        if __origOnStart then __origOnStart(...) end
++        __hookDispatch()
++    end
++
+     OnUpdate = function(dt)
+         if __origOnUpdate then __origOnUpdate(dt) end
+         __pFrame = __pFrame + 1
+         if __pFrame <= ${maxFrame} then
++            -- 输入链路状态：keysEnabled / 方向键 / 屏幕输入轴 / 面板开合
++            --（用来区分「按键没送到」与「送到了但被 keysEnabled 拦下」）
+             local p = state.player
++            local __in = string.format(
++                " keys=%s kL=%s kR=%s kU=%s kD=%s ix=%s iy=%s menu=%s pause=%s",
++                tostring(state.keysEnabled), tostring(state.keyLeft), tostring(state.keyRight),
++                tostring(state.keyUp), tostring(state.keyDown),
++                tostring(state.inputX), tostring(state.inputY),
++                tostring(state.menuOpen), tostring(state.paused))
++
++            -- 世界摘要（材料 / 陆格 / 星星 / 光标 / 通关 / 视角）整段用 pcall 兜住：
++            -- 这些字段是「浮岛方块」专有的，换别的游戏（如 TickHop）不该因此报错。
++            pcall(function()
++                local w = rawget(_G, "world") or world
++                local m = (w and w.materials) or {}
++                __in = __in .. string.format(
++                    " build=%s tool=%s mat=g%s/b%s land=%s star=%s",
++                    tostring(state.buildMode), tostring(state.toolIndex),
++                    tostring(m.grass or 0), tostring(m.bridge or 0),
++                    tostring(w and w.countLand and w.countLand() or -1),
++                    tostring(w and w.starsLeft and w.starsLeft() or -1))
++            end)
++            pcall(function()
++                local cam = rawget(_G, "camera") or camera
++                __in = __in .. string.format(
++                    " cur=%s at=%s,%s pl=%s,%s won=%s mode=%s face=%s",
++                    tostring(state.cursorValid),
++                    tostring(state.cursorCol), tostring(state.cursorRow),
++                    tostring(p and p.col), tostring(p and p.row),
++                    tostring(state.gameWon), tostring(state.menuMode),
++                    tostring(cam and cam.facingName and cam.facingName() or "?"))
++            end)
++
+             if p then
+                 printerr(string.format("[P] f=%d x=%.1f y=%.1f vx=%.1f vy=%.1f ground=%s",
+-                    __pFrame, p.x, p.y, p.vx or 0, p.vy or 0, tostring(p.onGround)))
++                    __pFrame, p.x, p.y, p.vx or 0, p.vy or 0, tostring(p.onGround)) .. __in)
+             else
+-                printerr("[P] f=" .. tostring(__pFrame) .. " player=nil")
++                printerr("[P] f=" .. tostring(__pFrame) .. " player=nil" .. __in)
+             end
+         end
+     end
+ end
+ -- ===== [/SIM_PLAYER] =====
++`;
++}
++
++// 通关链路：在第 N 帧把玩家直接放到星门格（等价于「走上去」的最终状态），
++// 用来验证 checkGoal → 结算面板这一段的端到端行为，避免把整关的建造编排
++// 硬编码进命令行。
++function buildGoalProbe(frame) {
++  return `
++-- ===== [SIM_GOAL] 第 ${frame} 帧把玩家置于星门格（由 _tools/qxqy_mount.mjs 注入） =====
++do
++    local __gFrame = 0
++    local __origOnUpdate = OnUpdate
++    OnUpdate = function(dt)
++        if __origOnUpdate then __origOnUpdate(dt) end
++        __gFrame = __gFrame + 1
++        if __gFrame == ${frame} then
++            local pl = state.player
++            if pl then
++                pl.col, pl.row = world.goalCol, world.goalRow
++                local x, y = world.worldToPixel(pl.col, pl.row)
++                pl.x, pl.y = x, y
++                pl.vx, pl.vy = 0, 0
++                printerr("[G] 已把玩家置于星门格 (" .. tostring(pl.col) .. "," .. tostring(pl.row) .. ")"
++                    .. " 本关须集齐星=" .. tostring(state.requireAllStars)
++                    .. " 剩余星=" .. tostring(world.starsLeft and world.starsLeft() or -1))
++            else
++                printerr("[G] 玩家为空，无法传送")
++            end
++        end
++    end
++end
++-- ===== [/SIM_GOAL] =====
+ `;
+ }
+ 
+@@ -305,12 +436,16 @@
+ const PROBE_WALK = opt('probe-walk', '');
+ const PROBE_TL = opt('probe-timeline', '');
+ const PROBE_PLAYER = opt('probe-player', '');
++const GOAL_AT = opt('teleport-goal', '');
+ const STRETCH_AT = opt('stretch', '');
+ const PARAM_SHIM = buildParamShim(PARAMS)
+   + (PROBE_AT ? buildTreeProbe(parseInt(PROBE_AT, 10) || 0, PROBE_AT === 'start') : '')
+   + (PROBE_WALK ? buildWalkProbe(parseInt(PROBE_WALK, 10) || 0) : '')
++  + (GOAL_AT ? buildGoalProbe(parseInt(GOAL_AT, 10) || 0) : '')
+   + (PROBE_TL ? buildTimeline(parseInt(PROBE_TL, 10) || 0) : '')
+-  + (PROBE_PLAYER ? buildPlayerProbe(parseInt(PROBE_PLAYER, 10) || 0) : '')
++  + (PROBE_PLAYER ? buildPlayerProbe(parseInt(PROBE_PLAYER, 10) || 0,
++      KEYS.length ? KEYS.map(k => k.name) : ['KeyboardMoveLeftKeyDown', 'KeyboardMoveRightKeyDown',
++        'KeyboardMoveForwardKeyDown', 'KeyboardMoveBackwardKeyDown', 'KeyboardJumpKeyDown']) : '')
+   + (STRETCH_AT ? buildStretch(parseInt(STRETCH_AT, 10) || 0, opt('stretch-size', '4000')) : '')
+   + (opt('hide-bg', '') ? buildHide(parseInt(opt('hide-bg', ''), 10) || 0, 'containerBg') : '')
+   + (opt('fix-zorder', '') ? buildZOrderFix(parseInt(opt('fix-zorder', ''), 10) || 0) : '');
+@@ -380,16 +515,34 @@
+   // 5) 试玩
+   log('\n===== 启动试玩 =====');
+   log(textOf(await client.call('qxqy_studio_play', { handle, action: 'start', args: { canvasId: 'mobile-16-9' } })));
++
++  // ★ 冻结实时时钟：模拟器 worker 里另有一个 33ms 的 setInterval(tickClock) 在
++  //   独立推进帧，于是「挂载循环第 N 圈」≠「引擎第 N 帧」——实测差值随往返耗时
++  //   在 10~20 帧之间漂移，导致 --key-at 落在哪一帧不可控（曾把按键注入到黑幕
++  //   过渡期里被 keysEnabled 拦掉，看起来像「按键失灵」）。
++  //   pause 只置 session.debugPaused，切掉那路自动推进；显式 step 依旧正常调用
++  //   OnUpdate / OnLevelUpdate（clock.paused 是另一条由 Lua 控制的开关，不受影响）。
++  if (!argv.includes('--no-freeze')) {
++    log(textOf(await client.call('qxqy_studio_play', { handle, action: 'pause', args: {} })));
++  }
++
+   for (let i = 0; i < STEPS; i++) {
+     const frame = i + 1;
+-    if (KEYS.length && frame === KEY_AT) {
+-      for (const k of KEYS) {
+-        await client.call('qxqy_studio_play', { handle, action: 'key', args: { key: k } });
+-      }
+-      log(`# 第 ${frame} 帧注入按键: ${KEYS.join(', ')}`);
++    for (const k of KEYS) {
++      const at = k.at == null ? KEY_AT : k.at;
++      if (frame !== at) continue;
++      await client.call('qxqy_studio_play', { handle, action: 'key', args: { key: k.name } });
++      log(`# 引擎第 ${frame} 帧注入按键: ${k.name}`);
+     }
+     await client.call('qxqy_studio_play', { handle, action: 'step', args: { dt: 1 / 30 } });
+   }
++
++  // 回报引擎真实帧号，用来验证「注入帧 == 期望帧」
++  try {
++    const fr = JSON.parse(textOf(await client.call('qxqy_studio_play', { handle, action: 'get', args: { light: true } })));
++    log(`# 推进结束：引擎 frame=${fr.frame} time=${(fr.time || 0).toFixed(3)}s`
++      + (argv.includes('--no-freeze') ? '（实时钟未冻结，帧号会大于 --steps）' : ''));
++  } catch { /* 旧版模拟器没有 light 观察，忽略 */ }
+ 
+   if (SIGNAL) {
+     log(`\n===== 模拟服务器下发信号: ${SIGNAL} =====`);
