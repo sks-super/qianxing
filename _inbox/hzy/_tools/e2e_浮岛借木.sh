@@ -8,8 +8,8 @@
 #
 #   ⚠️ 脚本只能报「有没有挂载错误」和截图路径。
 #      步数 / (已通关) 只画在画布 HUD 上，挂载日志里没有，
-#      必须人眼看截图核对（第01关应为 步数 14 已通关，第02关 17，第03关 15 + 「全部通关！」）。
-#      ★ 口令与期望步数来自 _tools/solve_浮岛借木.py 的「最短解」（改关卡后必须同步）。
+#      必须人眼看截图核对（第01关应为 步数 14 已通关，第02关 14，第03关 14 + 「全部通关！」）。
+#      ★ 口令与期望步数来自 _tools/solve_浮岛借木.py 的「最短解」（改关卡 / 改规则后必须同步）。
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -60,15 +60,15 @@ echo
 run_game L1art --steps 115 $(mkseq "DDDDDDDSSSDDDD" 30 4)
 # ---- 第01关（回退路径：四类全部退回纯色矩形）----
 run_game L1rect --steps 115 --params '{"useArt":0}' $(mkseq "DDDDDDDSSSDDDD" 30 4)
-# ---- 第02关（T 换关 + 17 步：侧面推 3 次把树干滑进水道）----
+# ---- 第02关（T 换关 + 14 步：侧面推 3 次把树干滑进水道，推完自己也跟进一步）----
 run_game L2 --steps 150 \
   --key KeyboardCharacterSkill4KeyDown@25 --key KeyboardCharacterSkill4KeyUp@26 \
-  $(mkseq "SDDDDDDDDDDSSDDDD" 60 4)
-# ---- 第03关（连跳两关 + 15 步：正面推让树干立起来，再撞倒它）----
+  $(mkseq "SDDDDDDDSSDDDD" 60 4)
+# ---- 第03关（连跳两关 + 14 步：正面推 → 树干竖起来（无叶）→ 撞倒它（不生根））----
 run_game L3 --steps 190 \
   --key KeyboardCharacterSkill4KeyDown@25 --key KeyboardCharacterSkill4KeyUp@26 \
   --key KeyboardCharacterSkill4KeyDown@70 --key KeyboardCharacterSkill4KeyUp@71 \
-  $(mkseq "SDDDDDDDDSSDDDD" 105 4)
+  $(mkseq "SDDDDDDDSSDDDD" 105 4)
 # ---- 提示显示（F）----
 run_game HINT --steps 75 --key KeyboardInteractKeyDown@40
 
@@ -94,8 +94,9 @@ probe_templates 底图_回退 --params '{"rectPrefabId":999999}'
 
 echo
 echo "===== 请打开上面截图核对 HUD ====="
-echo "  期望：第01关 步数 14 (已通关) / 第02关 步数 17 (已通关) / 第03关 步数 15 (已通关) + 「全部通关！按 R 重玩本关」"
+echo "  期望：第01关 步数 14 (已通关) / 第02关 步数 14 (已通关) / 第03关 步数 14 (已通关) + 「全部通关！按 R 重玩本关」"
 echo "        HINT 应为 步数 0 且显示三行操作提示"
+echo "        L3 中途第 5 步之后应能看到「立着的无叶树干」（棕色细条，没有树冠）"
 echo "  L1art 与 L1rect 的画面差异 = 美术素材 vs 纯色回退（草地：平铺色块 vs 绿棋盘格；"
 echo "  树：1 块深绿 1×1 格 vs 树冠+树干 2 块；小人：1 块橙 1 格 vs 橙身+黑头 0.94 格）"
 echo "  底图_默认 应为 N×SIM_矩形；底图_回退 应为 N×SIM_图片_回退，两边总数必须相同"

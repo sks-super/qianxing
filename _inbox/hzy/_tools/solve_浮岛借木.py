@@ -8,14 +8,18 @@
   (_tools/e2e_浮岛借木.sh) 里的按键口令是写死的，改关卡就必须同步改口令。
   这个脚本把 world.lua 的规则**逐条**抄成 Python，于是可以：
     ① 回放一条 WASD 口令，看它到底能不能通关、走了几步（口令自检）；
-    ② BFS 搜出最短解，直接把口令喂给 e2e 脚本。
+    ② 搜出最短解，直接把口令喂给 e2e 脚本。
 
-规则（与 world.lua 逐条对应，2026-09-30 版）：
-  单位：1 格。小岛地面 = 0；人物高 1 格；立着的树高 1 格；
+规则（与 world.lua 逐条对应，2026-10-14 版）：
+  单位：1 格。小岛地面 = 0；人物高 1 格；立着的树 / 树干高 1 格；
         倒下的树 0.5 格（压陆地）/ 0.25 格（浮在水面，吃水一半）；
         留下的树根 0.25 格高；石头 1 / 2 格高。
   小人每步最多向上跨 DEFAULT_MAX_STEP（0.25 格），下落不限。
   一切可视物体都只占**一格**（1×1）。
+
+  ★ 立着的东西有两种，行为一样、来历不同（`trees` 里的 bare 标记）：
+      · 树（bare=False） 关卡里长出来的带叶子的树 → 撞倒在原地留 0.25 格树根
+      · 树干（bare=True）被从正面推立起来的那根木头 → 没树冠，撞倒也**不留树根**
 
   ★ 「推」与「踩」的分工（本作的关键）：
       能不能踩 = 顶面高度 − 脚下高度 ≤ 0.25。
@@ -23,11 +27,12 @@
             压在陆地上的树干（0.5）、立着的树、石头 → 跨不上去 → 撞上去就是「推」。
 
   ① 树（立着，占 1 格）
-     小人朝它移动 → 树倒进「原格的下一格」，原格留下一个树根。
-     倒向的那一格被占或越界 → 撞不动。
+     小人朝它移动 → 它倒进「原格的下一格」；只有真树在原格留下一个树根。
+     倒向的那一格被占或越界 → 撞不动。撞完小人顺势前进一格（踩上树根 / 空地）。
   ② 倒下的树（占 1 格，带躺向 axis）
      · 从**侧面**推（推动方向 ⊥ 它的躺向）→ 整根滑一格，躺向不变。
-     · 从**正面**推（推动方向 ∥ 它的躺向）→ 在「原格的下一格」重新立起来。
+     · 从**正面**推（推动方向 ∥ 它的躺向）→ 在「原格的下一格」竖起来（无叶树干）。
+     ★ 两种推法都让小人**顺带前进一格**（站到木头原来占的那一格）。
   ③ 石头不可移动、不可攀爬。
   ④ 胜利：小人所在格 == 终点格。
 
@@ -55,8 +60,8 @@ AXIS = {"W": 0, "S": 0, "A": 1, "D": 1}      # 0 = 竖（南北向）；1 = 横�
 #   三串都是脚本搜出来的**最短解**，所以 e2e 里的期望步数也直接取这里的步数。
 BUILTIN = {
     1: "DDDDDDDSSSDDDD",       # 14 步：向右撞倒 (13,4) 的树 → 踩着落进水道的树干过桥
-    2: "SDDDDDDDDDDSSDDDD",    # 17 步：把 (11,5) 那根南北向树干侧面推滑 3 次进水道
-    3: "SDDDDDDDDSSDDDD",      # 15 步：正面推 (12,5) 的东西向树干 → 它立起来 → 再撞倒
+    2: "SDDDDDDDSSDDDD",       # 14 步：把 (11,5) 那根南北向树干侧面推滑 3 次进水道
+    3: "SDDDDDDDSSDDDD",       # 14 步：正面推 (12,5) 的东西向树干 → 竖起来 → 再撞倒
 }
 
 
@@ -154,7 +159,8 @@ class Ref(object):
         self.reset()
 
     def reset(self):
-        self.trees = set(self.lv["trees"])
+        # trees: {(c, r): bare}  —— bare=True 是「被推立起来的无叶树干」
+        self.trees = {(c, r): False for (c, r) in self.lv["trees"]}
         self.logs = set(self.lv["logs"])           # {(c, r, dir)}
         self.roots = set(self.lv["roots"])
         self.p = tuple(self.lv["spawn"])
@@ -210,17 +216,19 @@ class Ref(object):
         q = (pc + d[0], pr + d[1])
         eps = 1e-9
 
-        # ① 目标是立着的树 → 倒进「原格 + 推动方向」那一格，原格留树根
+        # ① 目标是立着的树 / 树干 → 倒进「原格 + 推动方向」那一格
         if q in self.trees:
+            bare = self.trees[q]                    # ★ 树干倒下不生根
             dest = (q[0] + d[0], q[1] + d[1])
             if not self.free(*dest):
                 return ("blocked", False)
-            self.trees.discard(q)
+            del self.trees[q]
             self.logs.add((dest[0], dest[1], key))
-            self.roots.add(q)
+            if not bare:
+                self.roots.add(q)
             nh = self.height(*q)
             if nh is not None and nh - hp <= self.cfg["max_step"] + eps:
-                self.p = q                      # 顺手往前挪一步（踩在新的树根上）
+                self.p = q                      # 顺手往前挪一步（踩在新的树根 / 空地上）
             return ("knock", True)
 
         # ② 能踩就踩：顶面高度差在 0.25 之内 → 走上去（树根 / 浮在水面的树干）
@@ -236,15 +244,21 @@ class Ref(object):
             dest = (q[0] + d[0], q[1] + d[1])
             if not self.free(*dest):
                 return ("blocked", False)
+            kind = "slide"
             if AXIS[ldir] == AXIS[key]:
-                # 正面推（推动方向 ∥ 树的躺向）→ 在下一格重新立起来
+                # 正面推（推动方向 ∥ 树的躺向）→ 在下一格竖起来（立起来的是无叶树干）
                 self.logs.discard(lg)
-                self.trees.add(dest)
-                return ("raise", True)
-            # 侧面推（推动方向 ⊥ 树的躺向）→ 整根滑一格，躺向不变
-            self.logs.discard(lg)
-            self.logs.add((dest[0], dest[1], ldir))
-            return ("slide", True)
+                self.trees[dest] = True
+                kind = "raise"
+            else:
+                # 侧面推（推动方向 ⊥ 树的躺向）→ 整根滑一格，躺向不变
+                self.logs.discard(lg)
+                self.logs.add((dest[0], dest[1], ldir))
+            # ★ 推完自己也顺着推动方向前进一格（站到木头原来占的那一格）
+            nh = self.height(*q)
+            if nh is not None and nh - hp <= self.cfg["max_step"] + eps:
+                self.p = q
+            return (kind, True)
 
         # ④ 石头
         if q in self.rocks:
@@ -284,7 +298,9 @@ def search(ref, max_depth=60):
     def h(p):
         return abs(p[0] - goal[0]) + abs(p[1] - goal[1])
 
-    snapshot = lambda: (ref.p, set(ref.trees), set(ref.logs), set(ref.roots))
+    # ★ trees 是 dict（{(c,r): bare}），快照/还原与状态键都得连 bare 一起带上 ——
+    #   同一格上「立着一棵带叶子的树」和「立着一根树干」是**两个不同的状态**。
+    snapshot = lambda: (ref.p, dict(ref.trees), set(ref.logs), set(ref.roots))
     restore = lambda s: (setattr(ref, "p", s[0]), setattr(ref, "trees", s[1]),
                          setattr(ref, "logs", s[2]), setattr(ref, "roots", s[3]))
 
@@ -295,7 +311,8 @@ def search(ref, max_depth=60):
             return ""
         if g + h(ref.p) > limit:
             return None
-        key = (ref.p, tuple(sorted(ref.trees)), tuple(sorted(ref.logs)), tuple(sorted(ref.roots)))
+        key = (ref.p, tuple(sorted(ref.trees.items())), tuple(sorted(ref.logs)),
+               tuple(sorted(ref.roots)))
         left = limit - g
         if seen.get(key, -1) >= left:
             return None

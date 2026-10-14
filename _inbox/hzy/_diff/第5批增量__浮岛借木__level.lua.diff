@@ -1,0 +1,57 @@
+--- a/浮岛借木/level.lua
++++ b/浮岛借木/level.lua
+@@ -67,7 +67,7 @@
+     return cellCenterY(r) - (state.cellSize or 1) / 2
+ end
+ 
+--- ★ 物体的「脚线」：站立物（树 / 石头 / 立桩 / 小人）踩在顶面**靠前**的位置，
++-- ★ 物体的「脚线」：站立物（树 / 树干 / 石头 / 小人）踩在顶面**靠前**的位置，
+ --   而不是格子正中心 —— 这一点偏移就是「站在方块上面」的错觉来源。
+ local function cellFootY(r)
+     return cellCenterY(r) - (state.cellSize or 1) * (config.DEFAULT_TILE_FOOT_RATIO or 0.18)
+@@ -188,7 +188,7 @@
+     return { prefab = state.rectPrefabId, art = false }
+ end
+ 
+--- 通用矩形槽位（沙滩 / 水下网格 / 木桩 / 立桩 / 树根 / 石头 / 终点旗 …）
++-- 通用矩形槽位（沙滩 / 水下网格 / 树根 / 倒下的树 / 立着的树干 / 石头 / 终点旗 …）
+ local function rectSlot()
+     return { prefab = state.rectPrefabId, art = false }
+ end
+@@ -454,6 +454,8 @@
+ --   同一行内由下到上排，跨行则由行号决定谁压谁（见 restackWorld）。
+ --   ★ 一切物体都只占一格（1×1）：立着的树 1 格高、倒下的树 0.5 格厚、
+ --     树根 0.25 格高 —— 身高差全部体现在「控件高度」上。
++--   ★ 物体池（`state.objectCtrls`，全是纯色矩形）额外承担「被推立起来的树干」：
++--     它是 runtime 才出现的形态、没有对应素材，画法与倒下的树同源（见本函数 ④）。
+ -- ================================================================
+ function M.rebuildObjects()
+     local data = state.levelConfig or {}
+@@ -536,12 +538,26 @@
+     -- ④ 树木（1 格高）
+     --    素材模式：一张立绘（内容 1 格宽 × 1 格高），不染色，脚踩在顶面上
+     --    回退模式：树干 + 树冠两块纯色矩形（合起来正好 1 格高）
++    --    ★ 被推立起来的树干（tr.bare）**没有树冠 / 没有叶子**：它就是倒下的那根木头
++    --      竖起来了，造型必须和 ② 的倒树同源（厚 0.5 格、长 0.96 格、同三个颜色），
++    --      所以它永远走**纯色池**（走素材池的话会把「树木」那张带叶子的立绘套上去，
++    --      又变回一棵假树）。判定顺序：bare → 素材 → 纯色回退。
+     local treeArt = slotUsesArt(state.treeCtrls, parent, treeSlot)
+     local ti = 1
+     for _, tr in ipairs(state.trees) do
+         local x, foot = cellCenterX(tr.c), cellFootY(tr.r)
+         shadow(x, foot, cell * 0.72, tr.r)
+-        if treeArt then
++        if tr.bare then
++            local bw, bh = cell * 0.50, cell * 0.96
++            i = paint(pool, i, parent, rect, x, foot + bh / 2, bw, bh,
++                      palette.logSide, 255, keyOf(tr.r, SUB_TREE))
++            -- 受光的那条窄边（躺着时朝上，竖起来就朝左）
++            i = paint(pool, i, parent, rect, x - bw * 0.18, foot + bh / 2,
++                      bw * 0.30, bh * 0.98, palette.logTop, 255, keyOf(tr.r, SUB_TREE + 0.1))
++            -- 顶端的切口
++            i = paint(pool, i, parent, rect, x, foot + bh, bw, cell * 0.09,
++                      palette.logEnd, 255, keyOf(tr.r, SUB_TREE + 0.2))
++        elseif treeArt then
+             local fit = (config.DEFAULT_ART_FIT or {}).tree or { w = 1.82, h = 1.82, dy = 0.5 }
+             ti = paint(state.treeCtrls, ti, parent, treeSlot,
+                        x, foot + (fit.dy or 0) * cell,

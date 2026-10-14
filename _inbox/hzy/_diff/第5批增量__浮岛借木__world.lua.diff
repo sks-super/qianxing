@@ -1,0 +1,120 @@
+--- a/浮岛借木/world.lua
++++ b/浮岛借木/world.lua
+@@ -8,9 +8,18 @@
+ --   ★ 一切可视物体都只占**一格**（1×1）—— 没有「木桩」这个概念了，
+ --     立着与倒下只是同一棵树的两个状态。
+ --
+---   ① 撞树（knock）   小人朝**立着的树**移动 → 树朝该方向倒下，
+---                     落在「树原来那一格 + 前进方向」的前一格，原地留下一个树根。
++--   ★ 立着的东西有两种，行为一样、来历不同（靠 `tree.bare` 区分）：
++--       · 树          关卡里长出来的**带叶子的树**（`bare` 为 nil）——
++--                     撞倒后在原地留下 0.25 格树根（那是它的树桩）。
++--       · 树干        被小人**从正面推立起来的**那根木头（`bare = true`）——
++--                     它就是一根树干竖起来了，**没有树冠、倒下也不生根**。
++--     视觉上只有它有区别（见 level.lua ④）；玩法上唯一的差别是「倒完留不留树根」。
++--
++--   ① 撞树（knock）   小人朝**立着的东西**移动 → 它朝该方向倒下，
++--                     落在「原来那一格 + 前进方向」的前一格；
++--                     只有真正的**树**（非 bare）才在原格留下一个树根。
+ --                     前方那一格被占或越界时撞不动。
++--                     撞完若脚下抬升 ≤ 0.25，小人顺势往前挪一步。
+ --   ② 踩（move）      目标格顶面 - 小人脚下高度 ≤ 0.25 时可以走上去：
+ --                        · 树根                      0.25 格（能踩）
+ --                        · 漂在水面上的树干          0.25 格（能踩 → 这就是「桥」）
+@@ -19,7 +28,8 @@
+ --   ③ 侧面推（slide） 目标是**倒下的树**、且推动方向与它躺着的方向**垂直** →
+ --                     整根滑一格，躺着的样子不变。
+ --   ④ 正面推（raise） 目标是**倒下的树**、且推动方向与它躺着的方向**同轴** →
+---                     它在「原格 + 前进方向」那一格**重新立起来**（又变回一棵树）。
++--                     它在「原格 + 前进方向」那一格**立起来**（竖成一根无叶树干）。
++--   ★ ③ ④ 都一样：**推完小人自己也顺着推动方向前进一格**（站到木头原来那一格）。
+ --   ⑤ 石头            不可移动、不可攀爬，挡住去路。
+ --   ⑥ 胜利            小人所在格 == 终点格。
+ --
+@@ -223,9 +233,9 @@
+ -- ★ 走一步（唯一的规则入口）
+ --   返回 action 表：
+ --     kind   : "move"   走上可踩的一格（陆地 / 树根 / 漂在水面的树干）
+---              "knock"  撞倒立着的树
++--              "knock"  撞倒立着的树或树干（真树在原地留树根，树干不留）
+ --              "slide"  从侧面推倒下的树 → 整根滑一格
+---              "raise"  从正面推倒下的树 → 在前一格重新立起来
++--              "raise"  从正面推倒下的树 → 在前一格竖起来（无叶树干）
+ --              | "blocked" | "rock" | "water" | "high" | "invalid"
+ --     ok     : 是否成功（成功 = 世界确实变了 / 小人确实动了）
+ --     moved  : 小人是否换了格（表现层据此播位移动画）
+@@ -236,6 +246,8 @@
+ --   ★ 顺序不是随意的：「先撞树 → 再能踩就踩 → 踩不上再推」。
+ --     因为「倒下的树」在陆地上是 0.5 格，站得低时踩不上去、于是走到推的分支；
+ --     而站在树根（0.25）上时它又刚好够得着，就变成踩过去 —— 两条路都合理。
++--   ★ 「撞倒」与「推」这两条分支都会让小人**顺势前进一格**（撞倒 = 站到树根上，
++--     推 = 站到木头原来占的那一格）；能不能前进仍按 0.25 格的跨步上限判一次。
+ -- ================================================================
+ function M.step(key)
+     local d = M.DIRS[key]
+@@ -252,8 +264,8 @@
+     local qc, qr = pc + d[1], pr + d[2]
+     local base = { c = qc, r = qr, moved = false, changed = false }
+ 
+-    -- ① 目标是立着的树 → 朝前倒下一格，原地留下树根
+-    local ti = M.treeIndexAt(qc, qr)
++    -- ① 目标是立着的树 / 树干 → 朝前倒下一格；只有真正的树才在原地留下树根
++    local ti, tree = M.treeIndexAt(qc, qr)
+     if ti then
+         local fc, fr = qc + d[1], qr + d[2]
+         if not M.isFree(fc, fr) then
+@@ -262,14 +274,22 @@
+             base.msg = "树倒不下去：前面那一格被挡住了"
+             return base
+         end
++        -- ★ 被推立起来的那根只是木头（bare）：倒下就又是一根躺着的树干，不生根。
++        local bare = tree.bare and true or false
+         table.remove(state.trees, ti)
+         state.logs[#state.logs + 1] = { c = fc, r = fr, dir = key }
+-        state.roots[#state.roots + 1] = { c = qc, r = qr }
++        if not bare then
++            state.roots[#state.roots + 1] = { c = qc, r = qr }
++        end
+         base.kind = "knock"
+         base.ok = true
+         base.changed = true
+-        base.msg = "撞倒树木 → 树干朝前倒下一格，原地留下树根"
+-        -- 树倒走后原地只剩 0.25 格树根，一般能顺势往前挪一步
++        if bare then
++            base.msg = "撞倒树干 → 它又躺回前面那一格（原地不留树根）"
++        else
++            base.msg = "撞倒树木 → 树干朝前倒下一格，原地留下树根"
++        end
++        -- 倒走后原地只剩 0.25 格树根（或干脆空着），一般能顺势往前挪一步
+         local h2 = M.heightAt(qc, qr)
+         if h2 ~= nil and h2 - hp <= config.DEFAULT_MAX_STEP + EPS then
+             state.player.c, state.player.r, state.player.h = qc, qr, h2
+@@ -301,10 +321,12 @@
+         end
+         table.remove(state.logs, li)
+         if M.AXIS[log.dir] == M.AXIS[key] then
+-            -- 正面推（推动方向 ∥ 它躺着的方向）→ 在前一格重新立起来
+-            state.trees[#state.trees + 1] = { c = fc, r = fr }
++            -- 正面推（推动方向 ∥ 它躺着的方向）→ 在前一格竖起来
++            --   ★ 竖起来的只是这根**树干**（bare = true），不是一棵长了叶子的树：
++            --     造型与倒下的树一致（见 level.lua ④），再撞倒它也不会生根。
++            state.trees[#state.trees + 1] = { c = fc, r = fr, bare = true }
+             base.kind = "raise"
+-            base.msg = "顺着树干推 → 它在前面一格重新立了起来"
++            base.msg = "顺着树干推 → 它在前面一格立了起来（还是一根树干）"
+         else
+             -- 侧面推（推动方向 ⊥ 它躺着的方向）→ 整根滑一格，躺向不变
+             state.logs[#state.logs + 1] = { c = fc, r = fr, dir = log.dir }
+@@ -313,6 +335,12 @@
+         end
+         base.ok = true
+         base.changed = true
++        -- ★ 推完自己也顺着推动方向前进一格（站到木头原来占的那一格）
++        local h2 = M.heightAt(qc, qr)
++        if h2 ~= nil and h2 - hp <= config.DEFAULT_MAX_STEP + EPS then
++            state.player.c, state.player.r, state.player.h = qc, qr, h2
++            base.moved = true
++        end
+         return base
+     end
+ 
