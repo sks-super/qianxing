@@ -18,7 +18,30 @@
  -- ================================================================
  local function ensureContainers()
      local order = {
-@@ -120,17 +121,18 @@
+@@ -111,8 +112,21 @@
+             if kind ~= "move" then dur = config.DEFAULT_ACTION_ANIM_TIME end
+             level.beginPlayerMove(dur)
+         end
+-        if act.changed then level.rebuildObjects() end
++        if act.changed then
++            -- ★ 先登记「倒 / 立 / 侧推」的过渡，再重建：
++            --   rebuild 会跳过终点格上的真实木头，把那一格让给过渡代理逐帧画。
++            level.setObjectAnim(act)
++            level.rebuildObjects()
++        end
+         level.spawnRipple(act.c, act.r)
++        -- ★ 木头落点补一圈扬尘：撞倒砸得重（大圈），立起 / 侧推轻（小圈）
++        if act.animTo then
++            if kind == "knock" then
++                level.spawnDust(act.animTo.c, act.animTo.r, 1.5)
++            elseif kind == "raise" or kind == "slide" then
++                level.spawnDust(act.animTo.c, act.animTo.r, 0.85)
++            end
++        end
+         level.updateHudDisplay()
+ 
+         if kind == "move" then
+@@ -120,17 +134,18 @@
              audio.playStep()
          else
              utils.setMessage(act.msg or "")
@@ -41,7 +64,7 @@
          end
  
          if world.isWin() then state.won = true end
-@@ -429,7 +431,7 @@
+@@ -429,7 +444,7 @@
      -- ★ 容器节点模板（可选）：5 个层级容器由它创建；留空则回退到矩形元件
      --   真机内置模板索引 1073741876（内部名 SoloTurnPoolHost），零配置即可命中
      state.containerPrefabId = getParamNumber("containerPrefabId", config.DEFAULT_PREFAB_CONTAINER)

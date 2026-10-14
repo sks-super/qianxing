@@ -12,9 +12,12 @@
     树木 = 内容 1 格宽 × 1 格高，脚踩在脚线上（控件按 DEFAULT_ART_FIT 放大到 1.819 格）
     人物 = 内容 1 格宽 × 1 格高，脚踩在脚线上（控件按 DEFAULT_ART_FIT 放大到 1.707 格）
     其余 = 纯色矩形 + 调色板（与回退路径一致）
-           · 树根 0.25 格高、倒下的树按 dir 分东西躺 / 南北躺（厚 0.5 格、
+           · 树根 0.25 格高、倒下的树按 dir 分东西躺 / 南北躺（长而扁 1.00 × 0.50 格、
+             受光边与背光边成对、两端带年轮的切口，
              顶面按水陆取 DEFAULT_H_LOG_LAND / DEFAULT_H_LOG_FLOAT）、
              石头按 h 取 1 / 2 格、终点旗 1.24 格高
+  ⚠️ 只画**关卡数据里有的物件**（真树 + 倒下的木头）。「立着的无叶树干」是运行时状态
+     （正面推出来的，见 world.lua），离线预览里没有它 —— 想看它请跑模拟器。
 
 用法：
   python _tools/preview_art_浮岛借木.py [关卡号, 默认 1]
@@ -258,26 +261,43 @@ def render(cfg, lv, idx):
         rect(canvas, d, x, fy - cell * 0.035, cell * 0.74, cell * 0.07, p["rootRing"])
         rect(canvas, d, x, fy - cell * 0.14, cell * 0.60, cell * 0.21, p["rootTop"])
 
-    # 倒下的树：dir 决定躺着的走向（A/D 东西躺 → 长 1 格 × 厚 0.5 格；
-    # W/S 南北躺 → 宽 0.5 格 × 长 1 格）。顶面高度按脚下水陆取 0.5 / 0.25 格。
+    # 倒下的木头：长而扁（A/D 东西躺 → 长 1.00 格 × 厚 0.50 格；
+    # W/S 南北躺 → 宽 0.50 格 × 长 1.00 格）+ 贴地暗边 + 两端带年轮的切口。
+    # 顶面高度按脚下水陆取 0.5 / 0.25 格。
+    #   ★ 与 level.lua 顶部的 LOG_THICK / LOG_LEN / LOG_UNDER / LOG_CAP 同源，改一处要一起改。
     for (c, r, ldir) in lv["logs"]:
         h = cfg["h_log_land"] if g.land(lv, c, r) else cfg["h_log_float"]
         x, fy = g.px(c), g.py(g.foot(r))
         thick = cell * 0.50
         cy = fy - (h - 0.25) * cell
         along_x = ldir in ("A", "D")
-        w = cell * 0.96 if along_x else thick
-        hh = thick if along_x else cell * 0.96
+        w = cell * 1.00 if along_x else thick
+        hh = thick if along_x else cell * 1.00
+        cap = cell * 0.09
         obj_shadow(c, r, 0.80)
+        # ① 主体（偏灰的旧木色）
         rect(canvas, d, x, cy, w, hh, p["logSide"])
+        # ② 背光暗边：永远贴在受光边的对侧。横躺时落在下沿（= 贴地那一面），
+        #    竖躺时落在右沿 —— 画布 y 向下，所以「下沿」是 cy + …
         if along_x:
-            rect(canvas, d, x, cy - hh * 0.24, w * 0.98, hh * 0.30, p["logTop"])
-            rect(canvas, d, x - w / 2, cy, cell * 0.09, hh, p["logEnd"])
-            rect(canvas, d, x + w / 2, cy, cell * 0.09, hh, p["logEnd"])
+            rect(canvas, d, x, cy + hh / 2 - hh * 0.13, w * 0.98, hh * 0.24, p["logEnd"], 190)
         else:
-            rect(canvas, d, x - w * 0.18, cy, w * 0.30, hh * 0.98, p["logTop"])
-            rect(canvas, d, x, cy - hh / 2, w, cell * 0.09, p["logEnd"])
-            rect(canvas, d, x, cy + hh / 2, w, cell * 0.09, p["logEnd"])
+            rect(canvas, d, x + w / 2 - w * 0.13, cy, w * 0.24, hh * 0.94, p["logEnd"], 190)
+        # ③ 受光边：横躺 → 上沿横带；竖躺 → 左侧竖带
+        if along_x:
+            rect(canvas, d, x, cy - hh * 0.26, w * 0.98, hh * 0.30, p["logTop"])
+        else:
+            rect(canvas, d, x - w * 0.22, cy, w * 0.28, hh * 0.94, p["logTop"])
+        # ④ 两端切口：外圈深色 + 内芯年轮
+        for s in (-1, 1):
+            if along_x:
+                ex = x + s * (w / 2 - cap / 2)
+                rect(canvas, d, ex, cy, cap, hh, p["logEnd"])
+                rect(canvas, d, ex, cy, cap * 0.42, hh * 0.44, p["logTop"])
+            else:
+                ey = cy + s * (hh / 2 - cap / 2)
+                rect(canvas, d, x, ey, w, cap, p["logEnd"])
+                rect(canvas, d, x, ey, w * 0.42, cap * 0.42, p["logTop"])
 
     for (c, r) in lv["rocks"]:
         hh = cfg["h_rock1"]

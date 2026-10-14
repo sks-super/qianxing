@@ -112,8 +112,21 @@ local function tryMove(key)
             if kind ~= "move" then dur = config.DEFAULT_ACTION_ANIM_TIME end
             level.beginPlayerMove(dur)
         end
-        if act.changed then level.rebuildObjects() end
+        if act.changed then
+            -- ★ 先登记「倒 / 立 / 侧推」的过渡，再重建：
+            --   rebuild 会跳过终点格上的真实木头，把那一格让给过渡代理逐帧画。
+            level.setObjectAnim(act)
+            level.rebuildObjects()
+        end
         level.spawnRipple(act.c, act.r)
+        -- ★ 木头落点补一圈扬尘：撞倒砸得重（大圈），立起 / 侧推轻（小圈）
+        if act.animTo then
+            if kind == "knock" then
+                level.spawnDust(act.animTo.c, act.animTo.r, 1.5)
+            elseif kind == "raise" or kind == "slide" then
+                level.spawnDust(act.animTo.c, act.animTo.r, 0.85)
+            end
+        end
         level.updateHudDisplay()
 
         if kind == "move" then

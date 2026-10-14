@@ -242,6 +242,10 @@ end
 --     changed: 世界是否发生结构变化（表现层据此重建物体层）
 --     c, r   : 动作发生的目标格（涟漪特效定位用）
 --     msg    : 中文描述（HUD 一次性消息）
+--     animFrom / animTo : 仅 knock / slide / raise 有 —— 表现层据此播
+--              「木头从什么形态变到什么形态」的过渡（见 level.lua 的 setObjectAnim）。
+--              每项是 { c, r, dir?, stand? }：stand = true 表示那一头是**立姿**，
+--              否则按 dir 躺下（dir 就是躺向）。纯表现信息，规则层不读它。
 --
 --   ★ 顺序不是随意的：「先撞树 → 再能踩就踩 → 踩不上再推」。
 --     因为「倒下的树」在陆地上是 0.5 格，站得低时踩不上去、于是走到推的分支；
@@ -284,6 +288,10 @@ function M.step(key)
         base.kind = "knock"
         base.ok = true
         base.changed = true
+        -- ★ 表现层用：这一趟是「立着的东西 → 朝前砸下去躺平」
+        --   from.stand = true 表示起点是立姿（立着的树 / 树干），to 的 dir 是砸下去后的躺向
+        base.animFrom = { c = qc, r = qr, stand = true }
+        base.animTo   = { c = fc, r = fr, dir = key }
         if bare then
             base.msg = "撞倒树干 → 它又躺回前面那一格（原地不留树根）"
         else
@@ -323,15 +331,21 @@ function M.step(key)
         if M.AXIS[log.dir] == M.AXIS[key] then
             -- 正面推（推动方向 ∥ 它躺着的方向）→ 在前一格竖起来
             --   ★ 竖起来的只是这根**树干**（bare = true），不是一棵长了叶子的树：
-            --     造型与倒下的树一致（见 level.lua ④），再撞倒它也不会生根。
+            --     造型与倒下的树同源（见 level.lua ④），再撞倒它也不会生根。
             state.trees[#state.trees + 1] = { c = fc, r = fr, bare = true }
             base.kind = "raise"
             base.msg = "顺着树干推 → 它在前面一格立了起来（还是一根树干）"
+            -- ★ 表现层用：躺着的木头 → 在前一格立起来（这一趟的「立起」动效）
+            base.animFrom = { c = qc, r = qr, dir = log.dir }
+            base.animTo   = { c = fc, r = fr, stand = true }
         else
             -- 侧面推（推动方向 ⊥ 它躺着的方向）→ 整根滑一格，躺向不变
             state.logs[#state.logs + 1] = { c = fc, r = fr, dir = log.dir }
             base.kind = "slide"
             base.msg = "从侧面推 → 树干整根滑了一格"
+            -- ★ 表现层用：同一根木头平移一格（姿态不变，只是滑过去）
+            base.animFrom = { c = qc, r = qr, dir = log.dir }
+            base.animTo   = { c = fc, r = fr, dir = log.dir }
         end
         base.ok = true
         base.changed = true

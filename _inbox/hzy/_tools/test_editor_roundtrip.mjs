@@ -58,7 +58,14 @@ globalThis.window = { addEventListener: noop, innerWidth: 1400, innerHeight: 900
 globalThis.alert = (s) => { throw new Error('编辑器弹窗：' + s); };
 globalThis.confirm = () => true;
 globalThis.Blob = class { constructor() {} };
-globalThis.URL = { createObjectURL: () => '', revokeObjectURL: noop };
+// ⚠️ 编辑器只在「下载」按钮的点击处理里用 URL.createObjectURL（本测试不会触发），
+//   所以**只往上补两个方法，绝不能整个替换 globalThis.URL** ——
+//   Node 的文件系统垫片内部要做 `filePath instanceof URL`，一旦 URL 变成普通对象，
+//   后面的 fs.readFileSync 就会抛「Right-hand side of 'instanceof' is not callable」。
+if (typeof globalThis.URL === "function" && !globalThis.URL.createObjectURL) {
+    globalThis.URL.createObjectURL = () => "";
+    globalThis.URL.revokeObjectURL = noop;
+}
 
 // ---------- 把编辑器脚本跑起来，取回需要的那几个函数 ----------
 const api = new Function(m[1] + '\n;return { generateLua, parseLuaLevels, levels, INITIAL_LEVELS };')();

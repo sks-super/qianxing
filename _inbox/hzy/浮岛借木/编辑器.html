@@ -181,11 +181,12 @@ const PALETTE = {
     shadowLand: "33421F",
     treeCanopy: "2F6B3A", treeTrunk: "7E5A32",
     logSide: "9C6C36", logTop: "C09455", logEnd: "5C4020",
+    logStandSide: "AB7A3E", logStandEdge: "D6A863", logStandCap: "EDCB8C", logStandFoot: "6A4A23",
     rock1Top: "E7DFC6", rock2Top: "BEB49A", rockSide: "8C846C",
     rootTop: "C9A26B", rootRing: "7A5A34",
     playerBody: "F2A03C", playerHead: "3A2A20",
     goalFlag: "F5E05A", goalPole: "6E5A38",
-    hud: "F4F8FF", hudBar: "0B1A20", hint: "DFF0FF", ripple: "FFFFFF",
+    hud: "F4F8FF", hudBar: "0B1A20", hint: "DFF0FF", ripple: "FFFFFF", dust: "E9DCBE",
 };
 
 const DEFAULT_COLS = 22, DEFAULT_ROWS = 13;
@@ -356,6 +357,11 @@ function blk(cellC, cellR, offCells, wCells, hCells, hex, alpha, dxCells) {
          footY(cellR) - (offCells + hCells / 2) * CELL, w, h, hex, alpha);
 }
 
+// ★ 木头两态的形状常量 —— 与 level.lua 顶部的 LOG_THICK / LOG_LEN / LOG_UNDER / LOG_CAP 同源。
+//   编辑器只画**关卡数据里有的物件**（真树 + 倒下的木头）；「立着的无叶树干」是运行时
+//   状态（正面推出来的），所以这里只需要躺姿这一套。
+const LOG_THICK = 0.50, LOG_LEN = 1.00, LOG_CAP = 0.09;
+
 function draw() {
     const lv = cur();
     layout();
@@ -420,20 +426,38 @@ function draw() {
         // 压在陆地上 0.5 格高 / 漂在水面上 0.25 格（半浸在水里）—— 与 world.logHeightAt 一致
         const h = isLand(lv, lg.c, lg.r) ? DEFAULTS.h_log_land : DEFAULTS.h_log_float;
         const alongX = (lg.dir === "A" || lg.dir === "D");   // 东西躺 / 南北躺
-        const thick = 0.50, long = 0.96;
-        const wCells = alongX ? long : thick;
-        const hCells = alongX ? thick : long;
+        const wCells = alongX ? LOG_LEN : LOG_THICK;         // 长而扁：1.00 × 0.50
+        const hCells = alongX ? LOG_THICK : LOG_LEN;
         const off = h - 0.25;                                 // 中心相对脚线的高度（格）
+        const cap = LOG_CAP;
         shadow(lg.c, lg.r, 0.80, OBJ_SHADOW);
+        // ① 主体（偏灰的旧木色）
         blk(lg.c, lg.r, off, wCells, hCells, PALETTE.logSide, 1);
+        // ② 背光暗边：永远贴在受光边的对侧。横躺时它落在下沿 ——
+        //    正好是「贴地」的那一面，木头一下就「摁」在地上了（level.lua 同款）。
+        blk(lg.c, lg.r,
+            off + (alongX ? (-hCells / 2 + hCells * 0.13) : 0),
+            alongX ? wCells * 0.98 : wCells * 0.24,
+            alongX ? hCells * 0.24 : hCells * 0.94,
+            PALETTE.logEnd, 190 / 255,
+            alongX ? 0 : (wCells / 2 - wCells * 0.13));
+        // ③ 受光边：横躺 → 上沿横带；竖躺 → 左侧竖带
         if (alongX) {
-            blk(lg.c, lg.r, off + hCells * 0.24, wCells * 0.98, hCells * 0.30, PALETTE.logTop, 1);
-            blk(lg.c, lg.r, off, 0.09, hCells, PALETTE.logEnd, 1, -wCells / 2);
-            blk(lg.c, lg.r, off, 0.09, hCells, PALETTE.logEnd, 1, wCells / 2);
+            blk(lg.c, lg.r, off + hCells * 0.26, wCells * 0.98, hCells * 0.30, PALETTE.logTop, 1);
         } else {
-            blk(lg.c, lg.r, off, wCells * 0.30, hCells * 0.98, PALETTE.logTop, 1, -wCells * 0.18);
-            blk(lg.c, lg.r, off - hCells / 2, wCells, 0.09, PALETTE.logEnd, 1);
-            blk(lg.c, lg.r, off + hCells / 2, wCells, 0.09, PALETTE.logEnd, 1);
+            blk(lg.c, lg.r, off, wCells * 0.28, hCells * 0.94, PALETTE.logTop, 1, -wCells * 0.22);
+        }
+        // ④ 两端切口：外圈深色 + 内芯年轮（读作「被锯断的木头」）
+        for (const s of [-1, 1]) {
+            if (alongX) {
+                const dx = s * (wCells / 2 - cap / 2);
+                blk(lg.c, lg.r, off, cap, hCells, PALETTE.logEnd, 1, dx);
+                blk(lg.c, lg.r, off, cap * 0.42, hCells * 0.44, PALETTE.logTop, 1, dx);
+            } else {
+                const dy = s * (hCells / 2 - cap / 2);
+                blk(lg.c, lg.r, off + dy, wCells, cap, PALETTE.logEnd, 1);
+                blk(lg.c, lg.r, off + dy, wCells * 0.42, cap * 0.42, PALETTE.logTop, 1);
+            }
         }
     });
     lv.rocks.forEach(o => {
