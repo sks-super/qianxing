@@ -49,7 +49,26 @@ const opt = (n, d) => {
 };
 
 const PORT = parseInt(opt('port', '4173'), 10);
-const GAME = opt('game', 'TickHop');
+
+// ---------- 游戏别名（让 .bat 保持纯 ASCII） ----------
+// ★ 为什么要有别名：.bat 里的中文字面量在 cmd 代码页切换时会被搅成乱码，
+//   所以中文游戏目录名不能直接写进 .bat。改为在 _tools/game_alias.json（UTF-8）
+//   里声明「ASCII 别名 → 中文目录名 + 存档显示名」，.bat 只传 --alias deng2d。
+function loadAliases() {
+  const f = path.join(HERE, 'game_alias.json');
+  if (!existsSync(f)) return {};
+  try { return JSON.parse(readFileSync(f, 'utf8')); } catch { return {}; }
+}
+const ALIASES = loadAliases();
+const ALIAS = opt('alias', '');
+const ALIAS_ENTRY = ALIAS ? ALIASES[ALIAS] : null;
+if (ALIAS && !ALIAS_ENTRY) {
+  console.error(`[FATAL] 未定义的别名 "${ALIAS}"，请检查 _tools/game_alias.json`);
+  process.exit(1);
+}
+const GAME = ALIAS_ENTRY ? ALIAS_ENTRY.game : opt('game', 'TickHop');
+// 存档显示名：优先别名里配的，其次 "<游戏> 试玩"
+const SAVE_NAME = (ALIAS_ENTRY && ALIAS_ENTRY.name) || `${GAME} 试玩`;
 const MODE = has('play') ? 'play' : 'editor';
 const NO_OPEN = has('no-open');
 const REBUILD = has('rebuild');
@@ -195,7 +214,7 @@ async function ensureArchive() {
   info(`重建试玩存档（${missing ? '缺失' : REBUILD ? '--rebuild' : 'Lua 有改动'}）…`);
   return runNode([path.join(HERE, 'qxqy_websave.mjs'), '--game', GAME,
     '--src', rel(simReady), '--out', rel(webSave),
-    '--name', `${GAME} 试玩`], '生成「浏览器试玩就绪」存档');
+    '--name', SAVE_NAME], '生成「浏览器试玩就绪」存档');
 }
 
 // ---------------------------------------------------------------- 4 服务
@@ -299,6 +318,8 @@ async function main() {
   log('  千星沙箱模拟器 · 一键启动');
   line();
   log(`  工作区  ${WORKSPACE}`);
+  log(`  游戏    ${GAME}${ALIAS ? `（别名 ${ALIAS}）` : ''}`);
+  log(`  存档名  ${SAVE_NAME}`);
   log(`  端口    ${PORT}`);
   log(`  模式    ${MODE === 'play' ? '直接试玩' : '模拟器工作台'}`);
 

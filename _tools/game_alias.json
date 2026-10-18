@@ -1,0 +1,22 @@
+{
+  "deng2d": {
+    "game": "点灯迷题2D",
+    "name": "★ 点灯迷题2D · 16×16 四宫格（猫脸 / 蘑菇）"
+  },
+  "deng": {
+    "game": "点灯迷题",
+    "name": "点灯迷题（5×6 旧版）"
+  },
+  "tickhop": {
+    "game": "TickHop",
+    "name": "TickHop 试玩"
+  },
+  "rope": {
+    "game": "割绳子",
+    "name": "割绳子 试玩"
+  },
+  "island": {
+    "game": "浮岛借木",
+    "name": "浮岛借木 试玩"
+  }
+}

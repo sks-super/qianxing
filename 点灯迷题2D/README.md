@@ -89,9 +89,14 @@ audio.lua      音效（ID ≤ 0 静默跳过）
 | `rectPrefabId` | 纯色矩形（图片控件） | ★ 棋盘 / 面板 / 按钮全靠它染色 |
 | `textPrefabId` | 文本框 | ★ |
 | `cursorPrefabId` | 光标检测区域 | ★ 没有它鼠标点不动 |
+| `containerPrefabId` | 容器节点 | 可选。配了就用**真容器**当父节点（模拟器里必须配，见下） |
 
 音效可选：`flipAudioId` / `clickAudioId` / `winAudioId` / `starAudioId`。
 把 `game.lua` 挂到**客户端控件容器的容器节点**上。
+
+> **为什么要 `containerPrefabId`**：原来用纯色矩形（图片控件）当父节点也能正常显示，
+> 但模拟器的命中测试只下钻 `container / grid / textwindow / reference / button` 这几种 kind，
+> 图片当父节点时**所有子控件的点击都不可达**（真机不受影响）。配了真容器就一致了。
 
 ### 开发用参数（正式不传）
 
@@ -105,18 +110,40 @@ audio.lua      音效（ID ≤ 0 静默跳过）
 
 ## 六、校验与试玩
 
+### 6.1 在网页模拟器里打开（最省事）
+
+工作区根有 **`启动-点灯迷题2D.bat`**（纯 ASCII 内容，中文名靠 `_tools/game_alias.json` 映射）。
+双击它会：切到本工作区 → 重建试玩存档 → 起服务 → 打开工作台。
+
+打开后在工作台顶部的「**工作区存档**」下拉里认这一条：
+
+```
+★ 点灯迷题2D · 16×16 四宫格（猫脸 / 蘑菇）
+```
+
+存档文件是 `_simulator/点灯迷题2D.web.save.json`，**按最新时间排最上面**。
+下拉里其它 `（底稿）` / `（工具）` 开头的都是中间产物，别选。
+
+### 6.2 命令行校验
+
 ```bash
 cd E:/千星/千星游戏
 python _shared/_check_blocks.py 点灯迷题2D
 python _shared/_check_refs.py   点灯迷题2D
 
 export NODE_PATH="$HOME/.workbuddy/binaries/node/workspace/node_modules"
+# 无头跑一遍网页存档，确认脚本真的执行了
+node _tools/qxqy_webcheck.mjs --archive _simulator/点灯迷题2D.web.save.json \
+  --frames 45 --expect "大关 ·"
+
+# MCP 挂载 + 截图（看画面）
 node _tools/qxqy_mount.mjs --game 点灯迷题2D --entry game.lua \
   --preset sim --open _simulator/sim-ready.save.json --mount n1 \
-  --params '{"cursorPrefabId":2000001,"autoStart":1,"autoSolve":1}' --steps 760
+  --params '{"autoStart":1,"autoSolve":1}' --steps 760
 ```
 
-**已实测**：4 块自动解 → 4 个 ★ → 合拢 → 256 格上色，日志零报错。
+**已实测**：4 块自动解 → 4 个 ★ → 合拢 → 256 格上色，日志零报错；
+网页存档载入后控件齐全（12 条文本、两张棋盘）。
 
 ---
 
@@ -134,6 +161,10 @@ node _tools/qxqy_mount.mjs --game 点灯迷题2D --entry game.lua \
 ---
 
 ## 八、已知边界
+
+- **网页模拟器的「坐标点击」还没打通**：按名字点（`play {action:'click', name}`）能触发，
+  但 `pointer` 注入的 x/y 命不中嵌套控件（模拟器命中测试走「锚点矩形」，与渲染矩阵不一致）。
+  真机的 `AddCursorEventListener` 不受此影响；要在模拟器里验证玩法，先用 `autoPress` / `autoSolve`。
 
 - 上色是**纯 Lua 的 16×16 色块版**（路径 B），还不是 64×64 精细画。
   要真 64×64，需要把 `_art/out/64/*.png` 上传成千星图片资源，再用一个图片控件淡入。

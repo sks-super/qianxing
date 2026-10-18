@@ -370,6 +370,7 @@ function OnStart()
     state.rectPrefabId = getParamNumber("rectPrefabId", 0)
     state.textPrefabId = getParamNumber("textPrefabId", 0)
     state.cursorPrefabId = getParamNumber("cursorPrefabId", 0)
+    state.containerPrefabId = getParamNumber("containerPrefabId", 0)
     if state.rectPrefabId <= 0 then
         printerr("错误：请设置脚本参数 rectPrefabId（纯色矩形 / 图片控件）")
         return

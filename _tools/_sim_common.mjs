@@ -7,7 +7,14 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 // 模拟器就绪存档里的模板 guid（与 qxqy_simsave.mjs 保持一致）
-export const SIM_TEMPLATE_GUIDS = { rectPrefabId: 2000001, textPrefabId: 2000002 };
+export const SIM_TEMPLATE_GUIDS = {
+  rectPrefabId: 2000001,
+  textPrefabId: 2000002,
+  // 光标检测区域（命中区）——没有它，模拟器里所有点击都无效
+  cursorPrefabId: 2000003,
+  // 真容器：模拟器的命中测试只下钻真容器，图片当父节点时子控件点不到
+  containerPrefabId: 1073742100,
+};
 
 // Web 端的存档扫描标记：文件内容必须含这个子串才会出现在存档下拉里
 // （见 beyond-simulator-web/dist/server.js 的 ia()：u.includes("qxqy-simulator-save")）
@@ -67,6 +74,41 @@ ${lines}
                 if f ~= nil then return f end
             end
             return v
+        end
+    end
+end
+-- ===== [/SIM_ONLY] =====
+`;
+}
+
+// ---------- 光标事件补丁 ----------
+// ★★ 模拟器的光标事件派发有前置条件（见 renderer 的 cursorEventsEnabled）：
+//     for (let i = ctrl; i; i = i.parent)
+//         if (i.kind === "container" && i.showCursor === true) return true;
+//     return false;
+//   也就是【任一祖先容器 showCursor=true】才派发。默认是 false →
+//   所有命中区在网页/无头里都「点得动但没反应」，且不报任何错。
+// 真机没有这个前置条件，所以这段只在模拟器里补，工程源文件不动。
+// 做法：包一层 OnStart（引擎是 callGlobal 按名字取，包了能生效），
+//       在游戏建完容器后把脚本挂载节点的 showCursor 打开。
+export function buildCursorShim(origin = '_tools/qxqy_websave.mjs') {
+  return `
+-- ===== [SIM_ONLY] 光标事件补丁（由 ${origin} 注入，工程源文件未改动） =====
+-- 模拟器派发光标事件的两个隐藏前置（缺一个就「点得动但没反应、且不报错」）：
+--   ① 祖先容器必须 showCursor=true（renderer 的 cursorEventsEnabled 逐级向上找）
+--   ② 命中区必须挂在「真容器」链下：命中测试只下钻
+--      container / grid / textwindow / reference / button 这几种 kind，
+--      用图片控件当父节点时子控件永远不可达（工程侧用 containerPrefabId 解决）
+do
+    local __simOrigOnStart = OnStart
+    if type(__simOrigOnStart) == "function" then
+        OnStart = function(...)
+            local __a, __b, __c = __simOrigOnStart(...)
+            pcall(function()
+                local __root = script and script.object
+                if __root then __root.showCursor = true end
+            end)
+            return __a, __b, __c
         end
     end
 end

@@ -77,6 +77,19 @@
   `--scene`、`--tree`（**客户端→服务器记在 `inbound`**，注意方向命名）。
 - `render_scene.mjs`：`matrix.tx/ty` 是**相对父节点**偏移（须沿 `parent` 链累加）；图片色值字段是
   **`imageColor`**（文本才是 `fontColor`）；**隐藏控件不会出现在 `scene.nodes` 里**。
+- **★★ 「下拉里看不到自己的工作区」= 端口被别的工作区占了**（4173 只能挂一个 workspace）。
+  唯一可靠确认：`GET /api/state` 的 `workspace` 字段。`dev_open --restart` 抢回端口；
+  但 `detached spawn` 的服务在本环境会被回收 → 用**托管后台任务**起 `server.js --workspace …`。
+- **★ 存档命名约定**（写 JSON 顶层 `name`，网页按 mtime 排序显示）：
+  `★ …`=当前在做、`（底稿）…`=mount 产出的工程档、`（工具）…`=sim-ready 模板（别选）。
+- **★ 中文游戏名不进 `.bat`**：bat 内容保持纯 ASCII，名字写在 `_tools/game_alias.json`，
+  启动传 `--alias deng2d`。范例根目录 `启动-点灯迷题2D.bat`。
+- **★★ 模拟器里「点得动但没反应」的三个真因**（`AddCursorEventListener` 会静默成功，pcall 拦不住）：
+  ① 祖先容器必须 `showCursor=true`（`buildCursorShim()` 补）；② 命中区必须挂在**真容器**链下
+  （命中测试只下钻 container/grid/textwindow/reference/button，图片当父节点则子孙不可达 →
+  工程加 `containerPrefabId`，sim 传 `1073742100`）；③ 别全局 `raycastTarget=true`（底板会吞点击）。
+  **仍未打通**：`play` 的 `pointer` 坐标点击命不中嵌套控件（按名字 `click {name}` 可以）→
+  模拟器里验证玩法继续用 `autoPress` / `autoSolve`。
 - 边界：**模拟器通过 ≠ 真机通过**；图片只代理 `100001–100006`；上游 GPL-3.0-only。
 
 ## 本机环境 / 版本管理（Git）

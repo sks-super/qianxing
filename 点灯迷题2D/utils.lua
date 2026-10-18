@@ -210,7 +210,12 @@ end
 --   定位于场景原点，所以子控件的坐标就是场景坐标。
 -- ================================================================
 function M.createContainer(parent)
-    local pid = state.rectPrefabId or 0
+    -- ★ 优先用「真容器」模板（containerPrefabId）：模拟器的命中测试只下钻
+    --   container / grid / textwindow / reference / button 这几种 kind，
+    --   用图片控件当父节点时，子控件（格子、按钮的命中区）永远点不到。
+    --   真机上两者都能当父节点，所以配了真容器只会更正确。
+    local pid = state.containerPrefabId or 0
+    if pid <= 0 then pid = state.rectPrefabId or 0 end
     if pid <= 0 then return nil end
     local ok, c = pcall(game.InstantiateClientUIControl, pid, parent or state.parent)
     if not ok or not c then return nil end
@@ -219,7 +224,10 @@ function M.createContainer(parent)
         c:SetAnchorMax(0.5, 0.5)
         c:SetPivot(0.5, 0.5)
         c:SetAnchoredPosition(0, 0)
-        c:SetSizeDelta(1, 1)
+        -- ★ 容器尺寸必须是整块画布，不能是 1×1：
+        --   模拟器的命中测试是按「锚点 + 偏移」算矩形的（不像渲染走矩阵），
+        --   1×1 的父容器会让子控件的矩形整体缩到原点附近 → 点哪都对不上。
+        c:SetSizeDelta(state.canvasW or 1280, state.canvasH or 720)
         c.imageColor = Color.FromRGBA(255, 255, 255, 0)
         c.enableMask = false
         c.raycastTarget = false

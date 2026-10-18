@@ -24,6 +24,7 @@ const opt = (name, dflt) => {
 const ARCHIVE = opt('archive', '_simulator/TickHop.web.save.json');
 const FRAMES = parseInt(opt('frames', '45'), 10);
 const CANVAS = opt('canvas', 'mobile-16-9');
+const EXPECT = opt('expect', '');   // 可选：用来判定「游戏真的跑了」的文本正则
 
 // 注意：服务端每个不同的 sessionId 都会占一个会话槽（默认上限 8 个，无 CLI 开关可调），
 // 所以命令行工具统一复用同一个 id，避免把槽位耗尽。
@@ -68,13 +69,17 @@ if (!sc?.nodes?.length) {
     console.log(`   id=${n.id} ${String(n.kind).padEnd(10)} z=${n.z} parent=${n.parent} ` +
       `color=${n.imageColor ?? n.fontColor ?? ''} text=${JSON.stringify(n.text ?? '')}`);
   }
-  // 判据：脚本跑起来后必然有倒计时文本（形如 "11.33"）。
-  // 注意 scene 里不区分 container/image——容器节点的 kind 也会记成 image，
-  // 所以不能靠数 container 来判断，认「倒计时文本」最稳。
-  const hasTimer = sc.nodes.some((n) => /^\d+\.\d{2}$/.test(String(n.text || '')));
-  const ok = hasTimer && (byKind.textbox || 0) >= 2;
+  // 判据：脚本跑起来后必然出现「多个非空文本」。
+  // ★ 早期版本只认 TickHop 的倒计时文本（形如 "11.33"），换游戏就会误判成 ❌，
+  //   所以改成通用判据：≥2 个非空文本，或用 --expect <正则> 显式指定。
+  const texts = sc.nodes
+    .map((n) => String(n.text || ''))
+    .filter((t) => t.trim().length > 0);
+  const hasTimer = texts.some((t) => /^\d+\.\d{2}$/.test(t));
+  const matches = EXPECT ? texts.some((t) => new RegExp(EXPECT).test(t)) : false;
+  const ok = EXPECT ? matches : (hasTimer || texts.length >= 2);
   console.log(ok
-    ? '\n结论: 脚本已执行，游戏控件正常渲染 ✅'
-    : '\n结论: 画面里没有游戏内容（没找到倒计时文本），脚本很可能没跑起来 ❌');
+    ? `\n结论: 脚本已执行，游戏控件正常渲染 ✅（文本 ${texts.length} 条${EXPECT ? `，命中 ${EXPECT}` : ''}）`
+    : '\n结论: 画面里没有游戏内容，脚本很可能没跑起来 ❌');
   if (!ok) process.exitCode = 1;
 }

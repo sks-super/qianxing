@@ -36,6 +36,10 @@ const OUT = opt('out', '_simulator/sim-ready.save.json');
 // 模板固定 guid —— 与 _tools/qxqy_mount.mjs 的 sim 预设保持一致
 const GUID_RECT = 2000001;
 const GUID_TEXT = 2000002;
+// ★ 光标检测区域：模拟器里 image 控件的 raycastTarget 【写不进去】（实测 238 个控件写入 0 个成功），
+//   而命中测试 bn() 对 image 要求 raycastTarget===true → 图片做的命中区永远点不到。
+//   cursor 控件则是 raycastTarget!==false 即算命中，所以必须有一个真正的 cursor 模板。
+const GUID_CURSOR = 2000003;
 const IMAGE_RECT_PRIMITIVE = 100001;
 
 const abs = (p) => (path.isAbsolute(p) ? p : path.resolve(WORKSPACE, p));
@@ -130,10 +134,29 @@ tText.adaptiveFontSize = false;
 tText.horizontalAlignment = 'Middle';
 tText.verticalAlignment = 'Middle';
 
+// 光标检测区域：克隆文本框，换 kind 并清掉文本专有字段
+const tCursor = makeTemplate(protoText, {
+  id: 'tsCursor',
+  guid: GUID_CURSOR,
+  name: 'SIM_光标检测',
+  size: { x: 100, y: 100 },
+});
+tCursor.kind = 'cursor';
+for (const k of ['text', 'fontSize', 'adaptiveFontSize', 'minimumFontSize',
+                 'fontColor', 'bgColor', 'enableOutline', 'outlineColor',
+                 'horizontalAlignment', 'verticalAlignment', 'interactable', 'showScrollBar']) {
+  delete tCursor[k];
+}
+tCursor.active = true;
+tCursor.visible = true;
+tCursor.raycastTarget = true;
+tCursor.enableMask = false;
+tCursor.imageColor = 0;          // 全透明，命中区不该被看见
+
 // ---- 3) 挂到 client root.children 下，成为可实例化模板 ----
 const root = client.root;
-root.children = (root.children || []).filter((n) => n.id !== 'tsRect' && n.id !== 'tsText');
-root.children.push(tRect, tText);
+root.children = (root.children || []).filter((n) => !['tsRect', 'tsText', 'tsCursor'].includes(n.id));
+root.children.push(tRect, tText, tCursor);
 
 // ---- 4) 清空模板根 n1 的装饰子节点，留出干净试玩画面 ----
 const templateRoot = root.children.find((n) => n.kind === 'container');
@@ -163,4 +186,4 @@ console.log('# 可实例化模板:');
 eachNode(root, (n) => {
   if (root.children.includes(n)) console.log(`#   guid=${n.guid}  ${n.kind.padEnd(8)} ${n.name}`);
 });
-console.log(`# 脚本参数建议: {"rectPrefabId":${GUID_RECT},"textPrefabId":${GUID_TEXT}}`);
+console.log(`# 脚本参数建议: {"rectPrefabId":${GUID_RECT},"textPrefabId":${GUID_TEXT},"cursorPrefabId":${GUID_CURSOR}}`);

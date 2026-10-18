@@ -38,7 +38,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
   SIM_TEMPLATE_GUIDS, SAVE_MARKER, SERVER_ASSET,
-  buildParamShim, buildZOrderFix, collectLua, sceneRootOf,
+  buildParamShim, buildZOrderFix, buildCursorShim, collectLua, sceneRootOf,
 } from './_sim_common.mjs';
 
 const WORKSPACE = process.env.QXQY_WORKSPACE || 'E:/千星/千星游戏';
@@ -122,7 +122,10 @@ if (!files.length) {
 }
 
 const shim = buildParamShim(PARAMS, '_tools/qxqy_websave.mjs')
-  + (ZFIX ? buildZOrderFix(ZFIX_FRAME, '_tools/qxqy_websave.mjs') : '');
+  + (ZFIX ? buildZOrderFix(ZFIX_FRAME, '_tools/qxqy_websave.mjs') : '')
+  // ★ 光标事件补丁：模拟器要求祖先容器 showCursor=true 才派发光标事件，
+  //   不加这段的话所有命中区在网页里都点不动（且不报错）。
+  + buildCursorShim('_tools/qxqy_websave.mjs');
 
 const scripts = files.map((f) => {
   const isEntry = f.name === ENTRY;
@@ -145,7 +148,11 @@ client.canvasId = CANVAS;
 
 // ---- 6) 打上 Web 存档标记，并让存档名可读 ----
 // 重建顶层对象，把 name 放在最前——网页是取文件里第一个 "name" 字段当显示名。
-const marked = { name: NAME, kind: SAVE_MARKER, ...save };
+// ★ 先把源存档顶层可能带的 name 摘掉，再把自己的 name 放到最前：
+//   源存档自己也可能有 name（例如 qxqy_simsave 产出的就绪模板被手工命名过），
+//   若直接 {name: NAME, ...save} 展开，源里的 name 会把 NAME 覆盖回去。
+const { name: _srcName, ...restSave } = save;
+const marked = { name: NAME, kind: SAVE_MARKER, ...restSave };
 
 mkdirSync(path.dirname(outPath), { recursive: true });
 writeFileSync(outPath, JSON.stringify(marked, null, 2), 'utf8');

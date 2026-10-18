@@ -13,6 +13,7 @@ M.parent = nil
 M.rectPrefabId = 0
 M.textPrefabId = 0
 M.cursorPrefabId = 0
+M.containerPrefabId = 0     -- 真容器模板（可选；模拟器里必须配，否则命中测试下钻不到）
 M.buttonPrefabId = 0
 
 -- 画布

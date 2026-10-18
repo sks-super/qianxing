@@ -65,12 +65,53 @@ node _tools/qxqy_webcheck.mjs
 #    http://127.0.0.1:4173/editor    编辑工作台（「试玩」会开新标签页）
 ```
 
+### 一键启动与「工作区存档」下拉
+
+工作区根有两个 `.bat`（内容纯 ASCII，中文名靠 `_tools/game_alias.json` 映射，
+避免 cmd 代码页把中文游戏目录名搅成乱码）：
+
+| 双击 | 别名 | 打开的游戏 |
+| --- | --- | --- |
+| `启动千星模拟器.bat` | （默认 TickHop） | TickHop |
+| `启动-点灯迷题2D.bat` | `deng2d` | 点灯迷题2D（16×16 四宫格） |
+
+命令行等价：`node _tools/dev_open.mjs --alias deng2d [play] [--restart] [--rebuild]`。
+别名表在 `_tools/game_alias.json`：`{ "deng2d": { "game": "点灯迷题2D", "name": "★ …" } }`，
+`name` 就是下拉里显示的存档名。
+
+> ⚠️ **同一端口只能有一个工作区**。如果下拉里全是别的项目的存档，
+> 说明 4173 上跑的服务指向了别的工作区（`GET /api/state` 的 `workspace` 字段可以确认），
+> 重跑启动脚本会 `--restart` 抢回端口。
+
+**存档命名约定**（写进 JSON 顶层的 `name`，网页显示它）：
+
+| 前缀 | 含义 |
+| --- | --- |
+| `★` | 当前在做的游戏，**认这一个** |
+| `（底稿）` | `qxqy_mount --save` 产出的工程存档，不含 Lua |
+| `（工具）` | `sim-ready` 就绪模板，只给 websave 当输入 |
+
 ### 存档下拉的筛选规则
 
 网页顶部的「工作区存档」不是「打开任意文件」，它扫描工作区下所有 `.json` 并筛选
 （见 `beyond-simulator-web/dist/server.js` 的 `ia()`）：跳过 `node_modules/.git/dist/.dsh/coverage`、
 大小限 20B~8MB、且**文件内容必须含子串 `qxqy-simulator-save`**。
 `qxqy_websave.mjs` 会写入顶层 `kind` 字段来满足这个标记，同时写 `name` 作为显示名。
+
+### ★★ 模拟器里「点得动但没反应」的两个隐藏前置
+
+`qxqy_websave.mjs` 会自动追加 `buildCursorShim()`，但它只能补一半，另一半在工程侧：
+
+1. **祖先容器必须 `showCursor = true`** —— 渲染器的 `cursorEventsEnabled` 会逐级向上找，
+   找不到就直接不派发（`AddCursorEventListener` 照常返回成功，所以 pcall 也拦不住）。
+   补丁在引擎 `OnStart` 后统一打开。
+2. **命中区必须挂在「真容器」链下** —— 命中测试只下钻
+   `container / grid / textwindow / reference / button`。工程里若用**图片控件**当容器父节点，
+   子控件永远不可达。工程侧加一个 `containerPrefabId` 参数、`createContainer` 优先用它即可。
+   `sim-ready` 里已注册真容器模板 `guid=1073742100`，`SIM_TEMPLATE_GUIDS` 默认带上。
+
+> 另外：**不要顺手把所有控件的 `raycastTarget` 设成 true**。白纸底板 / 文本会被命中测试排到最前，
+> 把点击全吞掉，症状同样是「点哪都没反应」。
 
 ### ★ 入口脚本必须挂在 server 侧
 
