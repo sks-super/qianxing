@@ -6,7 +6,9 @@
 // 用法: node _tools/orig_track.mjs <video> [--fps 50] [--w 400] [--t0 0] [--t1 0] [--bgwin 0.4]
 import { spawn } from 'node:child_process';
 
-const FF = 'C:/Users/JingSu/.workbuddy/binaries/python/envs/default/Lib/site-packages/imageio_ffmpeg/binaries/ffmpeg-win-x86_64-v7.1.exe';
+const HOME = process.env.USERPROFILE || process.env.HOME || '';
+
+const FF = `${HOME}/.workbuddy/binaries/python/envs/default/Lib/site-packages/imageio_ffmpeg/binaries/ffmpeg-win-x86_64-v7.1.exe`;
 const argv = process.argv.slice(2);
 const file = argv.find((a) => !a.startsWith('--'));
 const opt = (k, d) => { const i = argv.indexOf('--' + k); return i >= 0 ? argv[i + 1] : d; };

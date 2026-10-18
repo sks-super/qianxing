@@ -3,7 +3,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-const MOD = 'C:/Users/JingSu/.workbuddy/binaries/node/workspace/node_modules/@napi-rs/canvas/index.js';
+
+const HOME = process.env.USERPROFILE || process.env.HOME || '';
+const MOD = `${HOME}/.workbuddy/binaries/node/workspace/node_modules/@napi-rs/canvas/index.js`;
 const { createCanvas } = await import(pathToFileURL(MOD).href);
 
 const ROOT = process.cwd();

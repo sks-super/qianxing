@@ -5,9 +5,11 @@
 import { pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 
-const MOD = 'C:/Users/JingSu/.workbuddy/binaries/node/workspace/node_modules/@napi-rs/canvas/index.js';
+const HOME = process.env.USERPROFILE || process.env.HOME || '';
+
+const MOD = `${HOME}/.workbuddy/binaries/node/workspace/node_modules/@napi-rs/canvas/index.js`;
 const { createCanvas, loadImage } = await import(pathToFileURL(MOD).href);
-const FF = 'C:/Users/JingSu/.workbuddy/binaries/python/envs/default/Lib/site-packages/imageio_ffmpeg/binaries/ffmpeg-win-x86_64-v7.1.exe';
+const FF = `${HOME}/.workbuddy/binaries/python/envs/default/Lib/site-packages/imageio_ffmpeg/binaries/ffmpeg-win-x86_64-v7.1.exe`;
 
 const argv = process.argv.slice(2);
 const file = argv.find((a) => !a.startsWith('--'));

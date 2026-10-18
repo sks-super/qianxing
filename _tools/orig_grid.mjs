@@ -1,7 +1,9 @@
 // 给关卡截图叠加坐标网格，便于肉眼精确读出平台/门/出生点的像素坐标。
 // 用法: node _tools/orig_grid.mjs <inPng> <outPng> [step=100]
 import { pathToFileURL } from 'node:url';
-const MOD = 'C:/Users/JingSu/.workbuddy/binaries/node/workspace/node_modules/@napi-rs/canvas/index.js';
+
+const HOME = process.env.USERPROFILE || process.env.HOME || '';
+const MOD = `${HOME}/.workbuddy/binaries/node/workspace/node_modules/@napi-rs/canvas/index.js`;
 const { createCanvas, loadImage } = await import(pathToFileURL(MOD).href);
 
 const [inp, outp, stepS] = process.argv.slice(2);

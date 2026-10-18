@@ -30,10 +30,12 @@
 import { existsSync, readFileSync, writeFileSync, copyFileSync, unlinkSync } from 'node:fs';
 import path from 'node:path';
 
+const HOME = process.env.USERPROFILE || process.env.HOME || '';
+
 // ---------- 目标文件 ----------
 const CANDIDATES = [
   process.env.QXQY_WEB_RENDERER,
-  'C:/Users/JingSu/.workbuddy/binaries/node/workspace/node_modules/beyond-simulator-web/dist/public/play-renderer.js',
+  `${HOME}/.workbuddy/binaries/node/workspace/node_modules/beyond-simulator-web/dist/public/play-renderer.js`,
 ].filter(Boolean);
 
 const MARKER = '__QXQY_WEBKEYMAP__';

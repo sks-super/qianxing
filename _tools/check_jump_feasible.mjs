@@ -32,7 +32,7 @@ const P = {
   W: D.PLAYER_WIDTH, H: D.PLAYER_HEIGHT, SPEED: D.MOVE_SPEED,
   GACC: D.GROUND_ACCEL, GFRIC: D.GROUND_FRICTION, AACC: D.AIR_ACCEL, AFRIC: D.AIR_FRICTION,
   JUMP: D.JUMP_SPEED, GRAV: D.GRAVITY, FALLM: D.FALL_GRAVITY_MULT, MAXF: D.MAX_FALL_SPEED,
-  SUB: D.PHYSICS_SUBSTEPS || 4,
+  SUB: D.PHYSICS_SUBSTEPS || 4, CUTF: D.JUMP_CUT_MULT || 0.45,
 };
 console.log('# 物理参数', P);
 
@@ -41,14 +41,22 @@ function solidsOf(level) { return level.platforms.map((p) => ({ ...p, halfW: p.w
 function approach(cur, target, d) { return cur < target ? Math.min(cur + d, target) : Math.max(cur - d, target); }
 
 // 从 (x,y) 起跳（水平方向 dir），返回轨迹；solid 平台集合可给
-function jumpSim(level, x, y, dir) {
+//   cutAt：若给了秒数，则在起跳后 cutAt 秒把上升速度乘 JUMP_CUT_MULT（模拟轻点小跳）
+//          —— 原版关卡里「平台只比起跳点高一点点」的短跳全靠它，只测满跳会误判不可通。
+function jumpSim(level, x, y, dir, cutAt) {
   const hw = P.W / 2, hh = P.H / 2;
   const plats = solidsOf(level);
   let vx = dir * P.SPEED, vy = P.JUMP, onGround = false;
+  let elapsed = 0, cutDone = false;
   const dt = 1 / 60, sub = Math.max(1, Math.floor(P.SUB)), sd = dt / sub;
   const traj = [];
   for (let f = 0; f < 180; f++) {
     for (let s = 0; s < sub; s++) {
+      elapsed += sd;
+      if (cutAt != null && !cutDone && elapsed >= cutAt && vy > 0) {
+        vy = vy * P.CUTF;
+        cutDone = true;
+      }
       const acc = onGround ? P.GACC : P.AACC, fric = onGround ? P.GFRIC : P.AFRIC;
       vx = dir !== 0 ? approach(vx, dir * P.SPEED, acc * sd) : approach(vx, 0, fric * sd);
       let g = P.GRAV; if (vy < 0) g *= P.FALLM;
@@ -118,18 +126,27 @@ for (const lv of levels) {
     for (const d of dirs) {
       const edgeX = from.x + d * (from.w / 2 + P.W / 2 - 1);
       const startY = topOf(from) + P.H / 2;
-      const traj = jumpSim(lv, edgeX, startY, d);
-      const hits = new Set();
-      for (const t of traj) {
-        if (!t.landed) continue;
-        for (const to of lv.platforms) {
-          if (to === from) continue;
-          if (Math.abs(t.x - to.x) < P.W / 2 + to.w / 2 && Math.abs(t.y - (topOf(to) + P.H / 2)) < 0.6) {
-            hits.add(`${to.tick >= 0 ? `[tick${to.tick}]` : ''}top=${topOf(to)}`);
+      const hitsOf = (cutAt) => {
+        const traj = jumpSim(lv, edgeX, startY, d, cutAt);
+        const hits = new Set();
+        for (const t of traj) {
+          if (!t.landed) continue;
+          for (const to of lv.platforms) {
+            if (to === from) continue;
+            if (Math.abs(t.x - to.x) < P.W / 2 + to.w / 2 && Math.abs(t.y - (topOf(to) + P.H / 2)) < 0.6) {
+              hits.add(`${to.tick >= 0 ? `[tick${to.tick}]` : ''}top=${topOf(to)}`);
+            }
           }
         }
-      }
-      if (hits.size) console.log(`    ${d > 0 ? '→右' : '←左'} 从 top=${topOf(from)} x=${edgeX.toFixed(0)} 起跳 可落到: ${[...hits].join(' , ')}`);
+        return hits;
+      };
+      const full = hitsOf(null);
+      // ★ 轻点小跳：松手越早跳得越低（原版「平台只高一点点」的短跳全靠它）
+      const taps = new Set();
+      for (let c = 0.03; c <= 0.235; c += 0.02) for (const h of hitsOf(c)) taps.add(h);
+      for (const h of full) taps.delete(h);
+      if (full.size) console.log(`    ${d > 0 ? '→右' : '←左'} 从 top=${topOf(from)} x=${edgeX.toFixed(0)} 满跳 可落到: ${[...full].join(' , ')}`);
+      if (taps.size) console.log(`    ${d > 0 ? '→右' : '←左'} 从 top=${topOf(from)} x=${edgeX.toFixed(0)} 轻点 可落到: ${[...taps].join(' , ')}`);
     }
   }
 }

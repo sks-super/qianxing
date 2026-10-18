@@ -8,14 +8,14 @@
 
 ---@diagnostic disable: undefined-global
 
-local config = require("config")
-local state = require("state")
-local utils = require("utils")
-local world = require("world")
-local level = require("level")
-local audio = require("audio")
-local signal = require("signal")
-local fadeScreen = require("fadeScreen")
+local config = require("default_import_file/config")
+local state = require("default_import_file/state")
+local utils = require("default_import_file/utils")
+local world = require("default_import_file/world")
+local level = require("default_import_file/level")
+local audio = require("default_import_file/audio")
+local signal = require("default_import_file/signal")
+local fadeScreen = require("default_import_file/fadeScreen")
 
 -- ================================================================
 -- ★ 前置声明：loadLevel 的 onPeak 闭包会在运行时引用 doLoadLevel，

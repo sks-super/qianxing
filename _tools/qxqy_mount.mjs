@@ -22,8 +22,10 @@ import { mkdirSync, readdirSync, readFileSync, writeFileSync, statSync } from 'n
 import path from 'node:path';
 import { SIM_TEMPLATE_GUIDS, buildParamShim, buildZOrderFix, collectLua } from './_sim_common.mjs';
 
+const HOME = process.env.USERPROFILE || process.env.HOME || '';
+
 const MCP_ENTRY = process.env.QXQY_MCP_ENTRY
-  || 'C:/Users/JingSu/.workbuddy/binaries/node/workspace/node_modules/beyond-simulator-mcp/dist/index.js';
+  || `${HOME}/.workbuddy/binaries/node/workspace/node_modules/beyond-simulator-mcp/dist/index.js`;
 const WORKSPACE = process.env.QXQY_WORKSPACE || 'E:/千星/千星游戏';
 const OUTDIR = process.env.QXQY_OUTDIR || path.join(WORKSPACE, '_simulator', 'shots');
 
@@ -40,19 +42,40 @@ const SAVE = opt('save', '');
 const STEPS = parseInt(opt('steps', '2'), 10);
 const SIGNAL = opt('signal', '');
 const SIGNAL_STR = opt('signal-str', '');
+// 信号下发帧：给了就「边推进边下发」，好处是之后还能继续注入按键
+// （例如先收「关卡胜利」再按 L 返回选关，验证选关界面的通关标记）。
+const SIGNAL_AT = parseInt(opt('signal-at', '0'), 10) || 0;
+// 信号下发之后再推进的帧数（观察「弹窗动效」的稳定态；0 = 只推 1 帧）
+const STEPS_AFTER = parseInt(opt('steps-after', '0'), 10) || 0;
 const OPEN = opt('open', '');          // 打开已有存档（相对工作区），默认新建空工程
 const PRESET = opt('preset', '');      // sim = 使用 qxqy_simsave.mjs 生成的模板 guid
 const PARAMS_RAW = opt('params', '');  // 额外/覆盖的脚本参数 JSON
+// 画布预设 id（决定 canvasWidth/Height，也就是客户端 GetUICanvasSize 的取值）。
+// 可选：pc-16-9(1600×900) / pc-21-9(2100×900) / mobile-16-9(1280×720，默认)
+//       / mobile-19.5-9(1560×720) / mobile-4-3(1280×960)。
+// ★ 验证「自适应布局」时很有用：同一套 Lua 在不同画布下应该都排得开。
+const CANVAS = opt('canvas', 'mobile-16-9');
 
 // ---------- 试玩期按键注入（可重复 --key） ----------
 // 传给引擎的就是 Enum.KeyEventType 的名字（如 KeyboardMoveRightKeyDown）；
 // 运行时按名字精确匹配 AddKeyEventListener 注册的事件，因此这里也是
 // 「网页端键盘桥」所依赖的同一条链路，可用来做端到端验证。
+// ★ 支持逐键指定帧：`--key KeyboardJumpKeyDown@30`（不带 @ 则用 --key-at）。
+//   这样就能在同一次运行里先「关教程 + 进关」再「按 R 重玩」。
 const KEYS = [];
 for (let i = 0; i < argv.length; i++) {
-  if (argv[i] === '--key' && argv[i + 1]) KEYS.push(argv[i + 1]);
+  if (argv[i] === '--key' && argv[i + 1]) {
+    const raw = argv[i + 1];
+    const at = raw.lastIndexOf('@');
+    if (at > 0 && /^\d+$/.test(raw.slice(at + 1))) {
+      KEYS.push({ name: raw.slice(0, at), frame: parseInt(raw.slice(at + 1), 10) });
+    } else {
+      KEYS.push({ name: raw, frame: null });
+    }
+  }
 }
 const KEY_AT = parseInt(opt('key-at', String(Math.max(1, STEPS - 10))), 10);
+for (const k of KEYS) if (k.frame == null) k.frame = KEY_AT;
 
 // 模板 guid 与参数兜底的实现统一放在 _sim_common.mjs（与 qxqy_websave.mjs 共用）
 let PARAMS = {};
@@ -350,8 +373,8 @@ try {
   log(`# 待灌入 Lua: ${files.length} 个（${GAME}）`);
 
   for (const f of files) {
-    // 关键：本工程的 Lua 用裸 require（require("config")），
-    // 因此注册路径必须是裸文件名，才能被 require 解析到。
+    // ★ 注册成「裸文件名」：运行时会加别名 default_import_file/<裸名>，
+    //   所以工程里 require("default_import_file/config") 也能命中（真机导入就是这种注册）。
     const rel = f.name;
     const isEntry = f.name === ENTRY;
     // 入口脚本注入参数兜底，其余模块保持原样
@@ -379,30 +402,44 @@ try {
 
   // 5) 试玩
   log('\n===== 启动试玩 =====');
-  log(textOf(await client.call('qxqy_studio_play', { handle, action: 'start', args: { canvasId: 'mobile-16-9' } })));
+  log(textOf(await client.call('qxqy_studio_play', { handle, action: 'start', args: { canvasId: CANVAS } })));
+  const sendSignal = async (why) => {
+    const params = SIGNAL_STR ? [SIGNAL_STR] : [];
+    log(`\n===== 模拟服务器下发信号: ${SIGNAL}${why ? `（${why}）` : ''} =====`);
+    log(textOf(await client.call('qxqy_studio_play', { handle, action: 'serverSend', args: { target: 'PlayerSelf', name: SIGNAL, params } })));
+  };
+
   for (let i = 0; i < STEPS; i++) {
     const frame = i + 1;
-    if (KEYS.length && frame === KEY_AT) {
-      for (const k of KEYS) {
-        await client.call('qxqy_studio_play', { handle, action: 'key', args: { key: k } });
+    const due = KEYS.filter(k => k.frame === frame);
+    if (due.length) {
+      for (const k of due) {
+        await client.call('qxqy_studio_play', { handle, action: 'key', args: { key: k.name } });
       }
-      log(`# 第 ${frame} 帧注入按键: ${KEYS.join(', ')}`);
+      log(`# 第 ${frame} 帧注入按键: ${due.map(k => k.name).join(', ')}`);
     }
+    if (SIGNAL && SIGNAL_AT === frame) await sendSignal(`第 ${frame} 帧`);
     await client.call('qxqy_studio_play', { handle, action: 'step', args: { dt: 1 / 30 } });
   }
 
-  if (SIGNAL) {
-    log(`\n===== 模拟服务器下发信号: ${SIGNAL} =====`);
-    const params = SIGNAL_STR ? [SIGNAL_STR] : [];
-    log(textOf(await client.call('qxqy_studio_play', { handle, action: 'serverSend', args: { target: 'PlayerSelf', name: SIGNAL, params } })));
+  if (SIGNAL && SIGNAL_AT === 0) {
+    await sendSignal('');
     await client.call('qxqy_studio_play', { handle, action: 'step', args: { dt: 1 / 30 } });
+    for (let i = 0; i < STEPS_AFTER; i++) {
+      await client.call('qxqy_studio_play', { handle, action: 'step', args: { dt: 1 / 30 } });
+    }
+    if (STEPS_AFTER > 0) log(`# 信号后再推进 ${STEPS_AFTER} 帧（观察动效稳定态）`);
   }
 
   log('\n===== 试玩状态 =====');
   const st = JSON.parse(textOf(await client.call('qxqy_studio_play', { handle, action: 'get' })));
+  const srv = st.server || {};
   log(JSON.stringify({
     frame: st.frame, time: st.time, mountError: st.mountError,
     logs: (st.logs || []).map(l => (typeof l === 'string' ? l : (l.text || l.message || JSON.stringify(l)))),
+    // ★ 服务器侧记录：客户端 → 服务器的信号落在 outbound，服务器 → 客户端落在 inbound
+    outbound: (srv.outbound || []).map(r => ({ name: r.name, params: r.params })),
+    inbound: (srv.inbound || []).map(r => ({ name: r.name, params: r.params })),
   }, null, 2));
 
   // --scene: 转储截图渲染真正消费的 scene.nodes，排查「控件存在但没画出来」

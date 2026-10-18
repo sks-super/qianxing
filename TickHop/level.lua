@@ -9,9 +9,9 @@
 ---@diagnostic disable: undefined-global
 
 local M = {}
-local state = require("state")
-local config = require("config")
-local utils = require("utils")
+local state = require("default_import_file/state")
+local config = require("default_import_file/config")
+local utils = require("default_import_file/utils")
 
 -- ================================================================
 -- ★ 合并配色：关卡 palette 覆盖 DEFAULT_PALETTE
@@ -45,9 +45,10 @@ local function createPlatform(p, palette)
     if tick == nil then tick = config.DEFAULT_PLATFORM_TICK end
     tick = math.floor(tonumber(tick) or -1)
 
+    -- ★ 平台矩形进「图片组」，秒数进「文字组」（后者整体压在图片组之上）
     local ctrl = utils.createControl(
         state.rectPrefabId, p.x, p.y, w, h,
-        utils.hexToColor(palette.ghost), state.containerPlatform)
+        utils.hexToColor(palette.ghost), state.containerPlatformImage)
     if not ctrl then return nil end
 
     -- 秒数标签（仅计时平台显示；永驻平台不显示）
@@ -57,7 +58,7 @@ local function createPlatform(p, palette)
         labelCtrl = utils.createText(
             p.x, p.y, math.max(w, 40), math.max(h, labelSize + 8),
             tostring(tick), utils.hexToColor(palette.label), labelSize,
-            state.containerPlatform)
+            state.containerPlatformText)
     end
 
     local item = {
@@ -81,7 +82,7 @@ local function createGoal(g, palette)
     if not pid or pid <= 0 then pid = state.rectPrefabId end
     local ctrl = utils.createControl(
         pid, g.x, g.y, w, h,
-        utils.hexToColor(palette.goal), state.containerGoal)
+        utils.hexToColor(palette.goal), state.containerGoalImage)
     if not ctrl then return nil end
     return {
         x = g.x, y = g.y,
@@ -100,7 +101,7 @@ local function createPickup(k, palette)
     if kind == "reverse" then color = palette.reverse end
     local ctrl = utils.createControl(
         state.rectPrefabId, k.x, k.y, size, size,
-        utils.hexToColor(color), state.containerPickup)
+        utils.hexToColor(color), state.containerPickupImage)
     if not ctrl then return nil end
     return {
         x = k.x, y = k.y,
@@ -124,7 +125,7 @@ local function createPlayer(spawn, palette)
 
     local body = utils.createControl(
         pid, spawn.x, spawn.y, w, h,
-        utils.hexToColor(palette.player), state.containerPlayer)
+        utils.hexToColor(palette.player), state.containerPlayerImage)
     if not body then return nil end
 
     local eyeW = math.max(3, w * 0.16)
@@ -133,9 +134,9 @@ local function createPlayer(spawn, palette)
     local eyeDY = h * 0.24
     local eyeColor = utils.hexToColor(palette.bg)
     local eye1 = utils.createControl(state.rectPrefabId,
-        spawn.x - eyeDX, spawn.y + eyeDY, eyeW, eyeH, eyeColor, state.containerPlayer)
+        spawn.x - eyeDX, spawn.y + eyeDY, eyeW, eyeH, eyeColor, state.containerPlayerOverlay)
     local eye2 = utils.createControl(state.rectPrefabId,
-        spawn.x + eyeDX, spawn.y + eyeDY, eyeW, eyeH, eyeColor, state.containerPlayer)
+        spawn.x + eyeDX, spawn.y + eyeDY, eyeW, eyeH, eyeColor, state.containerPlayerOverlay)
 
     return {
         x = spawn.x, y = spawn.y,
@@ -160,7 +161,7 @@ local function createTexts(list, palette)
     for _, t in ipairs(list or {}) do
         local ctrl = utils.createText(
             t.x, t.y, t.width or 460, t.height or 46,
-            t.text or "", utils.hexToColor(palette.hud), 22, state.containerHud)
+            t.text or "", utils.hexToColor(palette.hud), 22, state.containerHudText)
         if ctrl then
             state.texts[#state.texts + 1] = { ctrl = ctrl, x = t.x, y = t.y }
         end
@@ -198,6 +199,14 @@ function M.clear()
         utils.setVisible(state.player.eye2, false)
     end
     state.player = nil
+
+    -- ★ 背景也必须收掉：它是铺满整屏的大矩形，且每次建关都会新建一张。
+    --   漏收的话旧背景会一直留在 containerBg 里叠着（换关卡越多叠得越多，
+    --   配色不同的关卡还会互相串色）。
+    if state.bgCtrl then
+        utils.setVisible(state.bgCtrl, false)
+    end
+    state.bgCtrl = nil
 end
 
 -- ================================================================
@@ -233,6 +242,7 @@ function M.build(data)
     createTexts(data.texts, palette)
 
     M.computeStageBounds()
+    M.computeCameraBounds()
     M.refreshPlatforms()
 
     return state.player ~= nil
@@ -270,6 +280,120 @@ function M.computeStageBounds()
     state.stageRight  = maxX + margin
     state.stageBottom = minY - margin
     state.stageTop    = maxY + margin
+end
+
+-- ================================================================
+-- ★ 计算纵向相机的活动范围
+--   内容 = 全部平台 + 门（不吃出生点，避免玩家跳出内容时把视图带偏）。
+--   内容高度 + 2×留白 ≤ 画面高度时说明「一屏放得下」→ 相机锁死在中线 0，
+--   老关卡（第01~04关）因此完全不启用相机，表现与加相机之前一致。
+-- ================================================================
+function M.computeCameraBounds()
+    local margin = config.DEFAULT_CAMERA_MARGIN or 30
+    local viewH = state.canvasH or 600
+    local half = viewH / 2
+
+    local top, bottom
+    local function include(y0, y1)
+        if not top then top, bottom = y1, y0 return end
+        if y1 > top then top = y1 end
+        if y0 < bottom then bottom = y0 end
+    end
+
+    for _, p in ipairs(state.platforms) do
+        include(p.y - p.halfH, p.y + p.halfH)
+    end
+    if state.goal then
+        include(state.goal.y - state.goal.halfH, state.goal.y + state.goal.halfH)
+    end
+    if not top then
+        top, bottom = half - margin, -(half - margin)
+    end
+
+    state.camContentTop = top
+    state.camContentBottom = bottom
+
+    local lo = bottom - margin + half   -- 相机再往下就越过内容下缘
+    local hi = top + margin - half      -- 相机再往上就越过内容上缘
+    if (config.DEFAULT_CAMERA_ENABLED or 1) == 0 or lo > hi then
+        -- 一屏放得下（或显式关闭相机）→ 视图固定在世界原点
+        lo, hi = 0, 0
+    end
+    state.camMinY = lo
+    state.camMaxY = hi
+    state.camY = 0
+    state.camFollowY = 0
+end
+
+-- ================================================================
+-- ★ 相机目标：把玩家夹在画面中线 ± 死区以内，再夹进关卡允许范围
+--   ★ 屏幕空间与真实世界方向一致（世界 y 向上为正，画布 y 也向上为正），
+--     所以玩家在世界 +y（更高处）时相机中线也要 +y，容器整体下移 -camY。
+-- ================================================================
+local function cameraTargetY()
+    local pl = state.player
+    if not pl then return state.camY or 0 end
+    local dead = state.CAMERA_DEAD_ZONE_Y or 0
+    local want = state.camY or 0
+    local dy = pl.y - want
+    if dy > dead then
+        want = pl.y - dead
+    elseif dy < -dead then
+        want = pl.y + dead
+    end
+    local lo = state.camMinY or 0
+    local hi = state.camMaxY or 0
+    if want < lo then want = lo end
+    if want > hi then want = hi end
+    return want
+end
+
+-- ================================================================
+-- ★ 把相机位移应用到世界容器
+--   只移动 bg 之上的世界层（platform / goal / pickup / player），
+--   HUD、菜单、黑幕一律固定在屏幕上，不随相机移动。
+-- ================================================================
+function M.applyCamera()
+    local cy = state.camY or 0
+    local list = { state.containerPlatform, state.containerGoal,
+                   state.containerPickup, state.containerPlayer }
+    for _, c in ipairs(list) do
+        if c then
+            pcall(function() c:SetAnchoredPosition(0, -cy) end)
+        end
+    end
+end
+
+-- ================================================================
+-- ★ 每帧推进相机（在物理之后调用；关卡刚建好时用 resetCamera 直接落位）
+-- ================================================================
+function M.updateCamera(dt)
+    if not state.player then return end
+    local target = cameraTargetY()
+    local cur = state.camY or 0
+    local k = (state.CAMERA_SMOOTH or 10)
+    if dt and dt > 0 then
+        local t = k * dt
+        if t > 1 then t = 1 end
+        cur = cur + (target - cur) * t
+    else
+        cur = target
+    end
+    -- 浮点抖动过滤：几乎到位的直接贴上去
+    if math.abs(target - cur) < 0.5 then cur = target end
+    state.camFollowY = target
+    if math.abs(cur - (state.camY or 0)) > 0.001 then
+        state.camY = cur
+        M.applyCamera()
+    end
+end
+
+-- ================================================================
+-- ★ 相机立即落位（关卡构建后调用，避免首帧从旧位置滑过来）
+-- ================================================================
+function M.resetCamera()
+    state.camY = 0
+    M.updateCamera(0)
 end
 
 -- ================================================================

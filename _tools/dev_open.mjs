@@ -4,7 +4,7 @@
 // 双击 `启动千星模拟器.bat` 会走到这里。它按顺序做五件事，全部幂等，可反复运行：
 //   1) 检查运行环境   —— 定位 beyond-simulator-web/dist/server.js
 //   2) 准备键盘映射   —— 上游只映射数字键 1-9，用 qxqy_webkeys.mjs 打补丁（重装 node_modules 后自动补回）
-//   3) 准备试玩存档   —— 缺失或 Lua 有改动时自动重建 TickHop.web.save.json
+//   3) 准备试玩存档   —— 缺失或 Lua 有改动时自动重建 <游戏>.web.save.json
 //   4) 启动 Web 服务  —— 已在跑则复用；--restart 可强制重启（也能清掉 session 槽上限）
 //   5) 打开界面       —— 默认模拟器工作台 /editor，加 play 参数则直开试玩页
 //
@@ -17,13 +17,20 @@
 //   node _tools/dev_open.mjs --port 4180 --no-open
 //
 // 环境变量：QXQY_WORKSPACE 覆盖工作区根（默认取本文件的上级目录）
+//
+// ★★ 不要改回 spawnSync / execSync（2026-10-13 踩过）：
+//   本机环境下 Node 的**同步**子进程 API 会直接抛 `EBUSY`（连 `cmd /c echo hi` 都跑不起来，
+//   而异步 spawn/execFile 完全正常）。症状是第 2、3 步都报失败，但那两条失败是「优雅降级」，
+//   脚本仍会继续往下跑 —— 于是"改了 Lua 但试玩页还是旧代码"这种问题极难被发现。
+//   所以这里一律用 `promisify(execFile)`。
 
 import {
   existsSync, statSync, readdirSync, mkdirSync, openSync, closeSync, readFileSync,
 } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { spawn, spawnSync, execSync } from 'node:child_process';
+import { spawn, execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 
 // ---------------------------------------------------------------- 基础
@@ -32,6 +39,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WORKSPACE = process.env.QXQY_WORKSPACE || path.resolve(HERE, '..');
 const SIM = path.join(WORKSPACE, '_simulator');
 const NODE = process.execPath;
+const run = promisify(execFile);   // ← 唯一允许的子进程执行方式（见文件头说明）
 
 const argv = process.argv.slice(2);
 const has = (f) => argv.includes('--' + f);
@@ -71,6 +79,21 @@ function tailLog(p, n = 10) {
   }
 }
 
+/** 统一的子进程捕获（异步；返回 { code, text }） */
+async function capture(cmd, args, opts = {}) {
+  try {
+    const { stdout, stderr } = await run(cmd, args, {
+      cwd: WORKSPACE, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, windowsHide: true, ...opts,
+    });
+    return { code: 0, text: String(stdout || '') + String(stderr || '') };
+  } catch (e) {
+    return {
+      code: typeof e.code === 'number' ? e.code : 1,
+      text: String(e.stdout || '') + String(e.stderr || ''),
+    };
+  }
+}
+
 // ---------------------------------------------------------------- 1 环境
 
 function findServerJs() {
@@ -87,25 +110,23 @@ function findServerJs() {
 
 // ---------------------------------------------------------------- 2 键盘补丁
 
-function ensureKeyPatch() {
+async function ensureKeyPatch() {
   const f = path.join(HERE, 'qxqy_webkeys.mjs');
   if (!existsSync(f)) { warn('找不到 qxqy_webkeys.mjs，跳过（试玩页将只有数字键可用）'); return; }
 
-  const run = (flag) => spawnSync(NODE, [f, flag], { cwd: WORKSPACE, encoding: 'utf8' });
-  const seen = (r) => ((r.stdout || '') + (r.stderr || ''));
-
-  const chk = run('--check');
-  if (/已打补丁/.test(seen(chk))) {
+  const chk = await capture(NODE, [f, '--check']);
+  if (/已打补丁/.test(chk.text)) {
     ok('键盘映射：已就绪（WASD / 空格 / 方向键 / R / T）');
     return;
   }
-  const ap = run('--apply');
-  if (ap.status === 0 && /补丁已应用|无需重复/.test(seen(ap))) {
+  const ap = await capture(NODE, [f, '--apply']);
+  if (ap.code === 0 && /补丁已应用|无需重复/.test(ap.text)) {
     ok('键盘映射：已自动修复（上游只映射数字键 1-9）');
     info('浏览器首次需 Ctrl+F5 强制刷新');
   } else {
     warn('键盘映射补丁失败，试玩页键盘可能无反应');
-    if (VERBOSE) info(seen(ap).trim());
+    info('可手工重跑：node _tools/qxqy_webkeys.mjs --check');
+    if (VERBOSE) info(ap.text.trim());
   }
 }
 
@@ -117,7 +138,9 @@ function newestMtime(dir, ext) {
     let entries;
     try { entries = readdirSync(d, { withFileTypes: true }); } catch { return; }
     for (const e of entries) {
-      if (e.name === 'node_modules' || e.name.startsWith('.')) continue;
+      // ★ 跳过 node_modules / 隐藏目录 / 下划线开头的派生目录（_sandbox、_tools…）：
+      //   这些目录里的 .lua 是副本或工具，拿它们判断「Lua 有改动」会永远为真 → 每次启动都重建存档。
+      if (e.name === 'node_modules' || e.name.startsWith('.') || e.name.startsWith('_')) continue;
       const p = path.join(d, e.name);
       if (e.isDirectory()) walk(p);
       else if (e.name.endsWith(ext)) {
@@ -129,11 +152,11 @@ function newestMtime(dir, ext) {
   return newest;
 }
 
-function runNode(args, label) {
-  const r = spawnSync(NODE, args, { cwd: WORKSPACE, encoding: 'utf8' });
-  const out = ((r.stdout || '') + (r.stderr || '')).trim();
-  if (r.status !== 0) {
-    bad(`${label} 失败（exit ${r.status}）`);
+async function runNode(args, label) {
+  const { code, text } = await capture(NODE, args);
+  const out = text.trim();
+  if (code !== 0) {
+    bad(`${label} 失败（exit ${code}）`);
     if (out) log(out.split(/\r?\n/).slice(-12).map((s) => '         ' + s).join('\n'));
     return false;
   }
@@ -142,7 +165,7 @@ function runNode(args, label) {
   return true;
 }
 
-function ensureArchive() {
+async function ensureArchive() {
   mkdirSync(SIM, { recursive: true });
 
   const webSave = path.join(SIM, `${GAME}.web.save.json`);
@@ -152,9 +175,9 @@ function ensureArchive() {
   // 底层两份存档只在缺失时生成：它们描述「工程结构」，与 Lua 内容无关
   if (!existsSync(rawSave) || !existsSync(simReady)) {
     info('首次运行，从工程生成模拟器存档（约 10 秒）…');
-    if (!runNode([path.join(HERE, 'qxqy_mount.mjs'), '--game', GAME,
+    if (!await runNode([path.join(HERE, 'qxqy_mount.mjs'), '--game', GAME,
       '--entry', 'game.lua', '--steps', '1', '--save', rel(rawSave)], '生成工程存档')) return false;
-    if (!runNode([path.join(HERE, 'qxqy_simsave.mjs'), '--src', rel(rawSave),
+    if (!await runNode([path.join(HERE, 'qxqy_simsave.mjs'), '--src', rel(rawSave),
       '--out', rel(simReady)], '改造为「模拟器就绪」存档')) return false;
   }
 
@@ -189,20 +212,19 @@ async function health() {
 }
 
 /** 杀掉占用 PORT 的监听进程（Windows: netstat + taskkill） */
-function killPort() {
-  let out = '';
-  try {
-    out = execSync('netstat -ano -p TCP', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  } catch { return 0; }
+async function killPort() {
+  const ns = await capture('netstat', ['-ano', '-p', 'TCP']);
+  if (ns.code !== 0) return 0;
   const pids = new Set();
-  for (const raw of out.split(/\r?\n/)) {
+  for (const raw of ns.text.split(/\r?\n/)) {
     const c = raw.trim().split(/\s+/);
     if (c.length >= 5 && c[0].toUpperCase() === 'TCP' && c[3].toUpperCase() === 'LISTENING'
       && c[1].endsWith(':' + PORT)) pids.add(c[4]);
   }
   let killed = 0;
   for (const pid of pids) {
-    try { execSync(`taskkill /PID ${pid} /T /F`, { stdio: 'ignore' }); killed++; } catch { /* ignore */ }
+    const r = await capture('taskkill', ['/PID', String(pid), '/T', '/F']);
+    if (r.code === 0) killed++;
   }
   return killed;
 }
@@ -229,7 +251,7 @@ async function ensureServer(serverJs) {
       return true;
     }
     info('--restart：关闭旧服务…');
-    const n = killPort();
+    const n = await killPort();
     info(`已结束 ${n} 个监听进程`);
     for (let i = 0; i < 20 && (await health()); i++) await wait(200);
   }
@@ -298,11 +320,11 @@ async function main() {
 
   // ---- 2
   step(2, '准备键盘映射');
-  ensureKeyPatch();
+  await ensureKeyPatch();
 
   // ---- 3
   step(3, '准备试玩存档');
-  const archiveOk = ensureArchive();
+  const archiveOk = await ensureArchive();
   if (!archiveOk) info('存档准备失败，将尝试用现有存档继续');
 
   // ---- 4

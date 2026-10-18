@@ -101,14 +101,18 @@ LUA_MODS = {f[:-4] for f in files if f[:-4] not in EXCLUDE_MODULES}
 problems = []
 
 # ---------- 1. require 存在性 + 各文件的依赖集合 ----------
+# ★ 千星运行时把「导入的文件」注册在虚拟根 `default_import_file/` 下，
+#   工程里因此写 `require("default_import_file/config")`（前缀形式在两种注册方式下都能解析）。
+#   校验时按「最后一段」比对磁盘上的 .lua，才能既支持前缀写法又支持裸名写法。
 required_of = {}
 for name, src in raw.items():
     reqs = set()
     for m in re.finditer(r'require\(\s*["\']([^"\']+)["\']\s*\)', src):
         mod = m.group(1)
-        reqs.add(mod)
-        if not os.path.exists(os.path.join(D, mod + ".lua")):
-            problems.append(f"[{name}] require(\"{mod}\") -> 文件 {mod}.lua 不存在")
+        bare = mod.replace("\\", "/").rstrip("/").split("/")[-1]   # 去掉 default_import_file/ 等前缀
+        reqs.add(bare)
+        if not os.path.exists(os.path.join(D, bare + ".lua")):
+            problems.append(f"[{name}] require(\"{mod}\") -> 文件 {bare}.lua 不存在")
     required_of[name] = reqs
 
 

@@ -2,7 +2,9 @@
 // 用法: node _tools/_px.mjs <png> [png...]
 import { pathToFileURL } from 'node:url';
 
-const MOD = 'C:/Users/JingSu/.workbuddy/binaries/node/workspace/node_modules/@napi-rs/canvas/index.js';
+const HOME = process.env.USERPROFILE || process.env.HOME || '';
+
+const MOD = `${HOME}/.workbuddy/binaries/node/workspace/node_modules/@napi-rs/canvas/index.js`;
 const { createCanvas, loadImage } = await import(pathToFileURL(MOD).href);
 
 const pts = [[5, 5], [320, 80], [540, 310], [800, 283], [100, 100], [640, 600], [640, 60], [250, 560]];

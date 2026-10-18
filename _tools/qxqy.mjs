@@ -14,8 +14,10 @@ import { spawn } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
+const HOME = process.env.USERPROFILE || process.env.HOME || '';
+
 const MCP_ENTRY = process.env.QXQY_MCP_ENTRY
-  || 'C:/Users/JingSu/.workbuddy/binaries/node/workspace/node_modules/beyond-simulator-mcp/dist/index.js';
+  || `${HOME}/.workbuddy/binaries/node/workspace/node_modules/beyond-simulator-mcp/dist/index.js`;
 const WORKSPACE = process.env.QXQY_WORKSPACE || 'E:/千星/千星游戏';
 const OUTDIR = process.env.QXQY_OUTDIR || path.join(WORKSPACE, '_simulator', 'shots');
 

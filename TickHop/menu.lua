@@ -15,9 +15,9 @@
 ---@diagnostic disable: undefined-global
 
 local M = {}
-local state = require("state")
-local config = require("config")
-local utils = require("utils")
+local state = require("default_import_file/state")
+local config = require("default_import_file/config")
+local utils = require("default_import_file/utils")
 
 -- 由 game.lua 注入：{ onSelect = f(idx), onReload = f(), onNext = f() }
 M.actions = {}
@@ -537,11 +537,13 @@ function M.createEntryButton()
     local x = cw / 2 - margin
     local y = ch / 2 - margin
 
+    -- ★ 与其它 HUD 元素一致：底图进「图片组」、文字进「文字组」
+    --   （文字组整体压在图片组之上，按钮字才不会被按钮底盖住）
     local bg = utils.createControl(state.rectPrefabId, x, y, size, size,
         utils.hexToColorA(pal.accent, config.DEFAULT_TOUCH_BTN_ALPHA or 110),
-        state.containerHud)
+        state.containerHudImage)
     local label = utils.createText(x, y, size, size, "关",
-        utils.hexToColor(pal.accentText), 30, state.containerHud)
+        utils.hexToColor(pal.accentText), 30, state.containerHudText)
     if bg then
         pcall(function()
             bg:AddCursorEventListener(Enum.CursorEventType.CursorDown, function()

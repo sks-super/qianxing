@@ -27,9 +27,25 @@
 
 ## 二、在千星沙箱里装配
 
-1. 新建「客户端控件容器」，把 `game.lua` 挂到容器节点上。
-2. 依次粘贴其余 `.lua` 模块。
+1. 新建「客户端控件容器」，把 `game.lua` 挂到**容器节点**上。
+2. 把其余 `.lua` 模块一起导入（或逐个新建同名脚本粘贴内容）。
 3. 在脚本参数里填元件 ID：
+
+> ★ **模块引用约定（踩过坑，务必看）**
+> 千星运行时把「导入的文件」注册在虚拟根 `default_import_file/` 下，而**裸名 `require("config")`
+> 只在旧存档兼容层有效** —— 用编辑器「导入文件」部署时会直接报
+> `failed to load script 'config'`（traceback 里的 chunk 名是 `default_import_file/game`）。
+> 因此本工程的 `require` **统一写成带导入根的形式**：
+>
+> ```lua
+> local config = require("default_import_file/config")
+> ```
+>
+> 这种写法在两种注册方式下**都能解析**：导入的文件直接命中；手工新建的裸名脚本命中运行时
+> 自动登记的别名 `default_import_file/<裸名>`。所以「导入」还是「粘贴新建」都无需改代码。
+>
+> 若把文件导入到了某个子目录（例如 `TickHop/`），前缀要跟着写成
+> `require("default_import_file/TickHop/config")`。
 
 | 参数名 | 必填 | 说明 |
 |---|---|---|
@@ -43,6 +59,39 @@
 > ⚠️ 参数名后缀 `PrefabId` / `AudioId` **不能改**，否则 `script:GetParam` 读不到。
 
 4. 运行。
+
+---
+
+## 二·五、UI 层级结构（加物件前务必先看）
+
+控件按**两层容器**组织，这是真机上「文字不被底图盖住」的保证：
+
+```
+容器节点
+├── containerBg                 ① 背景
+├── containerPlatform           ② 平台层
+│   ├── containerPlatformImage   ├─ 图片组：平台矩形
+│   └── containerPlatformText    └─ 文字组：秒数        ★ 在图片组之上
+├── containerGoal   → containerGoalImage
+├── containerPickup → containerPickupImage
+├── containerPlayer
+│   ├── containerPlayerImage     ⑤ 身体
+│   └── containerPlayerOverlay   └─ 眼睛等覆盖件
+├── containerHud
+│   ├── containerHudImage        ⑥ 虚拟按钮底 / 「关」入口底
+│   └── containerHudText         └─ 倒计时 / 消息 / 提示 / 按钮字 ★ 同上
+├── containerMenu                ⑦ 面板（内部自带 遮罩→面板→文字 顺序）
+└── containerFade                ⑧ 黑幕
+```
+
+**加新物件时请挂到「第二层」容器里**（`state.containerXxxImage` / `…Text`），
+不要直接挂到第一层 —— 否则它会跟自己的底图挤进同一个兄弟序列，真机按创建顺序叠放时就可能被盖住。
+
+> ★ 真机与模拟器的渲染顺序**相反**（API 文档 `SetSiblingIndex`：「数值越大通常越靠后、显示越靠上」），
+> 所以「模拟器好看」≠「真机好看」。真机上另有两个高频坑，代码里都已显式规避，**别删**：
+> **① 文本框的 `bgColor` 不设就带预制体底色**（大号 HUD 文本框会把下面的秒数整个盖住）；
+> **② 容器的 `enableMask` 不关会裁掉子控件**（容器只有 1×1 大小，子控件会被整片裁没）。
+> 详见 `实现方案.md` §5.5。
 
 ---
 
@@ -149,14 +198,45 @@
 | 跳跃手感（跳多高、落多快） | `DEFAULT_JUMP_SPEED` / `DEFAULT_GRAVITY` / `DEFAULT_FALL_GRAVITY_MULT` |
 | 移动手感（加速、惯性） | `DEFAULT_MOVE_SPEED` / `DEFAULT_GROUND_ACCEL` / `DEFAULT_AIR_ACCEL` |
 | 操作宽容度 | `DEFAULT_COYOTE_TIME` / `DEFAULT_JUMP_BUFFER_TIME` |
+| 轻点小跳的高度 | `DEFAULT_JUMP_CUT_MULT`（松手时把上升速度乘这个系数） |
 | 平台虚化的可见程度 | `DEFAULT_PLATFORM_GHOST_ALPHA` |
 | 整体配色 | `DEFAULT_PALETTE`（或单关 `palette` 覆盖） |
 | 关卡切换黑幕时长 | `DEFAULT_FADE_IN_TIME` / `HOLD_TIME` / `OUT_TIME` |
+| **竖井关卡相机** | `DEFAULT_CAMERA_ENABLED` / `CAMERA_MARGIN` / `CAMERA_DEAD_ZONE_Y` / `CAMERA_SMOOTH` |
 | 面板尺寸与字号 | `DEFAULT_MENU_PANEL_W` / `PANEL_H` / `TITLE_SIZE` / `BTN_*` |
 | 选关卡片布局 | `DEFAULT_MENU_CARD_W` / `CARD_H` / `CARD_GAP_X` / `CARD_GAP_Y` / `COLS` / `ROWS` |
 | 到达终点自动弹窗 | `DEFAULT_MENU_AUTO_WIN`（0 = 关闭，需按 `L` 手动） |
 
 > ⚠️ **改了 `config.lua` 的 `DEFAULT_*`，必须同步改 `编辑器.html` 顶部 `DEFAULTS` 里同名项**（key 大写即常量名）。校验脚本会检查两者是否一致。
+
+---
+
+## 五·五、纵向相机（竖井关卡）
+
+原版摄像机**跟着玩家上下走**。工程里只有「内容比画面还高」的关卡才启用相机 ——
+**一屏放得下的关卡相机恒为 0，表现与加相机之前逐像素一致**，所以老关卡不会回归。
+
+- 实现方式：每帧把 `platform / goal / pickup / player` 四个容器整体平移 `-camY`，
+  物理与关卡数据全程留在世界坐标，**不做任何坐标换算**。
+- HUD、菜单、黑幕、背景**固定在屏幕上**，不随相机移动。
+- 死区 40 px（微操时画面不抖）+ 平滑跟随 10/s（跟手又不生硬）。
+- 相机不会越过关卡内容边缘超过 30 px。
+
+> ⚠️ **提示文本（`texts`）挂在 HUD 层，不随相机移动** —— 在竖井关卡里它的 `y` 是
+> **屏幕坐标**。第06关的提示因此写在 `y = -190`（画面内），而不是画面外的 `y = -330`。
+
+**当前关卡进度**（按原版编号，`config.lua` 的 `M.LEVELS`）：
+
+| 关卡 | 内容 | 来源 |
+|---|---|---|
+| 第01关 | 黑底白框，走到右侧的门 | 原版复刻 |
+| 第02关 | Z 形折线走廊，一次跃上右上高台 | 原版复刻 |
+| 第03关 | 两侧平台 + 中间「5」秒计时踏板 | 原版复刻 |
+| 第04关 | **深坑 + 「8 / 7」双踏板**（第一跳必须轻点小跳） | 原版复刻 |
+| 第06关 | **九层竖井**（9→8→…→2 交替上爬，需纵向相机） | 原版复刻 |
+| ~~第05关~~ | 大厅 + 「8 / 7 / 4」三踏板 | **暂缺**：实拍帧有采样矛盾、且路线要求跳高 > 现有参数。详见 `原版对照.md` §4.7 |
+
+> 关卡名是**字符串**，编号直接沿用原版，所以第05关暂时是空档而不是被顶替掉。
 
 ---
 
@@ -170,8 +250,20 @@ python _shared/_check_refs.py  TickHop       # require 存在性 / 模块调用 
 python _shared/_check_editor_roundtrip.js    # 编辑器导出→解析无损
 ```
 
-当前状态：**11 个文件块平衡 0 错误，引用一致性 0 问题，65 项参数全部同步，编辑器往返 PASS。**
+当前状态：**11 个文件块平衡 0 错误，引用一致性 0 问题，69 项参数全部同步，编辑器往返 PASS。**
 （判定看**退出码**：两个 Python 脚本在成功时也会打印「0 处不一致」，退出码 0 才算通过。）
+
+### 关卡可通性核算（推荐每次都跑）
+
+改完关卡几何后**务必**跑一次 —— 它用与 `physics.lua` 完全相同的积分/碰撞代码，
+把「从哪跳能落到哪」全枚举出来（**满跳 + 轻点小跳**两种）：
+
+```bash
+node _tools/check_jump_feasible.mjs
+```
+
+> ★ 原版不少关卡的踏板只比起跳点高一点点，**必须轻点小跳**才能落上去（第04关就是），
+> 只测满跳会把这类关卡误判成不可通 —— 所以脚本现在两种都测。
 
 ### 模拟器端到端验证（可选）
 

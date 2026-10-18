@@ -1,7 +1,9 @@
 // 输出关卡截图的白色（实心）结构行程，用于精确还原几何。
 // 用法: node _tools/orig_scan.mjs <inPng> [step=20] [thr=128]
 import { pathToFileURL } from 'node:url';
-const MOD = 'C:/Users/JingSu/.workbuddy/binaries/node/workspace/node_modules/@napi-rs/canvas/index.js';
+
+const HOME = process.env.USERPROFILE || process.env.HOME || '';
+const MOD = `${HOME}/.workbuddy/binaries/node/workspace/node_modules/@napi-rs/canvas/index.js`;
 const { createCanvas, loadImage } = await import(pathToFileURL(MOD).href);
 
 const [inp, stepS, thrS] = process.argv.slice(2);

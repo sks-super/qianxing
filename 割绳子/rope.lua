@@ -5,12 +5,12 @@
 ---@diagnostic disable: undefined-global
 
 local M = {}
-local config = require("config")
-local catenary = require("catenary")
-local state = require("state")
-local utils = require("utils")
-local render = require("render")   -- ★ 关键：加载 render 模块
-local audio = require("audio")     -- 音效管理模块（绷直音效触发）
+local config = require("default_import_file/config")
+local catenary = require("default_import_file/catenary")
+local state = require("default_import_file/state")
+local utils = require("default_import_file/utils")
+local render = require("default_import_file/render")   -- ★ 关键：加载 render 模块
+local audio = require("default_import_file/audio")     -- 音效管理模块（绷直音效触发）
 
 -- 创建绳子节点（挂到绳子容器 containerRope）
 function M.createRopeNode(x, y, invMass, radius, color, visible, prefabId)

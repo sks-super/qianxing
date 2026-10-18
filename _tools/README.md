@@ -32,6 +32,10 @@
 | `_label_probe.mjs` | 采样某个「世界坐标矩形」并打印 **ASCII 位图**，核对平台秒数标签是否真的画出来了 |
 | `_label_compare.mjs` | 把「熄灭态 / 亮起态」两张截图按同一区域裁切放大拼成对比图 |
 | `_boost.mjs` | 提亮过暗截图（黑幕期间/低 alpha 控件肉眼检查用） |
+| `verify_layers.mjs` | ★ **两层容器结构回归**：核对「第一层按物品类型 / 第二层按组件类型」的控件树 —— 文字组是否与图片组分离、是否同属一个图层容器。真机与模拟器渲染顺序相反，真机的遮挡问题模拟器看不出来，只能靠**结构事实**来判据；退出码 0 = 合规 |
+| `orig_geom.py` | ★ **原版关卡读几何**（Python）：帧 → 亮度三分类(实/虚/背景) → 降采样抑噪 + 连通域清洗(丢标题字/水印) + 填洞(平台上的数字是洞) → 「水平行程纵向合并」拆成轴对齐矩形 → 直接吐**工程世界坐标**。`--kind ghost` / `--region` / `--json`。**用 venv 的解释器跑**（`…\python\envs\default\Scripts\python.exe`，需要 numpy/pillow） |
+| `check_jump_feasible.mjs` | ★ **关卡可通性核算**：用与 `physics.lua` 同款积分/碰撞代码穷举「从哪跳能落到哪」，**满跳 + 轻点小跳（`cutAt` 扫 0.03~0.235 s）两种都测** —— 原版短跳关（如第04关）只测满跳会误判成不可通 |
+| `render_levels.py` | ★ **关卡离线渲染 + 叠加核对**（Python/PIL）：读 `config.lua` 的 `M.LEVELS` 出 PNG；`--overlay "第04关=原版帧.png"` 会把复刻轮廓按 0.625 逆换算**叠在原版帧上**核对几何。本机没装 `@napi-rs/canvas`，所以另写了 PIL 版 |
 | `examples/signal-probe.json` | 信号链路验证用例（注册并接收 `测试`/`进入关卡`/`服务器事件`） |
 
 ## 浏览器试玩（Web 模拟器）
@@ -208,11 +212,47 @@ node _tools/apply_levels.mjs --extract                 # 反向：导出 config.
 
 ## 安装位置（已就绪）
 
-- MCP：`C:\Users\JingSu\.workbuddy\binaries\node\workspace\node_modules\beyond-simulator-mcp`
-- Web：`C:\Users\JingSu\.workbuddy\binaries\node\workspace\node_modules\beyond-simulator-web`
-- MCP 配置：`C:\Users\JingSu\.workbuddy\mcp.json`（服务名 `qxqy-simulator`，工作区指向本仓库根）
+- MCP：`%HOME%\.workbuddy\binaries\node\workspace\node_modules\beyond-simulator-mcp`（0.3.3）
+- Web：`%HOME%\.workbuddy\binaries\node\workspace\node_modules\beyond-simulator-web`（0.3.4，附 `@napi-rs/canvas`）
+- MCP 配置：`%HOME%\.workbuddy\mcp.json`（服务名 `qxqy-simulator`，工作区指向本仓库根）
   → 需在 WorkBuddy「连接器管理」里对该服务点「信任」后，工具才会出现在会话中。
   （未信任时用下面的 `qxqy*.mjs` 直接驱动即可，不依赖 MCP。）
+
+> ★ **换机器后要重装**：`node_modules` 不在仓库里（`.gitignore` 排除）。装法：
+> ```bash
+> cd "%HOME%\.workbuddy\binaries\node\workspace"
+> npm i beyond-simulator-web beyond-simulator-mcp
+> ```
+> 装完**必须重跑一次 `启动千星模拟器.bat`**（它会把键盘映射补丁打到新的 `dist` 上）。
+>
+> ★ **`_tools/*.mjs` 里的路径一律用 `HOME`（`process.env.USERPROFILE`）解析**，
+> 不要再写死某个用户的绝对路径 —— 早期 20 个脚本硬编码了 `C:/Users/<旧用户>/...`，
+> 换机后表现为「键盘补丁失败」＋「`qxqy_mount` 报 `timeout: initialize`」，排查很久。
+>
+> ★ **打完键盘补丁必须重启 Web 服务**：`play-renderer.js` 在服务启动时就被读进内存，
+> 只改磁盘不重启的话，命令行注入按键**静默无效**（`dev_open.mjs --restart` 可清）。
+
+### ★ 脚本注册路径与 `require`（决定「真机能不能跑」）
+
+运行时（`beyond-simulator-web` 内嵌的 lua-runtime，与真机同源）里：
+
+| 注册路径 | `require("config")` | `require("default_import_file/config")` |
+|---|---|---|
+| 裸名 `config.lua`（本工具链 `qxqy_websave.mjs` 的写法） | ✅ | ✅（运行时自动登记别名 `default_import_file/<裸名>`） |
+| `default_import_file/config.lua`（**编辑器「导入文件」的写法**） | ❌ `failed to load script 'config'` | ✅ |
+
+→ 结论：**工程里统一写带前缀的形式**，两种部署方式都能跑。三个游戏的 `require` 已全部改成
+`default_import_file/<模块名>`；`_shared/_check_refs.py` 也改成按「路径最后一段」比对文件，
+所以前缀写法与裸名写法都能通过校验。
+
+`_simulator/TickHop.realenv.save.json` 是「把所有脚本 path 加上导入根前缀」的同构存档，
+用来在本地复现真机的注册方式（**Lua 改动后需重新生成**）：
+
+```bash
+# 重新生成：把 web 存档里每个脚本的 path 前缀加上导入根
+python -c "import json,io;p='_simulator/TickHop.web.save.json';q='_simulator/TickHop.realenv.save.json';d=json.load(io.open(p,encoding='utf-8'));[s.__setitem__('path','default_import_file/'+s['path']) for s in d['assets']['scripts'] if not s['path'].startswith('default_import_file/')];json.dump(d,io.open(q,'w',encoding='utf-8'),ensure_ascii=False,indent=1)"
+node _tools/qxqy_webcheck.mjs --archive _simulator/TickHop.realenv.save.json --frames 60
+```
 
 ## 快速开始（TickHop，已验证可跑通完整玩法）
 
@@ -245,7 +285,11 @@ node _tools/qxqy_mount.mjs --game TickHop --entry game.lua \
 | `--params '<json>'` | 手动指定/覆盖脚本参数 |
 | `--fix-zorder <帧>` | 抵消模拟器渲染器的 z 序反置 + 把平台标签提到最上层 + 隐藏默认工程脚手架 |
 | `--signal <名> [--signal-str <值>]` | 模拟服务器下发一个客户端信号 |
+| `--signal-at <帧>` | 在第 N 帧下发（之后仍可继续注入按键：先收信号、再按键） |
+| `--steps-after <n>` | 信号之后再推进 n 帧（观察动效稳定态） |
 | `--key <Enum.KeyEventType 名>` | 可重复；配合 `--key-at <帧>` 在第 N 帧注入按键事件 |
+| `--key <名>@<帧>` | 逐键指定帧（同一次运行里先「关教程+进关」再「按 R 重玩」） |
+| `--canvas <预设 id>` | 切换试玩画布，决定客户端 `GetUICanvasSize()` 的取值。可选 `pc-16-9`(1600×900) / `pc-21-9`(2100×900) / `mobile-16-9`(1280×720，默认) / `mobile-19.5-9`(1560×720) / `mobile-4-3`(1280×960)。**验证自适应布局必备** |
 | `--probe-player <帧数>` | 逐帧打印玩家位姿 `x/y/vx/vy/ground`（验证输入是否真的驱动了角色） |
 | `--probe <帧>` / `--probe start` | 用 `game.PrintClientUITree()` 转储控件树（进 logs） |
 | `--probe-walk <帧>` | 逐控件打印 `act/vis/pos/size/color`（可定位「存在但不显示」） |
@@ -385,10 +429,66 @@ SetAsLastSibling()  { return this.SetSiblingIndex(arr.length - 1) }    // → �
 ## Web 编辑器
 
 ```bash
-node "C:/Users/JingSu/.workbuddy/binaries/node/workspace/node_modules/beyond-simulator-web/dist/server.js" \
+# ★ 路径一律用 HOME 解析，别硬编码用户名
+node "$HOME/.workbuddy/binaries/node/workspace/node_modules/beyond-simulator-web/dist/server.js" \
      --workspace "E:/千星/千星游戏" --port 4173
 ```
 
 - `http://127.0.0.1:4173/` 只读预览工作区存档（配合 MCP 时自动刷新）
 - `http://127.0.0.1:4173/editor` 可视化编辑 UI / Lua / 服务端逻辑并试玩
 - `http://127.0.0.1:4173/health` 存活检查
+
+---
+
+## ★ 换机器 / 本机环境特殊项
+
+### 换机器三件事
+
+1. `node_modules` **不在仓库里** → 到 `%HOME%\.workbuddy\binaries\node\workspace` 跑
+   `npm i beyond-simulator-web beyond-simulator-mcp`（约 3 分钟）。
+2. `_tools/*.mjs` 的路径**一律用 `HOME` 解析**（`process.env.USERPROFILE || process.env.HOME`）。
+   早期脚本硬编码过 `C:/Users/<旧用户>/...`，症状是「键盘补丁失败」+「`qxqy_mount` 报
+   `timeout: initialize`」（`MCP_ENTRY` 指向不存在的文件，spawn 之后永不回应）。
+3. 打完键盘补丁**必须重启 Web 服务**（`play-renderer.js` 在启动时把补丁读进内存，
+   只改磁盘不重启 → 命令行注入按键**静默无效**）→ `node _tools/dev_open.mjs --restart`。
+
+### ★★ 本环境 Node 的「同步」子进程 API 一律抛 `EBUSY`
+
+`spawnSync` / `execSync`（连 `spawnSync('cmd.exe', ['/c', 'echo', 'hi'])` 都失败），
+而异步 `spawn` / `execFile` 完全正常（换 exe、换 cwd、关沙箱都一样，**不是沙箱问题**）。
+→ `dev_open.mjs` 已全改 `promisify(execFile)` + 统一 `capture()`，**别写回同步版**。
+附带：`newestMtime` 要跳过**下划线开头**的目录，否则 `_sandbox/` 里的 `.lua` 副本会让
+「Lua 有改动」恒真、每次都重建存档。
+
+### ★★ 模拟器存档里的脚本 ≠ 交付脚本
+
+`qxqy_websave.mjs` 会给**入口脚本末尾无条件**追加上百行模拟器补丁
+（`[SIM_ONLY]` 参数兜底 + `[SIM_ZFIX]` 层级修正）。把这种脚本拿去挂真机会报：
+
+```
+default_import_file/game:614: table index is nil
+stack traceback:
+    default_import_file/game:614: in function 'OnUpdate'
+```
+
+第 614 行是 `isMine[c.Id]` —— 真机控件**没有 `Id` 字段**；而且那段用的是 TickHop 的容器名。
+它在 `OnUpdate` 里**每帧抛一次**，但被引擎吞成日志，所以模拟器里一直没暴露。
+**已改为白名单：只有 `GAME === 'TickHop'` 自动注入 zfix**（另可 `--zfix` / `--no-zfix`）。
+交付一律用**工程源文件**——现成范例 `点灯迷题/_export_sandbox.py`（导出导入包 + 注入残留自检）。
+
+### ★ 试玩页 URL 的 `#` 是 sessionId，不是「选存档」
+
+服务端懒建 session 并**自动载入 `archives[0]`**（mtime 最新者）→
+「让某游戏成为 archives[0]」= **重建它的 `.web.save.json`**。
+状态查询 `GET /api/state`；网页端客户端 `_tools/_webclient.mjs`
+（`loadWebSession` → `api('load-archive'|'play')`，`play` 的 `step` 每次只推进 1 帧）。
+
+### 信号记录的方向命名
+
+`qxqy_mount.mjs` 收尾打印的服务器侧记录里，**客户端 → 服务器记在 `inbound`**
+（与直觉相反，取参数时别搞反）。
+
+### `--fix-zorder` 是 TickHop 专用
+
+它按 TickHop 的容器名判 `isMine`、隐藏所有非自家节点。换游戏会**把自己的控件一起隐藏**——
+新游戏要靠自己的 `raiseLayers()` 摆层级，别用这个开关。

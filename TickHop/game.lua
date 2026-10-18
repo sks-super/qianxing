@@ -7,16 +7,16 @@
 
 ---@diagnostic disable: undefined-global
 
-local config = require("config")
-local state = require("state")
-local utils = require("utils")
-local timeSystem = require("timeSystem")
-local level = require("level")
-local physics = require("physics")
-local audio = require("audio")
-local signal = require("signal")
-local fadeScreen = require("fadeScreen")
-local menu = require("menu")
+local config = require("default_import_file/config")
+local state = require("default_import_file/state")
+local utils = require("default_import_file/utils")
+local timeSystem = require("default_import_file/timeSystem")
+local level = require("default_import_file/level")
+local physics = require("default_import_file/physics")
+local audio = require("default_import_file/audio")
+local signal = require("default_import_file/signal")
+local fadeScreen = require("default_import_file/fadeScreen")
+local menu = require("default_import_file/menu")
 
 _G.getLevelConfig = config.getLevelConfig
 _G.getLevelCount = config.getLevelCount
@@ -30,11 +30,14 @@ local doLoadLevel
 
 -- ================================================================
 -- ★ 创建一个透明容器父节点（定位于世界原点，子节点坐标即世界坐标）
+--   parent 缺省挂容器节点下；传入别的容器即可建「第二层」子容器。
+--   ★ 显式关掉遮罩：容器只用来分组，绝不能裁剪子控件。
+--     若底图预制体带了 enableMask，而容器尺寸只有 1×1，子控件会被整片裁掉。
 -- ================================================================
-local function createContainer()
+local function createContainer(parent)
     if not state.parent then return nil end
     if not state.rectPrefabId or state.rectPrefabId <= 0 then return nil end
-    local ok, c = pcall(game.InstantiateClientUIControl, state.rectPrefabId, state.parent)
+    local ok, c = pcall(game.InstantiateClientUIControl, state.rectPrefabId, parent or state.parent)
     if not ok or not c then return nil end
     pcall(function()
         c:SetAnchorMin(0.5, 0.5)
@@ -43,13 +46,47 @@ local function createContainer()
         c:SetAnchoredPosition(0, 0)   -- 容器定位于世界原点，子节点坐标即世界坐标
         c:SetSizeDelta(1, 1)          -- 自身不占可视面积
         c.imageColor = Color.FromRGBA(255, 255, 255, 0)  -- 透明
+        c.enableMask = false          -- ★ 不裁剪子控件（继承预制体默认值就会出事）
     end)
     c:SetActive(true)
     return c
 end
 
 -- ================================================================
--- ★ 检查 7 个层级容器，缺失的补建（创建顺序即显示层级，从下到上）
+-- ★ 层级结构定义
+--   第一层：按【物品类型】分（bg / platform / goal / pickup / player / hud / menu / fade）
+--   第二层：每个图层内部再按【组件类型】分（图片组 → 文字组）
+--   ★ 同一图层里「图片组先生成、文字组后生成」是**硬性约定**：
+--     真机按创建顺序叠放（后创建在上），文字组因此在图片组之上；
+--     模拟器渲染顺序相反，由 raiseOverlayLayers() 显式纠正。
+-- ================================================================
+local subContainers = {
+    -- { 子容器字段名, 所属图层字段名, 是否「必须压在同层图片之上」 }
+    { "containerPlatformImage", "containerPlatform", false },
+    { "containerPlatformText",  "containerPlatform", true  },  -- 平台秒数
+    { "containerGoalImage",     "containerGoal",     false },
+    { "containerPickupImage",   "containerPickup",   false },
+    { "containerPlayerImage",   "containerPlayer",   false },
+    { "containerPlayerOverlay", "containerPlayer",   true  },  -- 眼睛等覆盖件
+    { "containerHudImage",      "containerHud",      false },  -- 虚拟按钮底
+    { "containerHudText",       "containerHud",      true  },  -- 倒计时 / 提示 / 按钮字
+}
+
+-- ★ 幂等：把「文字组 / 覆盖件」提到同级末位
+--   SetAsLastSibling() = 移到同级末位 = 最上层（API 文档），真机与模拟器效果一致，
+--   所以这一步在两个引擎里都能把文字压到底图之上。建关后再调一次即可。
+local function raiseOverlayLayers()
+    for _, s in ipairs(subContainers) do
+        local c = s[3] and state[s[1]]
+        if c then
+            pcall(function() c:SetAsLastSibling() end)
+        end
+    end
+end
+
+-- ================================================================
+-- ★ 检查 8 个层级容器 + 各自的组件分组子容器，缺失的补建
+--   （创建顺序即显示层级，从下到上）
 -- ================================================================
 local function ensureContainers()
     local order = {
@@ -69,6 +106,15 @@ local function ensureContainers()
             if not state[key] then okAll = false end
         end
     end
+    -- 第二层：按组件类型分组（表内顺序已保证「图片组在前、文字组在后」）
+    for _, s in ipairs(subContainers) do
+        local key, parentKey = s[1], s[2]
+        if not state[key] then
+            state[key] = createContainer(state[parentKey])
+            if not state[key] then okAll = false end
+        end
+    end
+    raiseOverlayLayers()
     return okAll
 end
 
@@ -125,12 +171,15 @@ doLoadLevel = function(idx, data)
         printerr("错误：关卡构建失败，index=" .. tostring(idx))
         return
     end
+    -- ★ 建完再把「文字组 / 覆盖件」提到同级末位（幂等；真机与模拟器都靠它兜底）
+    raiseOverlayLayers()
 
     -- 时间系统就位，并按当前秒数刷新平台实体状态
     timeSystem.reset(data.time or config.DEFAULT_TIME_LIMIT, config.DEFAULT_TIME_DIRECTION)
     level.refreshPlatforms()
     level.updateTimerDisplay()
     physics.syncVisualNow()
+    level.resetCamera()
     utils.setMessage("")
 
     -- 黑幕尚未散尽，暂不开始计时；待过渡结束再启动，避免玩家看不到关卡就被扣时
@@ -146,14 +195,17 @@ local function createHud()
     local ch = state.canvasH or 600
 
     -- 倒计时：顶部居中，大号等宽感数字
+    -- ★ 一律挂在 containerHudText（HUD 的文字组）——
+    --   文本框会带着预制体底色，若不与图片组分离并置于其上，
+    --   这块 420×100 的框会把下面关卡里平台的秒数盖掉。
     state.timerText = utils.createText(
         0, ch / 2 - 80, 420, 100, "0.00",
-        utils.hexToColor(config.DEFAULT_PALETTE.hud), 72, state.containerHud)
+        utils.hexToColor(config.DEFAULT_PALETTE.hud), 72, state.containerHudText)
 
     -- 提示消息：底部居中
     state.messageText = utils.createText(
         0, -ch / 2 + 60, cw - 120, 56, "",
-        utils.hexToColor(config.DEFAULT_PALETTE.hud), 26, state.containerHud)
+        utils.hexToColor(config.DEFAULT_PALETTE.hud), 26, state.containerHudText)
 end
 
 -- ================================================================
@@ -164,14 +216,15 @@ end
 local function createTouchButton(x, y, label, key)
     local size = config.DEFAULT_TOUCH_BTN_SIZE or 88
     local alpha = config.DEFAULT_TOUCH_BTN_ALPHA or 110
+    -- ★ 底图进「图片组」、文字进「文字组」——分组后按钮字才不会被按钮底盖住
     local ctrl = utils.createControl(
         state.rectPrefabId, x, y, size, size,
-        utils.hexToColorA("FFFFFF", alpha), state.containerHud)
+        utils.hexToColorA("FFFFFF", alpha), state.containerHudImage)
     if not ctrl then return nil end
 
     if (state.textPrefabId or 0) > 0 then
         utils.createText(x, y, size, size, label,
-            utils.hexToColor("111114"), 34, state.containerHud)
+            utils.hexToColor("111114"), 34, state.containerHudText)
     end
 
     local function press()
@@ -475,6 +528,12 @@ function OnStart()
     state.JUMP_BUFFER_TIME   = config.DEFAULT_JUMP_BUFFER_TIME
     state.PHYSICS_SUBSTEPS   = config.DEFAULT_PHYSICS_SUBSTEPS
 
+    -- ★ 纵向相机参数（竖井关卡靠它呈现；一屏放得下的关卡会被自动锁死）
+    state.CAMERA_ENABLED     = config.DEFAULT_CAMERA_ENABLED
+    state.CAMERA_MARGIN      = config.DEFAULT_CAMERA_MARGIN
+    state.CAMERA_DEAD_ZONE_Y = config.DEFAULT_CAMERA_DEAD_ZONE_Y
+    state.CAMERA_SMOOTH      = config.DEFAULT_CAMERA_SMOOTH
+
     -- ★ 层级容器 + 黑幕（一次性创建）
     ensureContainers()
     fadeScreen.init()
@@ -547,6 +606,9 @@ function OnUpdate(dt)
 
     -- ② 玩家物理
     physics.update(dt)
+
+    -- ②·五 纵向相机跟随（竖井类关卡才真正会动；一屏放得下的关卡恒为 0）
+    level.updateCamera(dt)
 
     -- ③ 道具拾取与效果
     if not state.gameWon and not state.gameFailed then

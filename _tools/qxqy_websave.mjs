@@ -61,6 +61,15 @@ const PARAMS_RAW = opt('params', '');
 const PARAMS = { ...SIM_TEMPLATE_GUIDS };
 if (PARAMS_RAW) Object.assign(PARAMS, JSON.parse(PARAMS_RAW));
 
+// ★ z 序修正是 **TickHop 专用**：它按 TickHop 的容器名（containerPlatform 等）判定「自家节点」，
+//   并把场景根下其余子节点一律隐藏。换到别的游戏时，isMine 里几乎为空 → 会把这个游戏自己的
+//   容器全部隐藏掉；更糟的是 `isMine[c.Id] = true` 在真机上会因 c.Id 为 nil 直接抛
+//   `table index is nil`（每帧一次）。
+//   → 默认只在 GAME === 'TickHop' 时注入；其他游戏需要时显式 --zfix，TickHop 可用 --no-zfix 关掉。
+//   新游戏请改用工程内的 raiseLayers()/raiseGroup() 自己摆层级（两引擎效果一致，无需补丁）。
+const ZFIX = argv.includes('--zfix') ? true
+  : (GAME === 'TickHop' && !argv.includes('--no-zfix'));
+
 const abs = (p) => (path.isAbsolute(p) ? p : path.resolve(WORKSPACE, p));
 const outPath = abs(OUT || `_simulator/${GAME}.web.save.json`);
 
@@ -113,12 +122,14 @@ if (!files.length) {
 }
 
 const shim = buildParamShim(PARAMS, '_tools/qxqy_websave.mjs')
-  + buildZOrderFix(ZFIX_FRAME, '_tools/qxqy_websave.mjs');
+  + (ZFIX ? buildZOrderFix(ZFIX_FRAME, '_tools/qxqy_websave.mjs') : '');
 
 const scripts = files.map((f) => {
   const isEntry = f.name === ENTRY;
   return {
-    // 本工程用裸 require（require("config")），模块路径必须是裸文件名
+    // ★ 注册成「裸文件名」：运行时会额外登记别名 default_import_file/<裸名>，
+    //   因此工程里写的 require("default_import_file/config") 与旧写法 require("config")
+    //   都能解析；而真机导入的文件注册在 default_import_file/ 下，只认带前缀那种写法。
     path: f.name,
     source: isEntry ? f.source + shim : f.source,
     // ★ 入口挂 server 场景根；其余仅作为 require 模块注册
@@ -147,7 +158,8 @@ console.log(`# 存档名: ${NAME} | 画布: ${CANVAS}`);
 console.log(`# 清空脚手架子节点: ${scaffoldCount} 个`);
 console.log(`# 灌入 Lua: ${scripts.length} 个`);
 console.log(`#   入口 ${ENTRY} → 挂载 ${sceneRoot.id} @ ${SERVER_ASSET}`);
-console.log(`#   已追加: 参数兜底 ${JSON.stringify(PARAMS)} + 第 ${ZFIX_FRAME} 帧层级修正`);
+console.log(`#   已追加: 参数兜底 ${JSON.stringify(PARAMS)}`
+  + (ZFIX ? ` + 第 ${ZFIX_FRAME} 帧层级修正（TickHop 专用）` : ' (无 z 序修正)'));
 console.log('# 可实例化模板:');
 eachNode(client.root, (n) => {
   if ((client.root.children || []).includes(n)) console.log(`#   guid=${n.guid}  ${n.kind.padEnd(8)} ${n.name}`);

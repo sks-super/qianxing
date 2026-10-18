@@ -27,6 +27,23 @@ M.stageBottom = 0
 M.stageTop = 0
 
 -- ================================================================
+-- 纵向相机（level.lua 的 updateCamera / applyCamera）
+--   camY 是「画面中线对应的世界 y」，把世界容器整体下移 camY 即可成像。
+--   关卡内容能一屏放下时 camMinY == camMaxY == 0 → 视图恒定，旧关卡表现不变。
+-- ================================================================
+M.camY = 0               -- 当前相机中线（世界 y）
+M.camMinY = 0            -- 相机下界（贴着关卡底部）
+M.camMaxY = 0            -- 相机上界（贴着关卡顶部）
+M.camContentTop = 0      -- 关卡内容最高点（含门）
+M.camContentBottom = 0   -- 关卡内容最低点
+M.camFollowY = 0         -- 相机期望中线（由玩家位置推出，仅供调试观察）
+
+M.CAMERA_ENABLED = 1     -- 由 config.DEFAULT_CAMERA_ENABLED 覆盖
+M.CAMERA_MARGIN = 30
+M.CAMERA_DEAD_ZONE_Y = 40
+M.CAMERA_SMOOTH = 10
+
+-- ================================================================
 -- 关卡对象
 -- ================================================================
 M.player = nil            -- 玩家 {x, y, vx, vy, halfW, halfH, ctrl, onGround}
@@ -166,5 +183,22 @@ M.containerPlayer   = nil   -- ⑤ 玩家
 M.containerHud      = nil   -- ⑥ HUD（倒计时 / 提示 / 虚拟按钮）
 M.containerMenu     = nil   -- ⑦ 菜单 / 结算面板（覆盖 HUD，但位于黑幕之下）
 M.containerFade     = nil   -- ⑧ 黑幕过渡（最顶）
+
+-- ================================================================
+-- ★ 第二层容器：每个图层内部再按【组件类型】分组（图片组 → 文字组）
+--   真机渲染顺序 = 创建顺序（API 文档 ClientUIBaseControl.SetSiblingIndex：
+--   「数值越大通常越靠后、显示越靠上」），所以「图片组先建、文字组后建」时，
+--   文字组整体压在图片组之上 —— 同层的底图再也盖不住自家的文字。
+--   模拟器渲染器与真机相反，故再显式 SetAsLastSibling() 把文字组提到末位
+--   （该便捷方法在两个引擎里效果一致，都是「移到同级末位＝最上层」）。
+-- ================================================================
+M.containerPlatformImage = nil   -- ②-a 平台矩形（图片）
+M.containerPlatformText  = nil   -- ②-b 平台秒数（文本）★ 必须在图片组之上
+M.containerGoalImage     = nil   -- ③-a 终点门（图片）
+M.containerPickupImage   = nil   -- ④-a 道具（图片）
+M.containerPlayerImage   = nil   -- ⑤-a 玩家身体（图片）
+M.containerPlayerOverlay = nil   -- ⑤-b 玩家覆盖件（眼睛，同为图片但必须压在身体上）
+M.containerHudImage      = nil   -- ⑥-a HUD 图片（触屏虚拟按钮底）
+M.containerHudText       = nil   -- ⑥-b HUD 文本（倒计时 / 提示 / 按钮文字）★ 同上
 
 return M

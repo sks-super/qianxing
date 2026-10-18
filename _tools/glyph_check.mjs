@@ -1,6 +1,8 @@
 // _glyphtest.mjs — 临时：用「位图比对私用区码位」判定字体是否真的缺字（可靠版）
 import { pathToFileURL } from 'node:url';
-const MOD = 'C:/Users/JingSu/.workbuddy/binaries/node/workspace/node_modules/@napi-rs/canvas/index.js';
+
+const HOME = process.env.USERPROFILE || process.env.HOME || '';
+const MOD = `${HOME}/.workbuddy/binaries/node/workspace/node_modules/@napi-rs/canvas/index.js`;
 const { createCanvas } = await import(pathToFileURL(MOD).href);
 
 const cv = createCanvas(80, 80);

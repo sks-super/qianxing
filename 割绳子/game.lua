@@ -4,19 +4,19 @@
 
 ---@diagnostic disable: undefined-global
 
-local config = require("config")
-local state = require("state")
-local utils = require("utils")
-local rope = require("rope")
-local physics = require("physics")
-local render = require("render")
-local objectUI = require("objectUI")   -- 物品 UI 显示模块（像素序列帧动画 / 像素对象挂载）
-local tunshi = require("吞噬")        -- 吞食动画（60x60）：第 1 帧=等待投喂姿态，第 2-6 帧=吞噬动画
-local cake = require("蛋糕")           -- 糖果/蛋糕像素画（60x60，挂到糖果容器上）
-local bladeTrail = require("bladeTrail") -- 刀光拖尾（鼠标按住移动时产生）
-local audio = require("audio")            -- 音效管理模块
-local signal = require("signal")          -- 客户端事件信号模块
-local fadeScreen = require("fadeScreen")  -- 全屏黑幕过渡模块（关卡切换时遮罩）
+local config = require("default_import_file/config")
+local state = require("default_import_file/state")
+local utils = require("default_import_file/utils")
+local rope = require("default_import_file/rope")
+local physics = require("default_import_file/physics")
+local render = require("default_import_file/render")
+local objectUI = require("default_import_file/objectUI")   -- 物品 UI 显示模块（像素序列帧动画 / 像素对象挂载）
+local tunshi = require("default_import_file/吞噬")        -- 吞食动画（60x60）：第 1 帧=等待投喂姿态，第 2-6 帧=吞噬动画
+local cake = require("default_import_file/蛋糕")           -- 糖果/蛋糕像素画（60x60，挂到糖果容器上）
+local bladeTrail = require("default_import_file/bladeTrail") -- 刀光拖尾（鼠标按住移动时产生）
+local audio = require("default_import_file/audio")            -- 音效管理模块
+local signal = require("default_import_file/signal")          -- 客户端事件信号模块
+local fadeScreen = require("default_import_file/fadeScreen")  -- 全屏黑幕过渡模块（关卡切换时遮罩）
 
 _G.getLevelConfig = config.getLevelConfig
 _G.getLevelCount = config.getLevelCount

@@ -3,11 +3,11 @@
 -- ================================================================
 
 local M = {}
-local state = require("state")
-local config = require("config")   -- ★ 反弹参数：DEFAULT_CANDY_BOUNCE_MIN_VEL / FACTOR
-local utils = require("utils")   -- 需要 utils 的失败函数，但为了避免循环，我们直接在 physics 中设置 state.gameFailed
-local audio = require("audio")     -- 音效管理模块
-local signal = require("signal")   -- 客户端事件信号模块
+local state = require("default_import_file/state")
+local config = require("default_import_file/config")   -- ★ 反弹参数：DEFAULT_CANDY_BOUNCE_MIN_VEL / FACTOR
+local utils = require("default_import_file/utils")   -- 需要 utils 的失败函数，但为了避免循环，我们直接在 physics 中设置 state.gameFailed
+local audio = require("default_import_file/audio")     -- 音效管理模块
+local signal = require("default_import_file/signal")   -- 客户端事件信号模块
 
 function M.updateCandyPhysics(dt)
     if state.gameWon or state.gameFailed or not state.candyNode or not state.candyNode.isActive then return end

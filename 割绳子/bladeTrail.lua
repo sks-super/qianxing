@@ -18,8 +18,8 @@
 ---@diagnostic disable: undefined-global
 
 local M = {}
-local state = require("state")
-local config = require("config")
+local state = require("default_import_file/state")
+local config = require("default_import_file/config")
 
 -- ================================================================
 -- 默认参数（可在 config.lua 中覆盖）

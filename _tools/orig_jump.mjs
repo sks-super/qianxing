@@ -9,6 +9,8 @@
 //        [--diff 60] [--from 0] [--to 999999]
 import fs from 'node:fs';
 
+const HOME = process.env.USERPROFILE || process.env.HOME || '';
+
 const args = process.argv.slice(2);
 const rawPath = args[0];
 const W = +args[1], H = +args[2], FPS = +args[3];
@@ -299,7 +301,7 @@ if (ovIdx >= 0) {
   const list = args[ovIdx + 1].split(',').map(Number).filter(Number.isFinite);
   const dir = args.includes('--outdir') ? args[args.indexOf('--outdir') + 1] : '_simulator/orig/check';
   const { pathToFileURL } = await import('node:url');
-  const MOD = 'C:/Users/JingSu/.workbuddy/binaries/node/workspace/node_modules/@napi-rs/canvas/index.js';
+  const MOD = `${HOME}/.workbuddy/binaries/node/workspace/node_modules/@napi-rs/canvas/index.js`;
   const { createCanvas } = await import(pathToFileURL(MOD).href);
   fs.mkdirSync(dir, { recursive: true });
   const fd2 = fs.openSync(rawPath, 'r');

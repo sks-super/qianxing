@@ -7,8 +7,8 @@
 ---@diagnostic disable: undefined-global
 
 local M = {}
-local state = require("state")
-local config = require("config")
+local state = require("default_import_file/state")
+local config = require("default_import_file/config")
 
 -- ================================================================
 -- ★ 配色：十六进制 RGB 字符串 → Color
@@ -79,6 +79,20 @@ function M.setTextColor(ctrl, hex, alpha)
 end
 
 -- ================================================================
+-- ★ 把文本控件的底色置为【透明】
+--   ★★ 真机上 ClientUITextBoxControl 有独立的 bgColor（背景色）字段，
+--      不显式设置就沿用预制体的默认底色 —— 于是大号 HUD 文本框
+--      （倒计时 420×100、关卡提示 460×46、消息 1160×56）会渲染成实心色块，
+--      把压在下面的平台秒数整个盖住。
+--      模拟器忽略该字段，所以本地怎么看都是对的 ——「模拟器对、真机错」的典型。
+--   ★ 注意：imageColor 不是文本框的字段（设了也无效），别再靠它取巧。
+-- ================================================================
+function M.setTextBgTransparent(ctrl)
+    if not ctrl then return end
+    pcall(function() ctrl.bgColor = Color.FromRGBA(0, 0, 0, 0) end)
+end
+
+-- ================================================================
 -- ★ 创建文本控件（需已配置 textPrefabId，否则返回 nil，调用方自行降级）
 --   color: Color（缺省不改，保留模板颜色）
 -- ================================================================
@@ -92,6 +106,7 @@ function M.createText(x, y, w, h, text, color, fontSize, parent)
     ctrl:SetPivot(0.5, 0.5)
     ctrl:SetSizeDelta(w, h)
     ctrl:SetAnchoredPosition(x, y)
+    M.setTextBgTransparent(ctrl)     -- ★ 底色透明：不设就会被预制体底色盖住别人
     pcall(function() if text ~= nil then ctrl.text = text end end)
     pcall(function() if fontSize and fontSize > 0 then ctrl.fontSize = fontSize end end)
     if color then

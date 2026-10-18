@@ -7,8 +7,8 @@
 ---@diagnostic disable: undefined-global
 
 local M = {}
-local state = require("state")
-local config = require("config")
+local state = require("default_import_file/state")
+local config = require("default_import_file/config")
 
 -- ================================================================
 -- ★ 配色：十六进制 RGB 字符串 → Color

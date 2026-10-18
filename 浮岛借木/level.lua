@@ -36,10 +36,10 @@
 ---@diagnostic disable: undefined-global
 
 local M = {}
-local state = require("state")
-local config = require("config")
-local utils = require("utils")
-local world = require("world")
+local state = require("default_import_file/state")
+local config = require("default_import_file/config")
+local utils = require("default_import_file/utils")
+local world = require("default_import_file/world")
 
 -- ================================================================
 -- ★ 格子 → UI 坐标（正交网格，不做菱形投影）

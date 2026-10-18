@@ -19,6 +19,8 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
+const HOME = process.env.USERPROFILE || process.env.HOME || '';
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));   // …/_tools
 const ROOT = path.resolve(HERE, '..');                       // 工作区根
 const argv = process.argv.slice(2);
@@ -27,7 +29,7 @@ const want = (n) => argv.includes('--' + n);
 
 const GAME = opt('game', 'TickHop');
 const CFG = path.resolve(ROOT, opt('file', path.join(GAME, 'config.lua')));
-const PY = 'C:/Users/JingSu/.workbuddy/binaries/python/versions/3.13.12/python.exe';
+const PY = `${HOME}/.workbuddy/binaries/python/versions/3.13.12/python.exe`;
 
 // ---------------------------------------------------------------
 // 扫出 `M.LEVELS = { ... }` 整段：从名字后第一个 `{` 起做括号配平，

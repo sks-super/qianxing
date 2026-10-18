@@ -2,7 +2,9 @@
 // 用法: node _tools/_boost.mjs <in.png> <out.png> [gain=6]
 import { pathToFileURL } from 'node:url';
 
-const MOD = 'C:/Users/JingSu/.workbuddy/binaries/node/workspace/node_modules/@napi-rs/canvas/index.js';
+const HOME = process.env.USERPROFILE || process.env.HOME || '';
+
+const MOD = `${HOME}/.workbuddy/binaries/node/workspace/node_modules/@napi-rs/canvas/index.js`;
 const { createCanvas, loadImage } = await import(pathToFileURL(MOD).href);
 
 const [inFile, outFile, gainArg] = process.argv.slice(2);

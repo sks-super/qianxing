@@ -23,8 +23,8 @@
 ---@diagnostic disable: undefined-global
 
 local M = {}
-local state = require("state")
-local config = require("config")
+local state = require("default_import_file/state")
+local config = require("default_import_file/config")
 
 local EPS = 1e-9
 

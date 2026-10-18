@@ -3,7 +3,9 @@
 import { pathToFileURL } from 'node:url';
 import { existsSync } from 'node:fs';
 
-const MOD = 'C:/Users/JingSu/.workbuddy/binaries/node/workspace/node_modules/@napi-rs/canvas/index.js';
+const HOME = process.env.USERPROFILE || process.env.HOME || '';
+
+const MOD = `${HOME}/.workbuddy/binaries/node/workspace/node_modules/@napi-rs/canvas/index.js`;
 const { createCanvas, loadImage, GlobalFonts } = await import(pathToFileURL(MOD).href);
 
 for (const f of ['C:/Windows/Fonts/msyh.ttc', 'C:/Windows/Fonts/msyhbd.ttc', 'C:/Windows/Fonts/simhei.ttf']) {
@@ -11,7 +13,7 @@ for (const f of ['C:/Windows/Fonts/msyh.ttc', 'C:/Windows/Fonts/msyhbd.ttc', 'C:
 }
 
 const [ghostFile, litFile, out] = process.argv.slice(2);
-const SRC = '/C:/Users/JingSu/.workbuddy/binaries/node/workspace/node_modules/@napi-rs/canvas/index.js';
+const SRC = `${HOME}/.workbuddy/binaries/node/workspace/node_modules/@napi-rs/canvas/index.js`;
 void SRC;
 
 // 关注区域（世界坐标，中心原点、Y 向上）→ 画布坐标

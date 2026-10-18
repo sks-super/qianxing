@@ -3,7 +3,9 @@
 //   世界坐标 → 画布坐标：cx = W/2 + wx，cy = H/2 - wy（原点在画布中心，Y 向上）
 import { pathToFileURL } from 'node:url';
 
-const MOD = 'C:/Users/JingSu/.workbuddy/binaries/node/workspace/node_modules/@napi-rs/canvas/index.js';
+const HOME = process.env.USERPROFILE || process.env.HOME || '';
+
+const MOD = `${HOME}/.workbuddy/binaries/node/workspace/node_modules/@napi-rs/canvas/index.js`;
 const { createCanvas, loadImage } = await import(pathToFileURL(MOD).href);
 
 const [file, wx, wy, hw, hh, name] = process.argv.slice(2);

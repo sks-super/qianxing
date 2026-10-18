@@ -6,11 +6,11 @@
 
 
 local M = {}
-local state = require("state")
-local config = require("config")
-local bladeTrail = require("bladeTrail")
-local audio = require("audio")     -- 音效管理模块
-local signal = require("signal")   -- 客户端事件信号模块
+local state = require("default_import_file/state")
+local config = require("default_import_file/config")
+local bladeTrail = require("default_import_file/bladeTrail")
+local audio = require("default_import_file/audio")     -- 音效管理模块
+local signal = require("default_import_file/signal")   -- 客户端事件信号模块
 
 -- ★ 创建UI控件（parent 可选：指定容器父节点；缺省挂到 state.parent 根）
 function M.createControl(ctrlId, x, y, w, h, color, parent)

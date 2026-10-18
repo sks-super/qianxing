@@ -6,9 +6,9 @@
 
 
 local M = {}
-local config = require("config")
-local state = require("state")
-local utils = require("utils")
+local config = require("default_import_file/config")
+local state = require("default_import_file/state")
+local utils = require("default_import_file/utils")
 
 function M.updateRopeVisualSpline()
     for _, rope in ipairs(state.ropes) do

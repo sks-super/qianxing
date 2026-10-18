@@ -4,7 +4,9 @@
 // 用法: node _tools/orig_analyze.mjs <img...> [--cols 120] [--thr 30] [--minrun 60]
 import { pathToFileURL } from 'node:url';
 
-const MOD = 'C:/Users/JingSu/.workbuddy/binaries/node/workspace/node_modules/@napi-rs/canvas/index.js';
+const HOME = process.env.USERPROFILE || process.env.HOME || '';
+
+const MOD = `${HOME}/.workbuddy/binaries/node/workspace/node_modules/@napi-rs/canvas/index.js`;
 const { createCanvas, loadImage } = await import(pathToFileURL(MOD).href);
 
 const argv = process.argv.slice(2);

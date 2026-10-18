@@ -10,9 +10,9 @@
 ---@diagnostic disable: undefined-global
 
 local M = {}
-local state = require("state")
-local config = require("config")
-local utils = require("utils")
+local state = require("default_import_file/state")
+local config = require("default_import_file/config")
+local utils = require("default_import_file/utils")
 
 M.ctrl = nil        -- 黑幕控件
 M.alpha = 0         -- 当前不透明度（0 ~ maxAlpha）

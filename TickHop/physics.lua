@@ -8,9 +8,9 @@
 ---@diagnostic disable: undefined-global
 
 local M = {}
-local state = require("state")
-local config = require("config")
-local audio = require("audio")
+local state = require("default_import_file/state")
+local config = require("default_import_file/config")
+local audio = require("default_import_file/audio")
 
 -- ================================================================
 -- 数值逼近：把 cur 以最大步长 maxDelta 推向 target

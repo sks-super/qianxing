@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>2048 · 版式与参数编辑器</title>
+<style>
+  :root{
+    --bg:#f4f1ea; --panel:#fffdf9; --line:#e2dbcf; --ink:#4a423b; --dim:#8b8076;
+    --accent:#8f7a66; --hot:#d9534f; --ok:#4e9a6b;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;}
+  header{padding:14px 20px;background:var(--panel);border-bottom:1px solid var(--line);
+         display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;}
+  header h1{font-size:17px;margin:0;}
+  header .sub{color:var(--dim);font-size:12.5px;}
+  .wrap{display:flex;gap:16px;padding:16px;align-items:flex-start;}
+  .left{flex:0 0 auto;}
+  .right{flex:1 1 auto;min-width:360px;}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+        padding:12px 14px;margin-bottom:14px;}
+  .card h2{font-size:13.5px;margin:0 0 10px;color:var(--accent);
+           letter-spacing:.5px;border-bottom:1px dashed var(--line);padding-bottom:6px;}
+  canvas{display:block;background:#faf8ef;border:1px solid var(--line);border-radius:8px;
+         cursor:grab;max-width:100%;}
+  canvas.drag{cursor:grabbing;}
+  .row{display:flex;align-items:center;gap:8px;margin:5px 0;}
+  .row label{flex:1 1 auto;font-size:12.5px;color:#5d544c;}
+  .row input[type=number]{width:88px;padding:3px 6px;border:1px solid var(--line);
+        border-radius:5px;background:#fff;font:12.5px inherit;color:inherit;text-align:right;}
+  .row input.diff{border-color:var(--hot);background:#fff5f4;}
+  .row .k{color:var(--dim);font-size:11px;font-family:ui-monospace,Consolas,monospace;}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 16px;}
+  button{padding:6px 12px;border:1px solid var(--line);border-radius:6px;
+         background:#fff;color:inherit;font:12.5px inherit;cursor:pointer;}
+  button:hover{background:#f7f3ea;}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fdfbf7;}
+  button.primary:hover{filter:brightness(1.06);}
+  textarea{width:100%;height:150px;font:12px/1.5 ui-monospace,Consolas,monospace;
+           border:1px solid var(--line);border-radius:7px;padding:8px;background:#fff;
+           color:#3f3833;resize:vertical;}
+  .toggles{display:flex;gap:14px;flex-wrap:wrap;align-items:center;font-size:12.5px;}
+  .toggles label{display:flex;align-items:center;gap:5px;cursor:pointer;}
+  .report{font:12px/1.7 ui-monospace,Consolas,monospace;white-space:pre-wrap;
+          max-height:190px;overflow:auto;}
+  .ok{color:var(--ok);} .bad{color:var(--hot);}
+  .legend{font-size:11.5px;color:var(--dim);margin-top:8px;}
+  .legend b{color:#5d544c;font-weight:600;}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>2048 · 版式与参数编辑器</h1>
+  <span class="sub">设计基准 1280 × 720 · 拖动画布上的 <b>十字标</b> 可直接移动棋盘 / 相片 / 信息面板</span>
+</header>
+
+<div class="wrap">
+  <div class="left">
+    <div class="card">
+      <h2>设计坐标预览（等比例缩放显示）</h2>
+      <canvas id="cv" width="1280" height="720"></canvas>
+      <div class="toggles" style="margin-top:10px;">
+        <label><input type="checkbox" id="tSettle"> 叠加「结算拍照」布局</label>
+        <label><input type="checkbox" id="tBoxes"> 显示文本框兜高盒（36px）</label>
+        <label><input type="checkbox" id="tGrid"> 显示格线</label>
+      </div>
+      <div class="legend">
+        <b>红点</b> = 可拖动锚点：棋盘中心 / 相片中心 / 信息面板中心。拖动即改参数，右侧数值同步。
+      </div>
+    </div>
+  </div>
+
+  <div class="right">
+    <div class="card">
+      <h2>参数（改动会实时重画预览）</h2>
+      <div id="groups"></div>
+      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+        <button id="btnDefault">恢复为文件默认值</button>
+        <button id="btnFitBoard">棋盘居中</button>
+        <button id="btnFitRight">右列回到常用位</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>版式自检（真机才会出问题的那些）</h2>
+      <div class="report" id="report"></div>
+    </div>
+
+    <div class="card">
+      <h2>导出</h2>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+        <button class="primary" id="btnCfg">生成 config.lua 片段</button>
+        <button id="btnParam">生成脚本参数表</button>
+        <button id="btnCopy">复制到剪贴板</button>
+      </div>
+      <textarea id="out" spellcheck="false" placeholder="点上面的按钮生成内容…"></textarea>
+    </div>
+  </div>
+</div>
+
+<script>
+// ================================================================
+// ★ 文件默认值（= config.lua 里的 DEFAULT_*）
+//   ★★ 这张表必须与 config.lua 逐项数值一致：
+//       _shared/_check_refs.py 的 key 映射规则是
+//       DEFAULTS 的 `<key>`  ↔  config.lua 的 `M.DEFAULT_<KEY 大写>`。
+//       这里【不要】写注释、不要写嵌套对象，否则校验器解析会错。
+// ================================================================
+const DEFAULTS = {
+  design_width:1280, design_height:720, view_width:1280, view_height:720,
+  board_cell:104, board_gap:12, board_cx:-230, board_cy:5,
+  panel_cx:340, title_y:312, title_size:62,
+  score_w:300, score_h:84, score_y:230, best_y:140,
+  score_label_size:20, score_value_size:34, score_label_dy:23, score_value_dy:-21,
+  hint_y:76, hint_size:18,
+  dpad_cx:340, dpad_cy:-48, dpad_btn:60, dpad_gap:6, dpad_size:26,
+  func_w:300, func_h:52, func_y1:-176, func_y2:-242, func_y3:-308,
+  func_size:22, func_text_alpha:255, func_disabled_alpha:96,
+  start_tiles:2, spawn_2_ratio:90, win_value:2048,
+  continue_after_win:1, undo_enabled:1, undo_depth:64, auto_settle:1,
+  anim_move_time:0.12, anim_spawn_time:0.16, anim_spawn_overshoot:1.12,
+  anim_merge_time:0.14, anim_merge_scale:1.18,
+  anim_score_time:0.35, anim_score_pop:1.14, anim_input_lock_extra:0.03, anim_undo_time:0.2,
+  settle_board_time:0.55, settle_photo_scale:0.46, settle_photo_tilt:-8,
+  settle_photo_x:232, settle_photo_y:-18,
+  settle_overlay_time:0.3, settle_overlay_alpha:188,
+  settle_photo_delay:0.3, settle_photo_time:0.3,
+  settle_frame_pad:16, settle_frame_pad_bottom:48, settle_matte:5, settle_cap_size:22,
+  settle_info_delay:0.3, settle_info_time:0.42,
+  settle_info_cx:-350, settle_info_cy:0, settle_info_w:560, settle_info_h:460,
+  settle_title_size:40, settle_sub_size:20, settle_score_size:60, settle_stat_size:20,
+  settle_count_time:0.75,
+  settle_btn_w:240, settle_btn_h:54, settle_btn_dx:134, settle_btn_y:-178,
+  settle_btn_delay:0.16, settle_btn_time:0.24,
+  fx_particle_count:12, fx_particle_life:0.5, fx_particle_size:12, fx_particle_speed:300,
+  fx_particle_gravity:1100, fx_particle_spin:260, fx_particle_max:160,
+  fx_float_life:0.7, fx_float_rise:76, fx_float_size:30,
+  swipe_min_distance:42, key_guard:1, swipe_enabled:1, highscore_sync:1,
+  fade_in_time:0.18, fade_hold_time:0.24, fade_out_time:0.24, fade_max_alpha:240,
+  tile_font_size:44, tile_font_size_long:32, tile_font_size_longer:26,
+};
+
+// 分组 + 中文名 + 步长（只影响界面，不参与导出逻辑）
+const SPEC = [
+  ["画布", [["design_width","设计基准宽",1],["design_height","设计基准高",1],
+            ["board_cell","单格边长",1],["board_gap","格间距",1],
+            ["board_cx","棋盘中心 x",2],["board_cy","棋盘中心 y",2]]],
+  ["右列版式", [["panel_cx","信息列中心 x",2],["title_y","标题 y",2],["title_size","标题字号",1],
+            ["score_w","分数框宽",2],["score_h","分数框高",2],
+            ["score_y","分数框 y",2],["best_y","最高分框 y",2],
+            ["score_label_size","框内小标题字号",1],["score_value_size","框内数值字号",1],
+            ["score_label_dy","小标题相对偏移",1],["score_value_dy","数值相对偏移",1],
+            ["hint_y","说明文字 y",2],["hint_size","说明文字字号",1]]],
+  ["方向键与功能按钮", [["dpad_cx","方向键中心 x",2],["dpad_cy","方向键中心 y",2],
+            ["dpad_btn","单键边长",1],["dpad_gap","键间隙",1],["dpad_size","字形字号",1],
+            ["func_w","功能按钮宽",2],["func_h","功能按钮高",2],
+            ["func_y1","按钮一 y",2],["func_y2","按钮二 y",2],["func_y3","按钮三 y",2],
+            ["func_size","按钮字号",1],
+            ["func_text_alpha","可用字不透明度",1],["func_disabled_alpha","禁用字不透明度",1]]],
+  ["规则", [["start_tiles","开局方块数",1],["spawn_2_ratio","出 2 的概率 %",1],
+            ["win_value","胜利目标值",1],["continue_after_win","胜利可继续 0/1",1],
+            ["undo_enabled","允许撤销 0/1",1],["undo_depth","撤销栈深度",1],
+            ["auto_settle","自动弹结算 0/1",1]]],
+  ["方块动效", [["anim_move_time","平移时长 s",0.01],["anim_spawn_time","新块出现时长 s",0.01],
+            ["anim_spawn_overshoot","新块回弹峰值",0.01],
+            ["anim_merge_time","合并弹跳时长 s",0.01],["anim_merge_scale","合并放大峰值",0.01],
+            ["anim_score_time","分数滚动时长 s",0.01],["anim_score_pop","分数弹跳峰值",0.01],
+            ["anim_input_lock_extra","动画后锁输入 s",0.01],["anim_undo_time","撤销呼吸时长 s",0.01],
+            ["tile_font_size","方块字号（≤2位）",1],["tile_font_size_long","方块字号（3位）",1],
+            ["tile_font_size_longer","方块字号（≥4位）",1]]],
+  ["结算拍照", [["settle_board_time","棋盘飞行时长 s",0.01],["settle_photo_scale","相片缩放",0.01],
+            ["settle_photo_tilt","途中倾角 度",1],["settle_photo_x","相片中心 x",2],
+            ["settle_photo_y","相片中心 y",2],
+            ["settle_overlay_time","遮罩淡入 s",0.01],["settle_overlay_alpha","遮罩不透明度",1],
+            ["settle_photo_delay","相框延迟 s",0.01],["settle_photo_time","相框淡入 s",0.01],
+            ["settle_frame_pad","相框窄边宽",1],["settle_frame_pad_bottom","相框下边宽",1],
+            ["settle_matte","相片内衬宽",1],["settle_cap_size","相片说明字号",1],
+            ["settle_info_delay","面板延迟 s",0.01],["settle_info_time","面板滑入 s",0.01],
+            ["settle_info_cx","面板中心 x",2],["settle_info_cy","面板中心 y",2],
+            ["settle_info_w","面板宽",2],["settle_info_h","面板高",2],
+            ["settle_title_size","面板标题字号",1],["settle_sub_size","面板副标题字号",1],
+            ["settle_score_size","结算分数字号",1],["settle_stat_size","统计行字号",1],
+            ["settle_count_time","分数滚动增长 s",0.01],
+            ["settle_btn_w","面板按钮宽",2],["settle_btn_h","面板按钮高",2],
+            ["settle_btn_dx","按钮横向偏移",2],["settle_btn_y","按钮纵向偏移",2],
+            ["settle_btn_delay","按钮间隔 s",0.01],["settle_btn_time","按钮出现时长 s",0.01]]],
+  ["粒子与输入", [["fx_particle_count","粒子数",1],["fx_particle_life","粒子寿命 s",0.01],
+            ["fx_particle_size","粒子边长",1],["fx_particle_speed","粒子初速",10],
+            ["fx_particle_gravity","粒子重力",10],["fx_particle_spin","粒子自转 度/s",10],
+            ["fx_particle_max","粒子上限",1],
+            ["fx_float_life","飘字寿命 s",0.01],["fx_float_rise","飘字上升",2],
+            ["fx_float_size","飘字号",1],
+            ["swipe_min_distance","滑动阈值",2],["key_guard","键盘边沿触发 0/1",1],
+            ["swipe_enabled","允许滑动 0/1",1],["highscore_sync","最高分同步 0/1",1],
+            ["fade_in_time","黑幕渐显 s",0.01],["fade_hold_time","黑幕维持 s",0.01],
+            ["fade_out_time","黑幕渐隐 s",0.01],["fade_max_alpha","黑幕峰值不透明度",1]]],
+];
+
+const MIN_TEXT_H = 36;        // ★ 与 utils.MIN_TEXT_H 保持一致（真机文本框最小高度）
+const DW = DEFAULTS.design_width, DH = DEFAULTS.design_height;
+
+// ================================================================
+// 当前值
+// ================================================================
+const V = Object.assign({}, DEFAULTS);
+const inputs = {};
+
+// ================================================================
+// 界面构建
+// ================================================================
+const groupsEl = document.getElementById("groups");
+for (const [gname, items] of SPEC) {
+  const h = document.createElement("div");
+  h.innerHTML = "<h2>" + gname + "</h2>";
+  const grid = document.createElement("div");
+  grid.className = "grid2";
+  for (const [key, label, step] of items) {
+    const row = document.createElement("div");
+    row.className = "row";
+    const lb = document.createElement("label");
+    lb.innerHTML = label + " <span class='k'>" + key + "</span>";
+    const inp = document.createElement("input");
+    inp.type = "number";
+    inp.step = step;
+    inp.value = V[key];
+    inp.addEventListener("input", () => {
+      const n = parseFloat(inp.value);
+      if (!isNaN(n)) { V[key] = n; draw(); }
+    });
+    inputs[key] = inp;
+    row.appendChild(lb); row.appendChild(inp);
+    grid.appendChild(row);
+  }
+  h.appendChild(grid);
+  groupsEl.appendChild(h);
+}
+
+function syncInputs() {
+  for (const k in inputs) {
+    inputs[k].value = (+V[k].toFixed(4));
+    inputs[k].classList.toggle("diff", Math.abs(V[k] - DEFAULTS[k]) > 1e-9);
+  }
+}
+
+// ================================================================
+// 画布绘制
+// ================================================================
+const cv = document.getElementById("cv");
+const ctx = cv.getContext("2d");
+const tSettle = document.getElementById("tSettle");
+const tBoxes  = document.getElementById("tBoxes");
+const tGrid   = document.getElementById("tGrid");
+for (const t of [tSettle, tBoxes, tGrid]) t.addEventListener("change", draw);
+
+// 设计坐标（y 向上）→ 画布坐标（y 向下）
+const Y = y => DH / 2 - y;
+const X = x => DW / 2 + x;
+
+function box(cx, cy, w, h, fill, stroke) {
+  ctx.beginPath();
+  ctx.rect(X(cx) - w / 2, Y(cy) - h / 2, w, h);
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = 1; ctx.stroke(); }
+}
+function txt(s, cx, cy, size, color, align, bold) {
+  ctx.fillStyle = color;
+  ctx.font = (bold ? "600 " : "") + size + "px -apple-system,'Microsoft YaHei',sans-serif";
+  ctx.textBaseline = "middle";
+  ctx.textAlign = align || "center";
+  ctx.fillText(s, X(cx), Y(cy));
+}
+function cross(cx, cy, color, label) {
+  ctx.save();
+  ctx.strokeStyle = color; ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(X(cx) - 11, Y(cy)); ctx.lineTo(X(cx) + 11, Y(cy));
+  ctx.moveTo(X(cx), Y(cy) - 11); ctx.lineTo(X(cx), Y(cy) + 11);
+  ctx.stroke();
+  ctx.beginPath(); ctx.arc(X(cx), Y(cy), 4, 0, Math.PI * 2);
+  ctx.fillStyle = color; ctx.fill();
+  if (label) {
+    ctx.fillStyle = color; ctx.font = "12px ui-monospace,monospace";
+    ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+    ctx.fillText(label, X(cx) + 14, Y(cy) - 8);
+  }
+  ctx.restore();
+}
+// 文本框兜高盒（虚线）：把「实际会被撑到的盒子」画出来，一眼看出会不会打架
+function textBox(cx, cy, w, h, color) {
+  const hh = Math.max(h, MIN_TEXT_H);
+  ctx.save();
+  ctx.setLineDash([4, 3]);
+  ctx.strokeStyle = color; ctx.lineWidth = 1;
+  ctx.strokeRect(X(cx) - w / 2, Y(cy) - hh / 2, w, hh);
+  ctx.restore();
+}
+
+const C = {
+  bg:"#faf8ef", boardBg:"#bbada0", cell:"#cdc1b4",
+  ink:"#776e65", light:"#f9f6f2", dim:"#9c8f86",
+  accent:"#8f7a66", frame:"#fffdf7", panel:"#fbf9f4",
+  overlay:"rgba(43,39,36,.74)", hot:"#d9534f", ok:"#4e9a6b", box:"#bbada0",
+};
+
+let hotspots = [];   // [{x, y, keys:[k1,k2], label}]
+
+function draw() {
+  hotspots = [];
+  ctx.clearRect(0, 0, DW, DH);
+  box(0, 0, DW, DH, C.bg);
+
+  // ---- 棋盘 ----
+  const cell = V.board_cell, gap = V.board_gap;
+  const bs = cell * 4 + gap * 5;
+  box(V.board_cx, V.board_cy, bs, bs, C.boardBg);
+  const x0 = -bs / 2 + gap + cell / 2;
+  const y0 =  bs / 2 - gap - cell / 2;
+  for (let r = 1; r <= 4; r++) {
+    for (let c = 1; c <= 4; c++) {
+      const cxx = V.board_cx + x0 + (c - 1) * (cell + gap);
+      const cyy = V.board_cy + y0 - (r - 1) * (cell + gap);
+      box(cxx, cyy, cell, cell, C.cell);
+      if (tGrid.checked) {
+        ctx.strokeStyle = "rgba(0,0,0,.12)";
+        ctx.strokeRect(X(cxx) - cell / 2, Y(cyy) - cell / 2, cell, cell);
+      }
+    }
+  }
+  // 示例数字（示意用）
+  const demo = [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 0, 0, 0, 0, 0];
+  const tileBg = {2:"#eee4da",4:"#ede0c8",8:"#f2b179",16:"#f59563",32:"#f67c5f",
+                  64:"#f65e3b",128:"#edcf72",256:"#edcc61",512:"#edc850",
+                  1024:"#edc53f",2048:"#edc22e"};
+  let di = 0;
+  for (let r = 1; r <= 4; r++) {
+    for (let c = 1; c <= 4; c++, di++) {
+      const v = demo[di]; if (!v) continue;
+      const cxx = V.board_cx + x0 + (c - 1) * (cell + gap);
+      const cyy = V.board_cy + y0 - (r - 1) * (cell + gap);
+      box(cxx, cyy, cell, cell, tileBg[v] || "#3c3a32");
+      const n = String(v).length;
+      const fs = n <= 2 ? V.tile_font_size : (n === 3 ? V.tile_font_size_long : V.tile_font_size_longer);
+      txt(String(v), cxx, cyy, fs, v <= 4 ? C.ink : C.light, "center", true);
+    }
+  }
+  cross(V.board_cx, V.board_cy, C.hot, "board");
+
+  // ---- 右列 HUD ----
+  const pcx = V.panel_cx;
+  txt("2048", pcx, V.title_y, V.title_size, C.ink, "center", true);
+  if (tBoxes.checked) textBox(pcx, V.title_y, 360, 76, "rgba(217,83,79,.45)");
+
+  scoreBox(pcx, V.score_y, "分数", "1,024");
+  scoreBox(pcx, V.best_y, "最高分", "4,096");
+  txt("WASD / 方向键 / 滑动屏幕", pcx, V.hint_y, V.hint_size, C.dim);
+  if (tBoxes.checked) textBox(pcx, V.hint_y, 360, MIN_TEXT_H, "rgba(217,83,79,.45)");
+
+  // ---- 方向键 ----
+  const off = V.dpad_btn + V.dpad_gap;
+  const dp = [[0, off, "↑"], [0, -off, "↓"], [-off, 0, "←"], [off, 0, "→"]];
+  for (const [dx, dy, gl] of dp) {
+    box(V.dpad_cx + dx, V.dpad_cy + dy, V.dpad_btn, V.dpad_btn, "#e8e1d7", "#cdc2b6");
+    txt(gl, V.dpad_cx + dx, V.dpad_cy + dy, V.dpad_size, C.ink);
+  }
+  // ---- 功能按钮 ----
+  const fys = [V.func_y1, V.func_y2, V.func_y3];
+  const fls = ["重新开始", "撤销一步", "继续游戏"];
+  for (let i = 0; i < 3; i++) {
+    box(pcx, fys[i], V.func_w, V.func_h, "#e8e1d7", "#cdc2b6");
+    txt(fls[i], pcx, fys[i], V.func_size, C.ink);
+  }
+
+  // ---- 结算布局叠加 ----
+  if (tSettle.checked) {
+    box(0, 0, DW, DH, C.overlay);
+    // 相片：棋盘缩到相片位（把缩小后的棋盘连同方块一起画出来）
+    const s = V.settle_photo_scale, inner = bs * s;
+    const px = V.settle_photo_x, py = V.settle_photo_y;
+    const pad = V.settle_frame_pad, padB = V.settle_frame_pad_bottom, matte = V.settle_matte;
+    // 内衬（比棋盘大一圈的深色细线）
+    box(px, py, inner + matte * 2, inner + matte * 2, "#5a4f47");
+    // 缩小后的棋盘
+    box(px, py, inner, inner, C.boardBg);
+    const sc = s;                                   // 缩放系数
+    const icg = (cell + gap) * sc;
+    const ix0 = px - inner / 2 + gap * sc + (cell * sc) / 2;
+    const iy0 = py + inner / 2 - gap * sc - (cell * sc) / 2;
+    let dj = 0;
+    for (let r = 1; r <= 4; r++) {
+      for (let c = 1; c <= 4; c++, dj++) {
+        const v = demo[dj];
+        const cxx = ix0 + (c - 1) * icg;
+        const cyy = iy0 - (r - 1) * icg;
+        box(cxx, cyy, cell * sc, cell * sc, v ? (tileBg[v] || "#3c3a32") : C.cell);
+        if (v) txt(String(v), cxx, cyy, Math.max(7, 20 * sc), v <= 4 ? C.ink : C.light, "center", true);
+      }
+    }
+    // 相框四边
+    const fh = inner + pad + padB;
+    box(px - inner / 2 - pad / 2, py + (padB - pad) / 2, pad, fh, C.frame);
+    box(px + inner / 2 + pad / 2, py + (padB - pad) / 2, pad, fh, C.frame);
+    box(px, py + inner / 2 + pad / 2, inner, pad, C.frame);
+    box(px, py - inner / 2 - padB / 2, inner, padB, C.frame);
+    txt("第 56 步 · 最大 1024", px, py - inner / 2 - padB / 2, V.settle_cap_size, C.ink);
+    cross(px, py, C.hot, "photo");
+
+    // 信息面板
+    const ix = V.settle_info_cx, iy = V.settle_info_cy;
+    const iw = V.settle_info_w, ih = V.settle_info_h;
+    box(ix, iy, iw + 10, ih + 10, "#e6dfd3");
+    box(ix, iy, iw, ih, C.panel);
+    txt("达成 2048 ！", ix, iy + 170, V.settle_title_size, "#5a4f47", "center", true);
+    txt("记录已经刷新，可以继续挑战更大的方块", ix, iy + 122, V.settle_sub_size, C.dim);
+    txt("本次得分", ix, iy + 78, V.settle_stat_size, C.dim);
+    txt("13,824", ix, iy + 30, V.settle_score_size, "#5a4f47", "center", true);
+    txt("最大方块 2048", ix, iy - 24, V.settle_stat_size, "#5a4f47");
+    txt("最高分 13,824", ix, iy - 64, V.settle_stat_size, "#5a4f47");
+    txt("步数 56", ix, iy - 104, V.settle_stat_size, "#5a4f47");
+    const bdx = V.settle_btn_dx, by = V.settle_btn_y;
+    box(ix - bdx, iy + by, V.settle_btn_w, V.settle_btn_h, "#e8e1d7", "#cdc2b6");
+    txt("继续游戏", ix - bdx, iy + by, V.settle_stat_size + 2, C.ink);
+    box(ix + bdx, iy + by, V.settle_btn_w, V.settle_btn_h, "#e8e1d7", "#cdc2b6");
+    txt("重新开始", ix + bdx, iy + by, V.settle_stat_size + 2, C.ink);
+    cross(ix, iy, C.hot, "info");
+  }
+
+  // 屏幕边界
+  ctx.strokeStyle = "rgba(0,0,0,.25)";
+  ctx.strokeRect(0.5, 0.5, DW - 1, DH - 1);
+
+  hotspots = [
+    { x: V.board_cx, y: V.board_cy, keys: ["board_cx", "board_cy"], label: "棋盘中心" },
+    { x: V.settle_photo_x, y: V.settle_photo_y, keys: ["settle_photo_x", "settle_photo_y"], label: "相片中心" },
+    { x: V.settle_info_cx, y: V.settle_info_cy, keys: ["settle_info_cx", "settle_info_cy"], label: "信息面板中心" },
+  ];
+  hotspots.forEach(h => {
+    ctx.beginPath();
+    ctx.arc(X(h.x), Y(h.y), 9, 0, Math.PI * 2);
+    ctx.strokeStyle = C.hot; ctx.lineWidth = 1.5; ctx.stroke();
+  });
+
+  syncInputs();
+  report();
+}
+
+function scoreBox(cx, cy, label, value) {
+  box(cx, cy, V.score_w, V.score_h, C.box);
+  txt(label, cx, cy + V.score_label_dy, V.score_label_size, "#eee4da");
+  txt(value, cx, cy + V.score_value_dy, V.score_value_size, "#ffffff", "center", true);
+  if (tBoxes.checked) {
+    textBox(cx, cy + V.score_label_dy, V.score_w - 40, MIN_TEXT_H, "rgba(217,83,79,.45)");
+    textBox(cx, cy + V.score_value_dy, V.score_w - 40, 46, "rgba(217,83,79,.45)");
+  }
+}
+
+// ================================================================
+// 拖动锚点
+// ================================================================
+let drag = null;
+function toDesign(ev) {
+  const r = cv.getBoundingClientRect();
+  const sx = DW / r.width, sy = DH / r.height;
+  const cx = (ev.clientX - r.left) * sx;
+  const cy = (ev.clientY - r.top) * sy;
+  return { x: cx - DW / 2, y: DH / 2 - cy };
+}
+cv.addEventListener("mousedown", ev => {
+  const p = toDesign(ev);
+  let best = null, bd = 1e9;
+  for (const h of hotspots) {
+    const d = Math.hypot(h.x - p.x, h.y - p.y);
+    if (d < bd) { bd = d; best = h; }
+  }
+  if (best && bd < 46) {
+    drag = best;
+    cv.classList.add("drag");
+    ev.preventDefault();
+  }
+});
+window.addEventListener("mousemove", ev => {
+  if (!drag) return;
+  const p = toDesign(ev);
+  V[drag.keys[0]] = Math.round(p.x);
+  V[drag.keys[1]] = Math.round(p.y);
+  draw();
+});
+window.addEventListener("mouseup", () => {
+  if (drag) { drag = null; cv.classList.remove("drag"); }
+});
+
+// ================================================================
+// 版式自检：把「真机才会暴露」的问题算出来
+// ================================================================
+function report() {
+  const lines = [];
+  const bad = [], warn = [], ok = [];
+
+  // 1) 右列自上而下的文字盒是否重叠（文本框最小高度 = 36）
+  const span = (cy, h) => [cy + Math.max(h, MIN_TEXT_H) / 2, cy - Math.max(h, MIN_TEXT_H) / 2];
+  const col = [
+    ["标题", ...span(V.title_y, 76)],
+    ["分数框", ...span(V.score_y + V.score_label_dy, MIN_TEXT_H)],
+    ["分数数值", ...span(V.score_y + V.score_value_dy, 46)],
+    ["最高分小标题", ...span(V.best_y + V.score_label_dy, MIN_TEXT_H)],
+    ["最高分数值", ...span(V.best_y + V.score_value_dy, 46)],
+    ["说明文字", ...span(V.hint_y, MIN_TEXT_H)],
+    ["方向键上", ...span(V.dpad_cy + V.dpad_btn + V.dpad_gap, V.dpad_btn)],
+    ["方向键下", ...span(V.dpad_cy - V.dpad_btn - V.dpad_gap, V.dpad_btn)],
+    ["按钮一", ...span(V.func_y1, V.func_h)],
+    ["按钮二", ...span(V.func_y2, V.func_h)],
+    ["按钮三", ...span(V.func_y3, V.func_h)],
+  ];
+  for (let i = 0; i + 1 < col.length; i++) {
+    const a = col[i], b = col[i + 1];
+    const gap = a[2] - b[1];              // 上一项的下沿 - 下一项的上沿
+    if (gap < 0) bad.push("右列「" + a[0] + "」与「" + b[0] + "」重叠 " + (-gap).toFixed(1) + "px");
+    else if (gap < 4) warn.push("右列「" + a[0] + "」与「" + b[0] + "」只差 " + gap.toFixed(1) + "px，真机会贴在一起");
+  }
+
+  // 2) 右列是否出屏（设计高度 720 → y ∈ [-360, 360]）
+  for (const [n, top, bot] of col) {
+    if (top > 360) bad.push("右列「" + n + "」上沿 y=" + top.toFixed(1) + " 超出画布（>360）");
+    if (bot < -360) bad.push("右列「" + n + "」下沿 y=" + bot.toFixed(1) + " 超出画布（<-360）");
+  }
+
+  // 3) 棋盘是否与右列相撞
+  const bs = V.board_cell * 4 + V.board_gap * 5;
+  const bRight = V.board_cx + bs / 2;
+  const colLeft = V.panel_cx - Math.max(V.func_w, V.score_w) / 2;
+  if (bRight > colLeft) bad.push("棋盘右边 " + bRight.toFixed(1) + " 压到右列左边 " + colLeft.toFixed(1));
+  else ok.push("棋盘与右列留白 " + (colLeft - bRight).toFixed(1) + "px");
+  if (V.board_cx - bs / 2 < -DW / 2) bad.push("棋盘左边超出画布");
+  if (V.board_cy + bs / 2 > DH / 2) bad.push("棋盘上边 y=" + (V.board_cy + bs / 2).toFixed(1) + " 超出画布");
+  if (V.board_cy - bs / 2 < -DH / 2) bad.push("棋盘下边超出画布");
+
+  // 4) 结算：相片与信息面板是否打架
+  const inner = bs * V.settle_photo_scale;
+  const fOuterW = inner + V.settle_frame_pad * 2;
+  const fLeft = V.settle_photo_x - fOuterW / 2;
+  const fRight = V.settle_photo_x + fOuterW / 2;
+  const fTop = V.settle_photo_y + inner / 2 + V.settle_frame_pad;
+  const fBot = V.settle_photo_y - inner / 2 - V.settle_frame_pad_bottom;
+  const iLeft = V.settle_info_cx - V.settle_info_w / 2;
+  const iRight = V.settle_info_cx + V.settle_info_w / 2;
+  const iTop = V.settle_info_cy + V.settle_info_h / 2;
+  const iBot = V.settle_info_cy - V.settle_info_h / 2;
+
+  if (iRight > fLeft) bad.push("信息面板右边 " + iRight.toFixed(1) + " 压到相框左边 " + fLeft.toFixed(1));
+  else ok.push("结算：相框与面板留白 " + (fLeft - iRight).toFixed(1) + "px");
+
+  const lw = fLeft, rw = DW / 2 - fRight, tw = DH / 2 - fTop, bw = fBot + DH / 2;
+  const minMar = Math.min(lw, rw, tw, bw);
+  (minMar < 8 ? warn : ok).push("相框四边留白 左" + lw.toFixed(0) + " 右" + rw.toFixed(0)
+      + " 上" + tw.toFixed(0) + " 下" + bw.toFixed(0) + "（最小 " + minMar.toFixed(0) + "）");
+  if (minMar < 0) bad.push("相框超出画布");
+
+  if (iLeft < -DW / 2) bad.push("信息面板左边超出画布");
+  if (iTop > DH / 2) bad.push("信息面板上边超出画布");
+
+  // 5) 移动时长是否落在需求区间（100–150ms）
+  const ms = V.anim_move_time * 1000;
+  if (ms < 100) warn.push("方块平移 " + ms.toFixed(0) + "ms，比需求的 100–150ms 更快");
+  else if (ms > 150) warn.push("方块平移 " + ms.toFixed(0) + "ms，比需求的 100–150ms 更慢");
+  else ok.push("方块平移 " + ms.toFixed(0) + "ms，落在需求的 100–150ms 内");
+
+  // 6) 结算信息面板底部：三个统计行 + 两个按钮别撞
+  const sTop = V.settle_info_cy + (-104 + Math.max(V.settle_stat_size, MIN_TEXT_H) / 2);
+  const bTop = V.settle_info_cy + V.settle_btn_y + Math.max(V.settle_btn_h, MIN_TEXT_H) / 2;
+  if (bTop > sTop) bad.push("结算：按钮上沿压到「步数」那一行");
+  else ok.push("结算：统计行与按钮留白 " + (sTop - bTop).toFixed(1) + "px");
+
+  let html = "";
+  if (bad.length)  html += "<span class='bad'>[错误] " + bad.length + " 处</span>\n" + bad.map(s => "  × " + s).join("\n") + "\n\n";
+  if (warn.length) html += "<span class='bad' style='color:#c9862f'>[注意] " + warn.length + " 处</span>\n" + warn.map(s => "  ! " + s).join("\n") + "\n\n";
+  if (ok.length)   html += "<span class='ok'>[通过] " + ok.length + " 项</span>\n" + ok.map(s => "  √ " + s).join("\n");
+  if (!bad.length && !warn.length && !ok.length) html = "（暂无结论）";
+  document.getElementById("report").innerHTML = html;
+}
+
+// ================================================================
+// 导出
+// ================================================================
+function constName(k) { return "DEFAULT_" + k.toUpperCase(); }
+
+document.getElementById("btnCfg").addEventListener("click", () => {
+  const keys = Object.keys(DEFAULTS);
+  const lines = ["-- ==== 由「2048 版式编辑器」导出：整段替换 config.lua 中的同名 DEFAULT_* ===="];
+  for (const k of keys) lines.push("M." + constName(k) + " = " + V[k]);
+  document.getElementById("out").value = lines.join("\n");
+});
+
+document.getElementById("btnParam").addEventListener("click", () => {
+  const t = [
+    "-- ==== 2048 客户端脚本参数（挂在「客户端控件容器」的容器节点上）====",
+    "-- ★ 必填：纯色矩形底图元件（棋盘 / 方块 / 背景都用它染色）",
+    "rectPrefabId   = <纯色矩形元件索引>",
+    "-- ★ 必填：文本框元件（数字 / 分数 / 提示）",
+    "textPrefabId   = <文本框元件索引>",
+    "-- ★ 强烈建议：预设按钮元件。不填的话方向键与功能按钮【真机上点不动】",
+    "buttonPrefabId = <预设按钮元件索引>",
+    "-- 建议：光标检测区域元件（滑动面）。不填则滑动回退成图片控件，真机可能收不到事件",
+    "cursorPrefabId = <光标检测区域元件索引>",
+    "-- 音效（不填 = 静音）",
+    "moveAudioId    = 0   -- 方块平移",
+    "mergeAudioId   = 0   -- 方块合并",
+    "spawnAudioId   = 0   -- 新方块出现",
+    "undoAudioId    = 0   -- 撤销一步",
+    "winAudioId     = 0   -- 达成 " + V.win_value,
+    "failAudioId    = 0   -- 无路可走",
+    "clickAudioId   = 0   -- 按钮点击（同时作为预设按钮的 clickAudioId）",
+    "",
+    "-- ==== 当前版式摘要（供布置元件时对照，设计基准 " + DW + "×" + DH + "）====",
+    "棋盘：" + (V.board_cell * 4 + V.board_gap * 5) + "px 见方，中心 (" + V.board_cx + ", " + V.board_cy + ")",
+    "右列中心 x = " + V.panel_cx + "，功能按钮宽 " + V.func_w,
+    "相片位：中心 (" + V.settle_photo_x + ", " + V.settle_photo_y + ")，缩放 " + V.settle_photo_scale,
+    "信息面板：中心 (" + V.settle_info_cx + ", " + V.settle_info_cy + ")，尺寸 "
+        + V.settle_info_w + "×" + V.settle_info_h,
+  ];
+  document.getElementById("out").value = t.join("\n");
+});
+
+document.getElementById("btnCopy").addEventListener("click", async () => {
+  const el = document.getElementById("out");
+  if (!el.value) return;
+  try { await navigator.clipboard.writeText(el.value); alert("已复制到剪贴板"); }
+  catch (e) { el.select(); document.execCommand("copy"); alert("已复制（回退方式）"); }
+});
+
+document.getElementById("btnDefault").addEventListener("click", () => {
+  Object.assign(V, DEFAULTS); draw();
+});
+document.getElementById("btnFitBoard").addEventListener("click", () => {
+  V.board_cx = DEFAULTS.board_cx; V.board_cy = DEFAULTS.board_cy; draw();
+});
+document.getElementById("btnFitRight").addEventListener("click", () => {
+  for (const k of ["panel_cx","title_y","title_size","score_w","score_h","score_y","best_y",
+                   "score_label_size","score_value_size","score_label_dy","score_value_dy",
+                   "hint_y","hint_size","dpad_cx","dpad_cy","dpad_btn","dpad_gap","dpad_size",
+                   "func_w","func_h","func_y1","func_y2","func_y3","func_size"])
+    V[k] = DEFAULTS[k];
+  draw();
+});
+
+draw();
+</script>
+</body>
+</html>
