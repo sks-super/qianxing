@@ -1,125 +1,90 @@
 -- ================================================================
--- 点灯迷题 2D · 运行时状态（★ 所有 state.* 字段必须在此显式声明）
--- ================================================================
--- 约定：本文件只声明字段与默认值，不写业务逻辑。
--- 模块之间通过 state 共享「已建好的控件」与「当前局面」，避免互相 require。
+-- 点灯迷题 16 · 运行时状态
+--   ★ 所有被其它模块读写的 state.* 字段必须在此显式声明
+--     （写法必须是 M.foo = ...，_shared/_check_refs.py 只认这个）
 -- ================================================================
 
 ---@diagnostic disable: undefined-global
 
 local M = {}
 
--- ----------------------------------------------------------------
--- 一、脚本参数 / 模板索引
--- ----------------------------------------------------------------
-M.parent = nil               -- script.object（客户端控件容器的容器节点）
-M.rectPrefabId = 0           -- 纯色矩形（图片控件）：一切色块的基础
-M.textPrefabId = 0           -- 文本框
-M.cursorPrefabId = 0         -- 光标检测区域（★ 没有它就点不动）
-M.buttonPrefabId = 0         -- 预设按钮（本作不用，保留兼容）
+-- 脚本参数
+M.parent = nil
+M.rectPrefabId = 0
+M.textPrefabId = 0
+M.cursorPrefabId = 0
+M.buttonPrefabId = 0
 
--- ----------------------------------------------------------------
--- 二、画布与自适应
--- ----------------------------------------------------------------
+-- 画布
 M.canvasW = 1280
 M.canvasH = 720
 M.LEFT = -640
 M.RIGHT = 640
 M.BOTTOM = -360
 M.TOP = 360
-M.k = 1                      -- 设计坐标 → 实际画布的整体缩放系数
+M.k = 1
+M.boardCX = 236
+M.boardCY = -34
 M.designW = 1280
 M.designH = 720
 
--- ----------------------------------------------------------------
--- 三、层级容器（从下到上）
--- ----------------------------------------------------------------
-M.containerScene = nil       -- 承载整体缩放 k
-M.containerBg = nil          -- 背景与装饰光斑
-M.containerBoard = nil       -- 棋盘根（结算时整体缩放/旋转/位移）
-M.containerBoardBg = nil     -- 棋盘底板 + 格位底
-M.containerTile = nil        -- 灯格（压在底板上）
-M.containerFx = nil          -- 粒子 / 冲击波 / 飘字
-M.containerHud = nil         -- 右侧信息栏 + 顶部标题
-M.containerMenu = nil        -- 选关界面
-M.containerWin = nil         -- 通关结算
-M.containerFade = nil        -- 黑幕（永远最顶）
+-- 层级容器
+M.containerScene = nil
+M.containerBg = nil
+M.containerBoard = nil      -- 当前盘面（右）
+M.containerRef = nil        -- 目标图案（左）
+M.containerFx = nil
+M.containerHud = nil
+M.containerChips = nil      -- 顶部拼图槽
+M.containerWin = nil
+M.containerFade = nil
 
--- ----------------------------------------------------------------
--- 四、棋盘
--- ----------------------------------------------------------------
-M.boardCX = -215
-M.boardCY = -18
-M.boardFrame = nil           -- 棋盘底板控件
-M.boardEdge = nil            -- 棋盘描边（外扩一圈的矩形）
-M.cellBacks = {}             -- 30 个格位底（静止不动）
-M.tileViews = {}             -- 30 个灯格视图 { root, halo, body, top, hit, r, c, idx, on }
-M.board = {}                 -- 当前盘面，1..30（对应 idx 0..29）
-M.currentLevelIndex = 1
-M.currentLevelConfig = nil
+-- 章节 / 小关
+M.chapterIndex = 1
+M.pieceIndex = 1
+M.mode = 1                  -- 1=找不同 / 2=无参照
+M.phase = "pick"            -- pick | play | finish
+M.pieceOpen = false
 
--- ----------------------------------------------------------------
--- 五、玩法
--- ----------------------------------------------------------------
-M.moves = 0                  -- 本关已用步数
-M.litCount = 0               -- 当前亮灯数
-M.history = {}               -- 本关按过的格子 idx（撤销与「剩余解」都用它）
-M.cleared = {}               -- 已通关记录：cleared[关卡号] = { stars=, steps= }
-M.maxCleared = 0             -- 已通关的最大关卡号（解锁进度）
+-- 图案与盘面
+M.pic = {}                  -- 16×16（0/1）
+M.quadTarget = {}           -- 当前小关的 8×8 目标（二维，供参考图用）
+M.targetBoard = {}          -- 同一目标的 1..64 一维盘面（供判定用）
+M.board = {}                -- 当前 8×8 盘面（1..64）
+M.aSet = {}                 -- 生成用的 A（0 基下标 → true）
+M.moves = 0
+M.history = {}              -- 玩家按过的下标（0 基）
+M.bestSteps = 0             -- = #A
 
--- ----------------------------------------------------------------
--- 六、输入
--- ----------------------------------------------------------------
-M.inputReady = true          -- 动画期间锁输入
-M.pendingPress = nil         -- 输入缓冲：动画中只留最后一次点击
-M.lastPressAt = -99
-M.comboCount = 0
-M.deviceIsTouch = false
-M.screen = "select"          -- "select" | "play"
+-- 四块进度
+M.slotDone = { false, false, false, false }
+M.slotStars = { 0, 0, 0, 0 }
 
--- ----------------------------------------------------------------
--- 七、动效 / 特效
--- ----------------------------------------------------------------
-M.time = 0                   -- 全局累计时间（呼吸、飘动用）
+-- 视图
+M.refCells = {}             -- 左侧目标的 64 个格子
+M.playCells = {}            -- 右侧盘面的 64 个格子
+M.chipViews = {}            -- 顶部四个拼图槽
+M.playContainer = nil
+M.refContainer = nil
+
+-- 输入 / 时间
+M.inputReady = true
+M.pendingPress = nil
+M.time = 0
 M.lastDt = 0
-M.particles = {}             -- 粒子
-M.floaters = {}              -- 飘字
-M.rings = {}                 -- 方形冲击波
-M.shakeT = 0                 -- 屏幕微震剩余时间
-M.hintIndex = -1             -- 正在高亮的提示格（-1 = 无）
-M.hintUntil = 0              -- 提示高亮到期时间
-M.cardPopAt = {}             -- 选关卡片的入场时间戳（按卡片顺序）
+M.hintIndex = -1
+M.hintUntil = 0
 
--- ----------------------------------------------------------------
--- 八、选关界面
--- ----------------------------------------------------------------
-M.selectOpen = true
-M.selectPage = 1
-M.selectCards = {}           -- 当前页的卡片 { base, num, stars, hit, index }
-M.selectPageOffset = 0       -- 翻页时的横向偏移（动画用）
-M.selectDirty = true         -- 需要重画当前页
+-- 特效
+M.particles = {}
+M.floaters = {}
+M.rings = {}
+M.shakeT = 0
 
--- ----------------------------------------------------------------
--- 九、通关结算
--- ----------------------------------------------------------------
-M.winOpen = false
-M.winStars = 0
-M.winSteps = 0
-M.winBest = 0
-M.winPanel = nil             -- 结果卡容器
-M.winButtons = {}
-
--- ----------------------------------------------------------------
--- 十、音效
--- ----------------------------------------------------------------
+-- 音效
 M.clickAudioId = 0
-M.openAudioId = 0
+M.flipAudioId = 0
 M.winAudioId = 0
 M.starAudioId = 0
-
--- ----------------------------------------------------------------
--- 十一、信号 / 存档
--- ----------------------------------------------------------------
-M.signalEnabled = false
 
 return M
