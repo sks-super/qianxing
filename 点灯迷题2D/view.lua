@@ -85,7 +85,11 @@ local function buildBoard(parent, cx, cy, interactive)
             utils.hexToColor(pal.paper or "F7F8FA"), par)
         local hit = nil
         if interactive then
-            hit = utils.createHit(x, y, cs, cs, par, true)
+            -- ★ 命中区比格子大一圈（+gap）：格与格之间 5px 的缝会被盖住，
+            --   整块棋盘变成无缝可点，不会出现「点在缝里没反应」。
+            --   相邻命中区有重叠也不要紧——重叠处只会命中先创建的那一格，
+            --   而缝隙本来就不属于任何一格。
+            hit = utils.createHit(x, y, cs + (config.DEFAULT_GAP or 5), cs + (config.DEFAULT_GAP or 5), par, true)
             utils.raise(hit)
         end
         local cell = { body = body, hit = hit, idx = i, v = 0, flip = false }

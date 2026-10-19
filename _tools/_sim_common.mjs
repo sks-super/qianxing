@@ -103,7 +103,24 @@ do
     local __simOrigOnStart = OnStart
     if type(__simOrigOnStart) == "function" then
         OnStart = function(...)
+            -- ★★ 命中测试的矩形是【逐层向下要求点在矩形内】的：
+            --    renderer 的 cn() 对每个控件先算 rect = Ae(父矩形, 本控件)，
+            --    点换算到本控件空间后若不在 rect 内就直接返回 null，不再下钻子节点。
+            --    挂载节点的默认锚点是居中、尺寸为 0 → rect 退化成中心一个点，
+            --    ⇒ 所有子控件（格子、按钮的命中区）永远点不到，只有正中心能命中。
+            --    这里把挂载节点规整成「铺满画布的矩形」（锚点 0,0 → 1,1，size 0），
+            --    其中心不变，所以不影响任何子控件的既有排版。
+            pcall(function()
+                local __root = script and script.object
+                if not __root then return end
+                pcall(function() __root:SetAnchorMin(0, 0) end)
+                pcall(function() __root:SetAnchorMax(1, 1) end)
+                pcall(function() __root:SetSizeDelta(0, 0) end)
+                pcall(function() __root:SetAnchoredPosition(0, 0) end)
+            end)
+
             local __a, __b, __c = __simOrigOnStart(...)
+
             pcall(function()
                 local __root = script and script.object
                 if __root then __root.showCursor = true end
