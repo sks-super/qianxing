@@ -1,0 +1,299 @@
+--- /tmp/b11_level.lua	2026-10-22 00:23:05.961312300 +0800
++++ 浮岛借木/level.lua	2026-10-22 00:15:56.613584500 +0800
+@@ -41,8 +41,13 @@
+ local utils = require("utils")
+ local world = require("world")
+ 
++M.BUILD = "b11"   -- 版本戳：真机日志里能一眼看出用的是哪一版文件
++
+ -- ★ 小人像素画数据（由 _tools/make_hero_pixels.py 从四张立绘生成）
+---   拿不到就退回「人物」素材立绘 —— 不让一个可选的表现层把整关拖崩。
++--   ★ 这里只是「可选覆盖」：真正保底的是文件下方内联的 M.HERO_BUILTIN。
++--     早期版本强依赖这个 require，真机上只要 heroArt.lua 没建 / 名字不对 / 编译失败，
++--     小人就整个退回立绘，立绘元件也拿不到时再退回橙色纯色条 —— 正好是「橙色方块」。
++--     现在改成：heroArt 有就用它（数据更精细），没有就用内置数据，**永远画得出像素画**。
+ local heroArt = nil
+ do
+     local ok, mod = pcall(require, "heroArt")
+@@ -51,6 +56,223 @@
+     end
+ end
+ 
++M.HERO_ART_LOADED = (heroArt ~= nil)   -- 供 game.lua 打版本日志；false 也完全不影响画面
++
++-- >>> HERO_BUILTIN BEGIN（由 _tools/emit_hero_builtin.py 生成，别手改）
++-- 小人的像素画底稿：heroArt.lua 没导入时用它，保证「不引用任何脚本/图片」也能画出小人。
++-- 每格一个字符（0123456789ab），"." = 透明；行内连续同色在运行时合并成一块矩形。
++M.HERO_BUILTIN_COLS = 20
++M.HERO_BUILTIN_ROWS = 32
++M.HERO_BUILTIN_CHARS = "0123456789ab"
++M.HERO_BUILTIN_COLORS = {
++    "090B14",     -- 0
++    "43465E",     -- 1
++    "6D718B",     -- 2
++    "6282C4",     -- 3
++    "9AA1BB",     -- 4
++    "88B9E5",     -- 5
++    "B3B8CD",     -- 6
++    "C3CEE1",     -- 7
++    "F2D8C4",     -- 8
++    "E0E6F1",     -- 9
++    "FCF3E9",     -- 10
++    "F3F6FA",     -- 11
++}
++M.HERO_BUILTIN = {
++    S = {   -- 215 块
++        "....................",
++        "..........9.........",
++        "......0.0011........",
++        "......00555511......",
++        "....00307729731.....",
++        "....13077799993.....",
++        "...030999999999.....",
++        "..00399999999990....",
++        "..09999999999999....",
++        ".0199999999999990...",
++        ".0299999999999990...",
++        "99999999999999990...",
++        "49999999aa977a990...",
++        ".1aa9996211711190...",
++        "..917997aaaaaa990...",
++        ".0077777aaaaaa77....",
++        "..627007111aa170....",
++        "...720099111090.....",
++        "......0060aa09......",
++        ".....73177b700......",
++        "....7701039900......",
++        "...46bb001990bb.....",
++        "..941ab055115599....",
++        ".9941111559b75149...",
++        ".714b1377bbbb7749...",
++        "771bbb779bbbbbb707..",
++        "77bbb6bbbbbbbbbb07..",
++        ".76666bbbb1bbbbb96..",
++        ".26699b9181844bbb9..",
++        ".99bb77411010676b96.",
++        "1777b7160a0006699779",
++        "..767....000........",
++    },
++    W = {   -- 191 块
++        "....................",
++        ".........5..........",
++        "........1500.0......",
++        "......11355510......",
++        "....513772775300....",
++        "....139999997731....",
++        "....309999999903....",
++        "....0999999999930...",
++        "....099999999990....",
++        "...09999999999999...",
++        "...99999999999999...",
++        "...99999999999999...",
++        "...99999999999999...",
++        "...aa99999999999a...",
++        "....6999999999967...",
++        "....447417777776....",
++        "....409177144400....",
++        "......111111100.....",
++        "......133aaa110.....",
++        "......777aa633......",
++        ".....7772792010.....",
++        "...9477719910bb9....",
++        "..7447705115509aa...",
++        "..74707137b55511a...",
++        ".7146077bbbb7771b...",
++        "67106419bbbbb77bbb..",
++        "77.916b99bbbbbbbb9..",
++        ".74666699bb7bb9666..",
++        ".76699b781889b9996..",
++        ".999b6641115476bb99.",
++        "17779714110144997771",
++        "..667...0000....66..",
++    },
++    A = {   -- 187 块
++        "....................",
++        ".......5............",
++        ".......10...........",
++        "......35500.........",
++        "......1703000.......",
++        ".....977703099......",
++        "....09999903999.....",
++        "....999999030990....",
++        "...9999999939999....",
++        "...99999999999990...",
++        "...999999999999990..",
++        "...999999999999990..",
++        "...777a99997699990..",
++        "...071119997aa9944..",
++        "....aaa7777719690...",
++        "....aaa1777764900...",
++        ".....1aa760061464...",
++        "......7190049124....",
++        ".....010700494......",
++        ".....0b7733469......",
++        "......002000499.....",
++        "......911bbb4449....",
++        ".....0155b9944449...",
++        ".....1b551aa04449...",
++        "....9bb7711b044417..",
++        "....9bb9777bb716176.",
++        "....bbbbbb6bbb94.77.",
++        "....749bbb666691.7..",
++        "....66419b666966....",
++        "....7661116bbbb99...",
++        "......61a07979b777..",
++        ".......000...7667...",
++    },
++    D = {   -- 195 块
++        "....................",
++        "...........5........",
++        "...........1........",
++        ".........0135.......",
++        "......9000377.......",
++        ".....999130777......",
++        "....09993379999.....",
++        "...0999033999999....",
++        "...99999399999999...",
++        "...99999999999999...",
++        "..099999999999999...",
++        "..999997999999877...",
++        "..49999649999aa77...",
++        "..0449aa87991110....",
++        "..64199677777aaa....",
++        "...0199427777aaa....",
++        "...0474420677aa.....",
++        "...7410260061.......",
++        "...9990b70a70.......",
++        "...040b7b33075......",
++        "...99bb703120.......",
++        "...10b6bbb0199......",
++        "...114409bb511......",
++        "..7994131a1557......",
++        "..1744151117bbb.....",
++        "..776066b7779bb.....",
++        "..77066bbbbb7bbb....",
++        "..77066b6797b44.....",
++        "...1696967b9466.....",
++        "...99999661166......",
++        "..99b7b977010.......",
++        "...76667..000.......",
++    },
++}
++-- <<< HERO_BUILTIN END
++
++-- ================================================================
++-- ★ 像素画数据源：heroArt 模块（若有）→ 内置网格
++--   返回 sprites, colors, cols, rows；都拿不到才返回 nil。
++--   内置网格是「每格一个字符」，这里按行做游程合并还原成矩形，
++--   块数与 heroArt 的贪心合并基本持平（同色相邻格子并成一块）。
++-- ================================================================
++local HERO_FALLBACK = {}
++local function heroBuiltinRects(key)
++    if HERO_FALLBACK[key] then return HERO_FALLBACK[key] end
++    local rowsSrc = (M.HERO_BUILTIN or {})[key]
++    if not rowsSrc then return nil end
++    local chars = M.HERO_BUILTIN_CHARS or "0123456789ab"
++    local out = {}
++    for y = 1, #rowsSrc do
++        local line = rowsSrc[y]
++        local x = 0
++        local n = #line
++        while x < n do
++            local ch = line:sub(x + 1, x + 1)
++            if ch == "." then
++                x = x + 1
++            else
++                local j = x
++                while j < n and line:sub(j + 1, j + 1) == ch do j = j + 1 end
++                local ci = chars:find(ch, 1, true)
++                out[#out + 1] = { x, y - 1, j - x, 1, (ci or 1) - 1 }
++                x = j
++            end
++        end
++    end
++    HERO_FALLBACK[key] = out
++    return out
++end
++
++-- 数据源备注（写进自检日志，一眼看出走的是哪一份）
++local heroDataFrom = ""
++local function heroSprite(key)
++    key = key or "S"
++    if heroArt then
++        local sprites = heroArt.SPRITES or {}
++        local sp = sprites[key] or sprites.S
++        if sp and #sp > 0 then
++            heroDataFrom = "heroArt 模块"
++            return sp, heroArt.COLORS or {}, tonumber(heroArt.COLS) or 20, tonumber(heroArt.ROWS) or 32
++        end
++    end
++    local sp = heroBuiltinRects(key) or heroBuiltinRects("S")
++    if sp and #sp > 0 then
++        heroDataFrom = "level.lua 内置"
++        return sp, M.HERO_BUILTIN_COLORS or {}, M.HERO_BUILTIN_COLS or 20, M.HERO_BUILTIN_ROWS or 32
++    end
++    heroDataFrom = ""
++    return nil
++end
++
+ -- ★ 小人纯色回退的身高（格）：素材那条路的高度由 config.DEFAULT_ART_FIT.player 说了算，
+ --   这里只管「没有素材时」画多高。
+ --   ⚠️ 必须声明在文件顶部：下面的 playerFootOffset / playerAnchor 就要用它们。
+@@ -946,17 +1168,15 @@
+ 
+ -- 按当前朝向重画一遍小人（换朝向 / 换关卡 / 格子边长变了都要调）
+ function M.repaintPlayerArt()
+-    if not state.heroPixel or not heroArt or not state.heroArtBox then return false end
+-    local sprites = heroArt.SPRITES or {}
++    if not state.heroPixel or not state.heroArtBox then return false end
+     local facing = state.playerFacing or "S"
+-    local sp = sprites[facing] or sprites.S
++    local sp, colors, cols, rows = heroSprite(facing)
+     if not sp then return false end
+-
+-    local cell = state.cellSize or 1
+-    local cols = tonumber(heroArt.COLS) or 1
+-    local rows = tonumber(heroArt.ROWS) or 1
++    cols = tonumber(cols) or 0
++    rows = tonumber(rows) or 0
+     if cols <= 0 or rows <= 0 then return false end
+ 
++    local cell = state.cellSize or 1
+     local px = cell / rows                  -- 一个像素格的边长
+     local W, H = cols * px, rows * px
+     state.heroArtW, state.heroArtH = W, H
+@@ -964,7 +1184,7 @@
+ 
+     -- 每块外扩一点点：亚像素矩形挨着摆时真机会在缝里露出底色（一条条亮线）
+     local grow = math.min(0.18, px * 0.14)
+-    local colors = heroArt.COLORS or {}
++    colors = colors or {}
+     local slot = rectSlot()
+     local parent = state.heroArtBox
+     local i, failRun = 0, 0
+@@ -1074,10 +1294,10 @@
+ 
+     local why = ""
+     state.heroPixel = false
+-    if heroArt == nil then
+-        why = "heroArt 模块没加载（heroArt.lua 没导入 / 有语法错）"
+-    elseif not pixelOn then
++    if not pixelOn then
+         why = "脚本参数 heroPixelOn 被关闭（填了 -1）"
++    elseif not heroSprite(state.playerFacing or "S") then
++        why = "像素画数据不可用（heroArt.lua 没导入，且 level.lua 内置数据缺失）"
+     elseif not ensureHeroBox() then
+         why = "像素画容器建不出来（世界容器缺失）"
+     else
+@@ -1098,9 +1318,10 @@
+         state.heroPixelLogged = true
+         if type(print) == "function" then
+             pcall(print, string.format(
+-                "[浮岛借木] 小人=%s | 像素块=%d | 原因=%s",
++                "[浮岛借木] 小人=%s | 像素块=%d | 数据源=%s | 原因=%s",
+                 state.heroPixel and "像素画" or "回退立绘/纯色",
+                 state.heroBlockUsed or 0,
++                (heroDataFrom ~= "" and heroDataFrom) or "无",
+                 (why ~= "" and why) or "无"))
+         end
+     end

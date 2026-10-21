@@ -1,0 +1,136 @@
+# -*- coding: utf-8 -*-
+"""
+把 heroArt.lua 的矩形数据压成「每格一个字符」的网格，输出可直接内联进 level.lua 的 Lua 片段。
+
+为什么要这一步：
+  heroArt.lua 是第 8 批唯一新增的脚本，像素画强依赖 require 拿得到它。
+  真机上只要这个脚本没建 / 名字不对 / 编译失败，小人就整个退回立绘或纯色块。
+  把同一份数据内联进 level.lua（必然被导入）后，heroArt.lua 从「必需」降级为「可选覆盖」。
+
+编码：
+  12 色调色板 → 字符 "0".."9" "a" "b"；空格用 "."
+  每个朝向 32 行 × 20 列的字符串数组（行内一个字符 = 一格）
+  运行时按行做游程合并还原成矩形，块数与 heroArt.lua 的贪心合并基本持平
+
+用法：
+  python _tools/emit_hero_builtin.py            # 打印 Lua 片段
+  python _tools/emit_hero_builtin.py --write    # 直接改写 level.lua 的标记区间
+"""
+import re
+import sys
+import os
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+GAME = os.path.join(HERE, "..", "浮岛借木")
+ART = os.path.join(GAME, "heroArt.lua")
+LEVEL = os.path.join(GAME, "level.lua")
+
+CHARS = "0123456789ab"
+
+BEGIN = "-- >>> HERO_BUILTIN BEGIN（由 _tools/emit_hero_builtin.py 生成，别手改）"
+END = "-- <<< HERO_BUILTIN END"
+
+
+def parse(path):
+    src = open(path, encoding="utf-8").read()
+
+    m = re.search(r"M\.COLS\s*=\s*(\d+)", src)
+    cols = int(m.group(1))
+    m = re.search(r"M\.ROWS\s*=\s*(\d+)", src)
+    rows = int(m.group(1))
+
+    m = re.search(r"M\.COLORS\s*=\s*\{(.*?)\n\}", src, re.S)
+    colors = re.findall(r'"([0-9A-Fa-f]{6})"', m.group(1))
+    if len(colors) > len(CHARS):
+        raise SystemExit("调色板超过 %d 色，编码字符不够" % len(CHARS))
+
+    sprites = {}
+    m = re.search(r"M\.SPRITES\s*=\s*\{(.*)\n\}", src, re.S)
+    body = m.group(1)
+    for key in ("S", "W", "A", "D"):
+        km = re.search(r"\b%s\s*=\s*\{(.*?)\n    \}" % key, body, re.S)
+        if not km:
+            raise SystemExit("找不到朝向 %s 的矩形表" % key)
+        rects = re.findall(r"\{\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(\d+)\s*\}",
+                           km.group(1))
+        sprites[key] = [tuple(int(v) for v in r) for r in rects]
+    return cols, rows, colors, sprites
+
+
+def to_grid(cols, rows, rects):
+    grid = [["." for _ in range(cols)] for _ in range(rows)]
+    for x, y, w, h, c in rects:
+        ch = CHARS[c]
+        for yy in range(y, y + h):
+            if not (0 <= yy < rows):
+                continue
+            for xx in range(x, x + w):
+                if 0 <= xx < cols:
+                    grid[yy][xx] = ch
+    return ["".join(r) for r in grid]
+
+
+def count_runs(rows_of_chars):
+    n = 0
+    for line in rows_of_chars:
+        prev = "."
+        for ch in line:
+            if ch != prev:
+                if ch != ".":
+                    n += 1
+                prev = ch
+    return n
+
+
+def emit(cols, rows, colors, sprites):
+    out = []
+    out.append(BEGIN)
+    out.append("-- 小人的像素画底稿：heroArt.lua 没导入时用它，保证「不引用任何脚本/图片」也能画出小人。")
+    out.append("-- 每格一个字符（%s），\".\" = 透明；行内连续同色在运行时合并成一块矩形。" % CHARS)
+    out.append("M.HERO_BUILTIN_COLS = %d" % cols)
+    out.append("M.HERO_BUILTIN_ROWS = %d" % rows)
+    out.append("M.HERO_BUILTIN_CHARS = \"%s\"" % CHARS)
+    out.append("M.HERO_BUILTIN_COLORS = {")
+    for i, c in enumerate(colors):
+        out.append('    "%s",%s-- %d' % (c.upper(), " " * (5), i))
+    out.append("}")
+    out.append("M.HERO_BUILTIN = {")
+    for key in ("S", "W", "A", "D"):
+        grid = to_grid(cols, rows, sprites[key])
+        out.append("    %s = {   -- %d 块" % (key, count_runs(grid)))
+        for line in grid:
+            out.append('        "%s",' % line)
+        out.append("    },")
+    out.append("}")
+    out.append(END)
+    return "\n".join(out)
+
+
+def main():
+    cols, rows, colors, sprites = parse(ART)
+    block = emit(cols, rows, colors, sprites)
+
+    if "--write" not in sys.argv:
+        print(block)
+        for key in ("S", "W", "A", "D"):
+            print("-- %s: %d 块（游程合并后）" % (key, count_runs(to_grid(cols, rows, sprites[key]))),
+                  file=sys.stderr)
+        return
+
+    raw = open(LEVEL, "rb").read()
+    crlf = b"\r\n" in raw
+    src = raw.decode("utf-8").replace("\r\n", "\n")
+    if BEGIN not in src or END not in src:
+        raise SystemExit("level.lua 里找不到 HERO_BUILTIN 标记区间，先手工插一次占位")
+    head, rest = src.split(BEGIN, 1)
+    _, tail = rest.split(END, 1)
+    merged = head + block + tail
+    # ★ 必须沿用它原本的换行风格：仓库里是 CRLF，写成 LF 会制造整份假变更
+    if crlf:
+        merged = merged.replace("\n", "\r\n")
+    open(LEVEL, "wb").write(merged.encode("utf-8"))
+    print("已写入 level.lua（%s）" % ("CRLF" if crlf else "LF"))
+
+
+if __name__ == "__main__":
+    main()

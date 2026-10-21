@@ -527,6 +527,13 @@ function OnStart()
             tostring(state.view25d),
             tostring(state.rectPrefabId), tostring(state.containerPrefabId),
             tostring(state.playerPrefabId)))
+        -- ★ 版本戳：一眼看出编辑器里 level 脚本是不是最新那份。
+        --   level=b11 且 heroArt=有/无 都正常（像素画已经内置，不依赖 heroArt.lua）。
+        --   如果这里打的是「旧版」，说明 level.lua 还是老的，重新导入它。
+        pcall(print, string.format(
+            "[浮岛借木] 版本 level=%s | heroArt 脚本=%s",
+            tostring(level.BUILD or "旧版（请重新导入 level.lua）"),
+            level.HERO_ART_LOADED and "有" or "无（不影响，用内置数据）"))
     end
 
     -- ★ 先启用 OnUpdate：输入监听与初始化都依赖脚本更新被引擎驱动
