@@ -193,6 +193,11 @@ M.goalCtrls = {}          -- 终点旗控件池（单独一个池：它必须压
 M.goalUsed = 0            -- 终点旗池本帧占用数量
 M.playerCtrl = nil        -- 小人本体（素材模式是一张立绘；回退模式是纯色身体矩形）
 M.playerCtrlArt = false   -- 小人本体是不是「人物」素材元件
+M.playerFacing = "S"      -- 当前朝向（W/S/A/D）—— 决定四张立绘里用哪一张
+M.playerImageIds = { S = 0, W = 0, A = 0, D = 0 }
+                          -- 四向立绘的图源 ID（脚本参数写入；0 = 沿用元件自带图）
+M.playerImageNow = 0      -- 当前已经 SetImage 上去的那个 ID（0 = 还没换过）
+                          --   只在朝向变化时换图，避免每步都多一次 SetImage
 M.playerBodyH = 0         -- 小人本体的视觉高度（像素）；素材 1.0 格 / 纯色 0.94 格
 M.playerHeadCtrl = nil    -- 小人头（仅回退模式创建；深色块，小尺寸下也能认出朝向）
 M.playerShadowCtrl = nil  -- 小人脚下的接触阴影（2.5D：让小人真的踩在草地上）

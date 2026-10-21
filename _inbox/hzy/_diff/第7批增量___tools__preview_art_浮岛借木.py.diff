@@ -1,0 +1,132 @@
+--- a/_tools/preview_art_浮岛借木.py
++++ b/_tools/preview_art_浮岛借木.py
+@@ -10,7 +10,9 @@
+     cellSize / boardCy / cellCenterX / cellCenterY / cellFootY
+     草地 = 一张 1.138×1.138 格的立绘（顶面在素材里是正方形，正好铺满一格）
+     树木 = 内容 1 格宽 × 1 格高，脚踩在脚线上（控件按 DEFAULT_ART_FIT 放大到 1.819 格）
+-    人物 = 内容 1 格宽 × 1 格高，脚踩在脚线上（控件按 DEFAULT_ART_FIT 放大到 1.707 格）
++    人物 = 四张立绘（正面 / 背面 / 左视 / 右视），内容 1 格高、脚踩在脚线上
++           （控件按 DEFAULT_ART_FIT.player 放大到 0.751 × 1.126 格；
++             换朝向只换图不改尺寸 —— 这就是游戏里「转身」的全部实现）
+     其余 = 纯色矩形 + 调色板（与回退路径一致）
+            · 树根 0.25 格高、倒下的树按 dir 分东西躺 / 南北躺（长而扁 1.00 × 0.50 格、
+              受光边与背光边成对、两端带年轮的切口，
+@@ -20,9 +22,12 @@
+      （正面推出来的，见 world.lua），离线预览里没有它 —— 想看它请跑模拟器。
+ 
+ 用法：
+-  python _tools/preview_art_浮岛借木.py [关卡号, 默认 1]
++  python _tools/preview_art_浮岛借木.py [关卡号, 默认 1] [S|W|A|D 朝向, 默认 S] [--all]
++    --all = 四方向拼成一张 2×2 对照图（看「转身」最直观）
+ 输出：
+-  浮岛借木/预览_素材路径_第NN关.png
++  浮岛借木/预览_素材路径_第NN关.png          （朝向 S 时不带后缀）
++  浮岛借木/预览_素材路径_第NN关_left.png 等   （其他朝向）
++  浮岛借木/预览_四向立绘_第NN关.png          （--all）
+ """
+ import io
+ import os
+@@ -37,6 +42,16 @@
+ 
+ VIEW_W, VIEW_H = 1280, 720
+ 
++# 四向立绘：键 = world.DIRS 的方向键，值 = 素材文件名
++#   ★ 四张必须同画布（1024×1536）同留白，否则换朝向时人会跳 —— 见 config.lua
++HERO_FILES = {
++    "S": "人物_正面.png",   # 向下走
++    "W": "人物_背面.png",   # 向上走
++    "A": "人物_左侧.png",   # 向左走（面朝左）
++    "D": "人物_右侧.png",   # 向右走（面朝右）
++}
++FACING_LABEL = {"S": "front", "W": "back", "A": "left", "D": "right"}
++
+ 
+ # ---------------------------------------------------------------- 读 config.lua
+ def read_cfg():
+@@ -201,7 +216,7 @@
+                 fill=hex2rgb(hexcol) + (int(alpha),))
+ 
+ 
+-def render(cfg, lv, idx):
++def render(cfg, lv, idx, facing="S", save=True):
+     p = cfg["palette"]
+     g = Geo(cfg, lv)
+     cell = g.cell
+@@ -325,9 +340,9 @@
+     rect(canvas, d, x - cell * 0.20, fy - cell * 0.62, cell * 0.08, cell * 1.24, p["goalPole"])
+     rect(canvas, d, x + cell * 0.08, fy - cell * 1.02, cell * 0.50, cell * 0.32, p["goalFlag"])
+ 
+-    # 小人（素材：内容 1 格高）
++    # 小人（素材：内容 1 格高；四张立绘按朝向选一张，脚踩在脚线上）
+     fp = cfg["fit"]["player"]
+-    hero_img = scaled(os.path.join(ART, "人物.png"), cell * fp["w"], cell * fp["h"])
++    hero_img = scaled(os.path.join(ART, HERO_FILES[facing]), cell * fp["w"], cell * fp["h"])
+     sc, sr = lv["spawn"]
+     obj_shadow(sc, sr, 0.70)
+     paste_center(canvas, hero_img, g.px(sc), g.py(g.foot(sr) + fp["dy"] * cell))
+@@ -335,17 +350,60 @@
+     # ⑤ HUD 参考条
+     d.rectangle([0, 0, VIEW_W, cfg["hud_bar_height"] / 2], fill=hex2rgb(p["hudBar"]) + (130,))
+ 
+-    out = os.path.join(GAME, "预览_素材路径_第%02d关.png" % idx)
+-    canvas.convert("RGB").save(out)
+-    print("格子边长 = %d px；输出 %s" % (cell, out))
++    if save:
++        name = "预览_素材路径_第%02d关.png" % idx
++        if facing != "S":
++            name = "预览_素材路径_第%02d关_%s.png" % (idx, FACING_LABEL[facing])
++        out = os.path.join(GAME, name)
++        canvas.convert("RGB").save(out)
++        print("格子边长 = %d px；输出 %s" % (cell, out))
++    return canvas
++
++
++def render_sheet(cfg, lv, idx):
++    """四方向拼成一张 1×4 对照图，每格**裁到角色周围再放大** —— 一屏看清「转身」。"""
++    out = os.path.join(GAME, "预览_四向立绘_第%02d关.png" % idx)
++    g = Geo(cfg, lv)
++    cell = g.cell
++    sc, sr = lv["spawn"]
++    # 裁 2.4 格 × 2.4 格（小人 + 脚下那块地），放大 5 倍看清边缘
++    halfw = cell * 1.2
++    x0 = int(round(g.px(sc) - halfw))
++    y1 = int(round(g.py(g.foot(sr) + cell * 0.45) + halfw))   # y 向下：脚线往下留一点
++    size = int(round(halfw * 2))
++    Z = 5
++    tiles = []
++    for f in ("S", "W", "A", "D"):
++        full = render(cfg, lv, idx, f, save=False).convert("RGB")
++        tiles.append(full.crop((x0, y1 - size, x0 + size, y1)).resize(
++            (size * Z, size * Z), Image.LANCZOS))
++    tw, th = tiles[0].size
++    sheet = Image.new("RGB", (tw * 4, th + 26), (30, 34, 38))
++    d2 = ImageDraw.Draw(sheet)
++    for i, f in enumerate(("S", "W", "A", "D")):
++        sheet.paste(tiles[i], (i * tw, 26))
++        d2.text((i * tw + 8, 7), "%-2s %s" % (f, FACING_LABEL[f]), fill=(255, 255, 255))
++        d2.rectangle([i * tw, 26, (i + 1) * tw - 1, th + 25], outline=(70, 76, 84))
++    sheet.save(out)
++    print("四向拼图输出 %s（%dx%d，每格裁 %d px 放大 %d 倍，格子 %d px）"
++          % (out, sheet.width, sheet.height, size, Z, cell))
+ 
+ 
+ def main():
+-    idx = int(sys.argv[1]) if len(sys.argv) > 1 else 1
++    args = sys.argv[1:]
++    nums = [a for a in args if a.isdigit()]
++    idx = int(nums[0]) if nums else 1
+     cfg = read_cfg()
+     lv = cfg["levels"][idx - 1]
+     print("关卡:", lv["name"])
+-    render(cfg, lv, idx)
++    if "--all" in args:
++        render_sheet(cfg, lv, idx)
++        return
++    facing = "S"
++    for a in args:
++        if a in HERO_FILES:
++            facing = a
++    render(cfg, lv, idx, facing)
+ 
+ 
+ if __name__ == "__main__":

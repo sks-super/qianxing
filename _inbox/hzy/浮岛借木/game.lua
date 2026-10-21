@@ -101,6 +101,11 @@ local function tryMove(key)
     if state.won then return end                   -- 已通关，锁住输入
     if (state.actionLock or 0) > 0 then return end -- 动作冷却中
 
+    -- ★ 转身：先换朝向（= 换一张立绘），再判能不能走。
+    --   放在 world.step 之前，是为了「撞墙 / 被挡住也会转过去」——
+    --   否则按了左键人还是面朝下，会显得不受控。
+    level.setPlayerFacing(key)
+
     local act = world.step(key)
     local kind = act.kind or "invalid"
 
@@ -477,6 +482,17 @@ function OnStart()
     state.landPrefabId   = getParamNumber("landPrefabId",   config.DEFAULT_PREFAB_LAND)
     state.treePrefabId   = getParamNumber("treePrefabId",   config.DEFAULT_PREFAB_TREE)
     state.playerPrefabId = getParamNumber("playerPrefabId", config.DEFAULT_PREFAB_PLAYER)
+
+    -- ★ 小人四向立绘的图源（可选）：同一个「人物」元件，按朝向 SetImage 换图。
+    --   向下 = 正面（S）/ 向上 = 背面（W）/ 向左（A）/ 向右（D）。
+    --   全填 0 → 始终用元件自带那张图（老行为）。缺哪个方向就只影响那个方向。
+    state.playerImageIds = {
+        S = getParamNumber("playerImageS", config.DEFAULT_PLAYER_IMAGE_S),
+        W = getParamNumber("playerImageW", config.DEFAULT_PLAYER_IMAGE_W),
+        A = getParamNumber("playerImageA", config.DEFAULT_PLAYER_IMAGE_A),
+        D = getParamNumber("playerImageD", config.DEFAULT_PLAYER_IMAGE_D),
+    }
+    state.playerFacing = "S"     -- 出生时面朝下（正面），第一帧就是正确的图
 
     -- ★ 2.5D 视角（可选）：地块厚度 + 岛缘投影 + 水面细网格线
     --   view25d = 0 → 退回改动前的平面正交画法（沙边改用 DEFAULT_COAST_PAD 像素）

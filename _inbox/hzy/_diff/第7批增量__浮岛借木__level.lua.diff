@@ -1,0 +1,71 @@
+--- a/浮岛借木/level.lua
++++ b/浮岛借木/level.lua
+@@ -880,6 +880,36 @@
+ end
+ 
+ -- ================================================================
++-- ★ 小人四向立绘：按朝向换图 = 转身
++--   四张图（正面 / 背面 / 左视 / 右视）是**同一张画布、同一套留白**，
++--   所以换图只动图源、不动尺寸 —— 换一张脸不会顺带长高两个像素。
++--   ★ 只有「人物」素材元件才换得了图：回退模式是脚本画的纯色块，没有图源，
++--     那边靠「头压在身体上部」表达朝向（保持原样，不额外处理）。
++--   ★ 没配图源（ID = 0）就不动，沿用元件自带的那一张 —— 老存档行为不变。
++-- ================================================================
++local function applyPlayerImage()
++    if not state.playerCtrl or not state.playerCtrlArt then return end
++    local ids = state.playerImageIds or {}
++    local id = tonumber(ids[state.playerFacing or "S"] or 0) or 0
++    if id <= 0 then return end
++    if id == state.playerImageNow then return end
++    if utils.applyImage(state.playerCtrl, id) then
++        state.playerImageNow = id
++    end
++end
++
++-- ================================================================
++-- ★ 换朝向（只换图，不碰位置；走一步之前调用）
++--   ★ 只认 W/S/A/D 四个方向，别的键忽略 —— 免得把奇怪的值写进 state。
++-- ================================================================
++function M.setPlayerFacing(key)
++    if not key or not world.DIRS[key] then return end
++    if state.playerFacing == key then return end
++    state.playerFacing = key
++    applyPlayerImage()
++end
++
++-- ================================================================
+ -- ★ 小人
+ --   素材模式：一张人物立绘（内容 1 格宽 × 1 格高），不染色
+ --   回退模式：身体 + 头两块纯色矩形（身体 0.94 格高就是全身，头压在身体上部）
+@@ -916,11 +946,14 @@
+     end
+ 
+     if state.playerCtrlArt then
+-        local fit = (config.DEFAULT_ART_FIT or {}).player or { w = 1.71, h = 1.71, dy = 0.5 }
+-        state.playerBodyH = cell * (fit.h or 1.71)   -- 控件的实际高度（锚点换算用得到）
+-        utils.setSize(state.playerCtrl, cell * (fit.w or 1.71), cell * (fit.h or 1.71))
++        local fit = (config.DEFAULT_ART_FIT or {}).player or { w = 0.751, h = 1.126, dy = 0.508 }
++        state.playerBodyH = cell * (fit.h or 1.126)   -- 控件的实际高度（锚点换算用得到）
++        utils.setSize(state.playerCtrl, cell * (fit.w or 0.751), cell * (fit.h or 1.126))
+         utils.setVisible(state.playerCtrl, true)
+         utils.setVisible(state.playerHeadCtrl, false)   -- 立绘自带头部，不需要额外色块
++        -- ★ 换关卡后按当前朝向重新贴一次图（控件是复用的，图源可能还停在上一关那张）
++        state.playerImageNow = 0
++        applyPlayerImage()
+     else
+         state.playerBodyH = cell * PLAYER_BODY_RATIO
+         utils.setSize(state.playerCtrl, cell * 0.42, cell * PLAYER_BODY_RATIO)
+@@ -1145,8 +1178,13 @@
+ 
+ -- ================================================================
+ -- ★ 在某格脚下放一圈涟漪（动作反馈）
++--   ⚠️ 默认**关掉**（config.DEFAULT_FX_RIPPLE_ON = 0）：
++--      涟漪是一块纯白矩形（图元只有矩形，画不出圆），真机上就是小人脚下一块
++--      白框，把草地和角色的脚一起糊住。控件仍然常驻创建、只是不显示，
++--      所以开着它也不会改变控件总数（探针数不变）。
+ -- ================================================================
+ function M.spawnRipple(c, r)
++    if (config.DEFAULT_FX_RIPPLE_ON or 0) <= 0 then return end
+     if not state.rippleCtrl then return end
+     local data = state.levelConfig or {}
+     local palette = utils.resolvePalette(data)
