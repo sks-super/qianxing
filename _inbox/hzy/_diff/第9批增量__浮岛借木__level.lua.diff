@@ -1,0 +1,128 @@
+--- /tmp/a9_level.lua	2026-10-21 23:22:14.466991700 +0800
++++ 浮岛借木/level.lua	2026-10-21 23:07:11.871858900 +0800
+@@ -909,12 +909,29 @@
+ -- ================================================================
+ 
+ -- 拿一个容器当「画布」（跟着世界容器走，才能参与 2.5D 的深度排序）
++-- ★ 两级回退与 game.lua 的 createContainer 保持同源：
++--   ① 容器节点元件（不绘制、不需图源）
++--   ② 拿不到就退回「矩形 + 全透明」—— 容器只是个坐标系宿主，看不见也没关系
++--   ⚠️ 这里**不能**因为 containerPrefabId = 0 就放弃像素画：真机脚本参数面板
++--      里这一项留空 / 老存档没登记时它会是 0，而世界容器自己已经回退成功了，
++--      像素画却「因为要容器所以不画」→ 小人静默变立绘，最难查的一类问题。
+ local function ensureHeroBox()
+     if state.heroArtBox then return true end
++    if not state.containerWorld then return false end
++
++    local c = nil
+     local cid = state.containerPrefabId or 0
+-    if cid <= 0 then return false end
+-    local ok, c = pcall(game.InstantiateClientUIControl, cid, state.containerWorld)
+-    if not ok or not c then return false end
++    if cid > 0 then
++        local ok, r = pcall(game.InstantiateClientUIControl, cid, state.containerWorld)
++        if ok then c = r end
++    end
++    if not c then
++        c = utils.instantiateRect(state.containerWorld)
++        if not c then return false end
++        utils.applyImage(c, state.rectImageId)
++        pcall(function() c.imageColor = Color.FromRGBA(255, 255, 255, 0) end)
++    end
++
+     pcall(function()
+         c:SetAnchorMin(0.5, 0.5)
+         c:SetAnchorMax(0.5, 0.5)
+@@ -950,7 +967,7 @@
+     local colors = heroArt.COLORS or {}
+     local slot = rectSlot()
+     local parent = state.heroArtBox
+-    local i = 0
++    local i, failRun = 0, 0
+ 
+     for k = 1, #sp do
+         local b = sp[k]
+@@ -958,10 +975,28 @@
+         -- 网格坐标（左上原点、y 向下）→ 容器坐标（中心原点、y 向上）
+         local cx = (bx + bw / 2) * px - W / 2
+         local cy = (rows - by - bh / 2) * px - H / 2
++        local before = i
+         i = paint(state.heroBlocks, i, parent, slot,
+                   cx, cy, bw * px + grow, bh * px + grow,
+                   colors[ci] or "FFFFFF", 255, nil)
++        if i == before then
++            -- 控件建不出来（真机控件数上限 / 元件不可用）
++            failRun = failRun + 1
++            if failRun >= 8 then break end
++        else
++            failRun = 0
++        end
+     end
++
++    -- ★ 画不出来就**明确认输**，交给 buildPlayer 回退立绘。
++    --   否则「立绘已隐藏 + 像素块一块没有」= 小人凭空消失，比立绘更糟。
++    if i <= 0 or i < #sp * 0.5 then
++        poolTrim(state.heroBlocks, 0)
++        state.heroBlockUsed = 0
++        utils.setVisible(state.heroArtBox, false)
++        return false
++    end
++
+     poolTrim(state.heroBlocks, i)
+     state.heroBlockUsed = i
+     state.heroDrawn = facing
+@@ -1028,19 +1063,50 @@
+         utils.setVisible(state.playerShadowCtrl, false)
+     end
+ 
+-    -- ★ 像素画优先：开关开着 + 数据在 + 容器拿得到 → 用纯色矩形画小人
++    -- ★ 像素画优先：开关开着 + 数据在 + 容器拿得到 + 真的画出来了 → 用纯色矩形画小人
+     --   任何一环不满足就退回「人物」素材立绘或纯色身体矩形，绝不整片空白。
++    --   ★ 四道门失败都要留下**可读的原因**（state.heroPixelWhy）：
++    --     真机上「像素小人没出来」时，事后只能靠这一行定位断在哪。
+     local pixelOn = state.heroPixelOn
+     if pixelOn == nil then
+         pixelOn = (tonumber(config.DEFAULT_HERO_PIXEL_ON) or 0) > 0
+     end
+-    state.heroPixel = (heroArt ~= nil) and pixelOn and ensureHeroBox()
+ 
+-    if state.heroPixel then
++    local why = ""
++    state.heroPixel = false
++    if heroArt == nil then
++        why = "heroArt 模块没加载（heroArt.lua 没导入 / 有语法错）"
++    elseif not pixelOn then
++        why = "脚本参数 heroPixelOn = 0"
++    elseif not ensureHeroBox() then
++        why = "像素画容器建不出来（世界容器缺失）"
++    else
++        state.heroPixel = true
+         state.playerBodyH = cell          -- 概念高度：像素网格正好 1 格
+         utils.setVisible(state.playerCtrl, false)      -- 立绘让位给像素画
+         utils.setVisible(state.playerHeadCtrl, false)
+-        M.repaintPlayerArt()
++        if not M.repaintPlayerArt() then
++            state.heroPixel = false
++            why = "像素块一块也没建出来（控件创建失败）"
++        end
++    end
++    state.heroPixelWhy = why
++
++    -- ★ 自检只打一次：真机看脚本日志就能知道小人走的是哪条路、画了多少块。
++    --   print 在个别沙箱里会被裁掉 → 先确认它是个函数再调，别让自检把游戏拖崩。
++    if not state.heroPixelLogged then
++        state.heroPixelLogged = true
++        if type(print) == "function" then
++            pcall(print, string.format(
++                "[浮岛借木] 小人=%s | 像素块=%d | 原因=%s",
++                state.heroPixel and "像素画" or "回退立绘/纯色",
++                state.heroBlockUsed or 0,
++                (why ~= "" and why) or "无"))
++        end
++    end
++
++    if state.heroPixel then
++        -- 已在上面画好，这里什么都不用做（保留分支只为结构清晰）
+     elseif state.playerCtrlArt then
+         local fit = (config.DEFAULT_ART_FIT or {}).player or { w = 0.751, h = 1.126, dy = 0.508 }
+         state.playerBodyH = cell * (fit.h or 1.126)   -- 控件的实际高度（锚点换算用得到）
