@@ -1,0 +1,232 @@
+--- a/浮岛借木/level.lua
++++ b/浮岛借木/level.lua
+@@ -41,6 +41,16 @@
+ local utils = require("utils")
+ local world = require("world")
+ 
++-- ★ 小人像素画数据（由 _tools/make_hero_pixels.py 从四张立绘生成）
++--   拿不到就退回「人物」素材立绘 —— 不让一个可选的表现层把整关拖崩。
++local heroArt = nil
++do
++    local ok, mod = pcall(require, "heroArt")
++    if ok and type(mod) == "table" and type(mod.SPRITES) == "table" then
++        heroArt = mod
++    end
++end
++
+ -- ★ 小人纯色回退的身高（格）：素材那条路的高度由 config.DEFAULT_ART_FIT.player 说了算，
+ --   这里只管「没有素材时」画多高。
+ --   ⚠️ 必须声明在文件顶部：下面的 playerFootOffset / playerAnchor 就要用它们。
+@@ -101,7 +111,9 @@
+ end
+ 
+ -- 小人身体当前形态的「中心 → 脚下」距离
++--   ★ 像素画模式下 = 0：画布的底边本身就压着脚线，playerVisY 直接就是脚底高度。
+ local function playerFootOffset()
++    if state.heroPixel then return 0 end
+     if state.playerCtrlArt then
+         return artFootOffset("player")
+     end
+@@ -294,6 +306,7 @@
+     end
+     pushPlayer(state.playerShadowCtrl, SUB_SHADOW)
+     pushPlayer(state.playerCtrl, SUB_PLAYER)
++    pushPlayer(state.heroArtBox, SUB_PLAYER)   -- 像素画整幅（一块容器）当作小人本体
+     pushPlayer(state.playerHeadCtrl, SUB_PLAYER + 0.1)
+ 
+     table.sort(list, function(a, b)
+@@ -880,33 +893,103 @@
+ end
+ 
+ -- ================================================================
+--- ★ 小人四向立绘：按朝向换图 = 转身
+---   四张图（正面 / 背面 / 左视 / 右视）是**同一张画布、同一套留白**，
+---   所以换图只动图源、不动尺寸 —— 换一张脸不会顺带长高两个像素。
+---   ★ 只有「人物」素材元件才换得了图：回退模式是脚本画的纯色块，没有图源，
+---     那边靠「头压在身体上部」表达朝向（保持原样，不额外处理）。
+---   ★ 没配图源（ID = 0）就不动，沿用元件自带的那一张 —— 老存档行为不变。
+--- ================================================================
+-local function applyPlayerImage()
+-    if not state.playerCtrl or not state.playerCtrlArt then return end
+-    local ids = state.playerImageIds or {}
+-    local id = tonumber(ids[state.playerFacing or "S"] or 0) or 0
+-    if id <= 0 then return end
+-    if id == state.playerImageNow then return end
+-    if utils.applyImage(state.playerCtrl, id) then
+-        state.playerImageNow = id
+-    end
++-- ★ 小人：用纯色矩形「画」出来（不是引用图片）
++--   数据在 heroArt.lua：每个朝向 = 一套矩形 { x, y, w, h, 颜色索引 }，
++--   摆在一张 COLS × ROWS 的网格上，整个网格正好 1 格高。
++--   于是：一块的边长 = cellSize / ROWS，格子怎么缩放都不变形（像素恒为正方形）。
++--
++--   ★ 为什么把整幅画装进一个容器（heroArtBox）：
++--     小人每帧都在移动。若每块矩形各自 SetAnchoredPosition，一帧就是几十次调用；
++--     装进容器后每帧只移动 1 个控件，像素块的坐标一次算死。
++--
++--   ★ 为什么换朝向要重画而不是「藏一半显示一半」：
++--     四个朝向的矩形数量与形状都不同（正面 187 块 / 侧面 160 块），
++--     四套全建出来常驻 = 四倍控件；而朝向变化只在按键时发生，重画一点也不亏。
++--     重画走对象池，只是改颜色与坐标，不新建控件。
++-- ================================================================
++
++-- 拿一个容器当「画布」（跟着世界容器走，才能参与 2.5D 的深度排序）
++local function ensureHeroBox()
++    if state.heroArtBox then return true end
++    local cid = state.containerPrefabId or 0
++    if cid <= 0 then return false end
++    local ok, c = pcall(game.InstantiateClientUIControl, cid, state.containerWorld)
++    if not ok or not c then return false end
++    pcall(function()
++        c:SetAnchorMin(0.5, 0.5)
++        c:SetAnchorMax(0.5, 0.5)
++        c:SetPivot(0.5, 0.5)
++        c:SetAnchoredPosition(0, 0)
++        c:SetSizeDelta(1, 1)
++    end)
++    c:SetActive(true)
++    state.heroArtBox = c
++    return true
++end
++
++-- 按当前朝向重画一遍小人（换朝向 / 换关卡 / 格子边长变了都要调）
++function M.repaintPlayerArt()
++    if not state.heroPixel or not heroArt or not state.heroArtBox then return false end
++    local sprites = heroArt.SPRITES or {}
++    local facing = state.playerFacing or "S"
++    local sp = sprites[facing] or sprites.S
++    if not sp then return false end
++
++    local cell = state.cellSize or 1
++    local cols = tonumber(heroArt.COLS) or 1
++    local rows = tonumber(heroArt.ROWS) or 1
++    if cols <= 0 or rows <= 0 then return false end
++
++    local px = cell / rows                  -- 一个像素格的边长
++    local W, H = cols * px, rows * px
++    state.heroArtW, state.heroArtH = W, H
++    utils.setSize(state.heroArtBox, W, H)
++
++    -- 每块外扩一点点：亚像素矩形挨着摆时真机会在缝里露出底色（一条条亮线）
++    local grow = math.min(0.18, px * 0.14)
++    local colors = heroArt.COLORS or {}
++    local slot = rectSlot()
++    local parent = state.heroArtBox
++    local i = 0
++
++    for k = 1, #sp do
++        local b = sp[k]
++        local bx, by, bw, bh, ci = b[1], b[2], b[3], b[4], b[5]
++        -- 网格坐标（左上原点、y 向下）→ 容器坐标（中心原点、y 向上）
++        local cx = (bx + bw / 2) * px - W / 2
++        local cy = (rows - by - bh / 2) * px - H / 2
++        i = paint(state.heroBlocks, i, parent, slot,
++                  cx, cy, bw * px + grow, bh * px + grow,
++                  colors[ci] or "FFFFFF", 255, nil)
++    end
++    poolTrim(state.heroBlocks, i)
++    state.heroBlockUsed = i
++    state.heroDrawn = facing
++    utils.setVisible(state.heroArtBox, true)
++    return true
++end
++
++-- 像素画摆位：画布底边 = 脚底线
++--   （像素模式下 playerFootOffset() 返回 0，所以 playerVisY 本身就是脚底线的 y）
++local function placeHeroArt()
++    if not state.heroPixel or not state.heroArtBox then return end
++    utils.setPosition(state.heroArtBox, state.playerVisX,
++                      state.playerVisY + (state.heroArtH or 0) * 0.5)
+ end
+ 
+ -- ================================================================
+--- ★ 换朝向（只换图，不碰位置；走一步之前调用）
++-- ★ 换朝向（走一步之前调用；只换画，不碰位置）
+ --   ★ 只认 W/S/A/D 四个方向，别的键忽略 —— 免得把奇怪的值写进 state。
++--   ★ 转身在**规则判定之前**发生：顶着墙按方向键，人也会先转过去，
++--     否则会出现「按了左键，人还面朝下」的怪样子。
+ -- ================================================================
+ function M.setPlayerFacing(key)
+     if not key or not world.DIRS[key] then return end
+     if state.playerFacing == key then return end
+     state.playerFacing = key
+-    applyPlayerImage()
++    if state.heroPixel then
++        M.repaintPlayerArt()
++    end
+ end
+ 
+ -- ================================================================
+@@ -945,20 +1028,32 @@
+         utils.setVisible(state.playerShadowCtrl, false)
+     end
+ 
+-    if state.playerCtrlArt then
++    -- ★ 像素画优先：开关开着 + 数据在 + 容器拿得到 → 用纯色矩形画小人
++    --   任何一环不满足就退回「人物」素材立绘或纯色身体矩形，绝不整片空白。
++    local pixelOn = state.heroPixelOn
++    if pixelOn == nil then
++        pixelOn = (tonumber(config.DEFAULT_HERO_PIXEL_ON) or 0) > 0
++    end
++    state.heroPixel = (heroArt ~= nil) and pixelOn and ensureHeroBox()
++
++    if state.heroPixel then
++        state.playerBodyH = cell          -- 概念高度：像素网格正好 1 格
++        utils.setVisible(state.playerCtrl, false)      -- 立绘让位给像素画
++        utils.setVisible(state.playerHeadCtrl, false)
++        M.repaintPlayerArt()
++    elseif state.playerCtrlArt then
+         local fit = (config.DEFAULT_ART_FIT or {}).player or { w = 0.751, h = 1.126, dy = 0.508 }
+         state.playerBodyH = cell * (fit.h or 1.126)   -- 控件的实际高度（锚点换算用得到）
+         utils.setSize(state.playerCtrl, cell * (fit.w or 0.751), cell * (fit.h or 1.126))
+         utils.setVisible(state.playerCtrl, true)
+         utils.setVisible(state.playerHeadCtrl, false)   -- 立绘自带头部，不需要额外色块
+-        -- ★ 换关卡后按当前朝向重新贴一次图（控件是复用的，图源可能还停在上一关那张）
+-        state.playerImageNow = 0
+-        applyPlayerImage()
++        utils.setVisible(state.heroArtBox, false)
+     else
+         state.playerBodyH = cell * PLAYER_BODY_RATIO
+         utils.setSize(state.playerCtrl, cell * 0.42, cell * PLAYER_BODY_RATIO)
+         utils.setAlpha(state.playerCtrl, palette.playerBody, 255)
+         utils.setVisible(state.playerCtrl, true)
++        utils.setVisible(state.heroArtBox, false)
+         if not state.playerHeadCtrl then
+             state.playerHeadCtrl = utils.createControl(
+                 state.rectPrefabId, 0, 0, cell * 0.34, cell * PLAYER_HEAD_RATIO, nil, state.containerWorld)
+@@ -1044,6 +1139,10 @@
+     utils.setVisible(state.playerCtrl, false)
+     utils.setVisible(state.playerHeadCtrl, false)
+     utils.setVisible(state.playerShadowCtrl, false)
++    utils.setVisible(state.heroArtBox, false)
++    poolTrim(state.heroBlocks, 0)
++    state.heroBlockUsed = 0
++    state.heroDrawn = ""
+     utils.setVisible(state.rippleCtrl, false)
+     utils.setVisible(state.dustCtrl, false)
+     state.terrainUsed = 0
+@@ -1077,7 +1176,7 @@
+     buildRipple(palette)
+     buildDust(palette)
+     M.updateHudDisplay()
+-    return state.playerCtrl ~= nil
++    return (state.playerCtrl ~= nil) or (state.heroPixel and state.heroArtBox ~= nil)
+ end
+ 
+ -- ================================================================
+@@ -1092,6 +1191,7 @@
+     state.playerAnimT = 0
+     state.playerAnimDur = 0
+     utils.setPosition(state.playerCtrl, px, py)
++    placeHeroArt()                       -- 像素画：整幅画贴在脚底线上
+     utils.setPosition(state.playerShadowCtrl, px, py - playerFootOffset() - (state.cellSize or 1) * 0.01)
+     local cell = state.cellSize or 1
+     local bodyH = state.playerBodyH
+@@ -1131,6 +1231,7 @@
+         state.playerVisY = ty
+     end
+     utils.setPosition(state.playerCtrl, state.playerVisX, state.playerVisY)
++    placeHeroArt()                       -- 像素画：每帧只移动这一个容器
+     utils.setPosition(state.playerShadowCtrl, state.playerVisX,
+                       state.playerVisY - playerFootOffset() - cell * 0.01)
+     utils.setPosition(state.playerHeadCtrl, state.playerVisX,

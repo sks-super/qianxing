@@ -1,0 +1,98 @@
+--- a/_tools/preview_art_浮岛借木.py
++++ b/_tools/preview_art_浮岛借木.py
+@@ -10,9 +10,9 @@
+     cellSize / boardCy / cellCenterX / cellCenterY / cellFootY
+     草地 = 一张 1.138×1.138 格的立绘（顶面在素材里是正方形，正好铺满一格）
+     树木 = 内容 1 格宽 × 1 格高，脚踩在脚线上（控件按 DEFAULT_ART_FIT 放大到 1.819 格）
+-    人物 = 四张立绘（正面 / 背面 / 左视 / 右视），内容 1 格高、脚踩在脚线上
+-           （控件按 DEFAULT_ART_FIT.player 放大到 0.751 × 1.126 格；
+-             换朝向只换图不改尺寸 —— 这就是游戏里「转身」的全部实现）
++    人物 = **像素画**（COLS × ROWS 网格，用纯色矩形拼出来，正好 1 格高、脚踩在脚线上）
++           数据读 heroArt.lua，与 level.lua 的 repaintPlayerArt() 同源；
++           换朝向 = 换一套矩形（这就是游戏里「转身」的全部实现）
+     其余 = 纯色矩形 + 调色板（与回退路径一致）
+            · 树根 0.25 格高、倒下的树按 dir 分东西躺 / 南北躺（长而扁 1.00 × 0.50 格、
+              受光边与背光边成对、两端带年轮的切口，
+@@ -42,14 +42,9 @@
+ 
+ VIEW_W, VIEW_H = 1280, 720
+ 
+-# 四向立绘：键 = world.DIRS 的方向键，值 = 素材文件名
+-#   ★ 四张必须同画布（1024×1536）同留白，否则换朝向时人会跳 —— 见 config.lua
+-HERO_FILES = {
+-    "S": "人物_正面.png",   # 向下走
+-    "W": "人物_背面.png",   # 向上走
+-    "A": "人物_左侧.png",   # 向左走（面朝左）
+-    "D": "人物_右侧.png",   # 向右走（面朝右）
+-}
++# 四向「像素画」：数据来自 heroArt.lua（由 _tools/make_hero_pixels.py 从四张立绘生成）。
++#   ★ 预览必须读同一份数据 —— 否则它会「说假话」：游戏里早就不贴 PNG 了。
++#   ★ 四张共用同一个网格与调色板，换朝向时脚底不动、配色不跳。
+ FACING_LABEL = {"S": "front", "W": "back", "A": "left", "D": "right"}
+ 
+ 
+@@ -216,6 +211,30 @@
+                 fill=hex2rgb(hexcol) + (int(alpha),))
+ 
+ 
++def read_hero_art():
++    """读 heroArt.lua（_tools/make_hero_pixels.py 生成）→ 网格尺寸 + 调色板 + 各朝向矩形。
++
++    与 level.lua 的 repaintPlayerArt() 同源：网格坐标（左上原点、y 向下）→ 画布像素。
++    """
++    path = os.path.join(GAME, "heroArt.lua")
++    if not os.path.exists(path):
++        return None
++    s = io.open(path, encoding="utf-8").read()
++
++    def num(name):
++        m = re.search(r"M\.%s = (\d+)" % name, s)
++        return int(m.group(1)) if m else 0
++
++    colors = re.findall(r'^\s*"([0-9A-Fa-f]{6})",', s, re.M)
++    sprites = {}
++    for f in ("S", "W", "A", "D"):
++        m = re.search(r"    %s = \{(.*?)\n    \}," % f, s, re.S)
++        sprites[f] = ([tuple(int(v) for v in g)
++                       for g in re.findall(r"\{ (\d+), (\d+), (\d+), (\d+), (\d+) \}", m.group(1))]
++                      if m else [])
++    return {"cols": num("COLS"), "rows": num("ROWS"), "colors": colors, "sprites": sprites}
++
++
+ def render(cfg, lv, idx, facing="S", save=True):
+     p = cfg["palette"]
+     g = Geo(cfg, lv)
+@@ -340,12 +359,20 @@
+     rect(canvas, d, x - cell * 0.20, fy - cell * 0.62, cell * 0.08, cell * 1.24, p["goalPole"])
+     rect(canvas, d, x + cell * 0.08, fy - cell * 1.02, cell * 0.50, cell * 0.32, p["goalFlag"])
+ 
+-    # 小人（素材：内容 1 格高；四张立绘按朝向选一张，脚踩在脚线上）
+-    fp = cfg["fit"]["player"]
+-    hero_img = scaled(os.path.join(ART, HERO_FILES[facing]), cell * fp["w"], cell * fp["h"])
++    # 小人：纯色矩形拼出来的像素画（与 level.lua 的 repaintPlayerArt 同源）
++    #   画布 = COLS × ROWS 的网格，正好 1 格高；画布底边压在脚线上。
++    hero = read_hero_art()
+     sc, sr = lv["spawn"]
+     obj_shadow(sc, sr, 0.70)
+-    paste_center(canvas, hero_img, g.px(sc), g.py(g.foot(sr) + fp["dy"] * cell))
++    if hero and hero["sprites"].get(facing):
++        px = cell / float(hero["rows"])                  # 一个像素格的边长
++        bx = g.px(sc) - hero["cols"] * px / 2.0          # 画布左边
++        by = g.py(g.foot(sr)) - hero["rows"] * px        # 画布顶边（屏幕 y 向下）
++        colors = hero["colors"]
++        for (x, y, w, h, ci) in hero["sprites"][facing]:
++            d.rectangle([bx + x * px, by + y * px,
++                         bx + (x + w) * px - 0.02, by + (y + h) * px - 0.02],
++                        fill=hex2rgb(colors[ci]))
+ 
+     # ⑤ HUD 参考条
+     d.rectangle([0, 0, VIEW_W, cfg["hud_bar_height"] / 2], fill=hex2rgb(p["hudBar"]) + (130,))
+@@ -401,7 +428,7 @@
+         return
+     facing = "S"
+     for a in args:
+-        if a in HERO_FILES:
++        if a in FACING_LABEL:
+             facing = a
+     render(cfg, lv, idx, facing)
+ 

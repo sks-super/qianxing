@@ -69,7 +69,7 @@
  M.winAudioId = 0          -- 通关
  M.blockedAudioId = 0      -- 撞墙 / 撞石头 / 过不去
  
-@@ -160,18 +185,29 @@
+@@ -160,18 +185,37 @@
  M.terrainUsed = 0         -- 草地池本帧占用数量
  M.decoCtrls = {}          -- 装饰控件池（水面网格线 + 岛缘投影/侧面/描边；一律通用矩形 + 染色）
  M.decoUsed = 0            -- 装饰池本帧占用数量
@@ -81,17 +81,26 @@
 -M.goalCtrls = {}          -- 终点旗控件池（单独一个池：它必须压在木桩/石头/树木之上）
 +M.goalCtrls = {}          -- 终点旗控件池（单独一个池：它必须压在石头 / 树 / 树干之上）
  M.goalUsed = 0            -- 终点旗池本帧占用数量
- M.playerCtrl = nil        -- 小人本体（素材模式是一张立绘；回退模式是纯色身体矩形）
+-M.playerCtrl = nil        -- 小人本体（素材模式是一张立绘；回退模式是纯色身体矩形）
++M.playerCtrl = nil        -- 小人本体控件（回退路径：素材立绘 或 纯色身体矩形；像素模式下面隐藏）
  M.playerCtrlArt = false   -- 小人本体是不是「人物」素材元件
 -M.playerBodyH = 0         -- 小人本体的视觉高度（像素）；素材 2.0 格 / 纯色 1.88 格
-+M.playerFacing = "S"      -- 当前朝向（W/S/A/D）—— 决定四张立绘里用哪一张
-+M.playerImageIds = { S = 0, W = 0, A = 0, D = 0 }
-+                          -- 四向立绘的图源 ID（脚本参数写入；0 = 沿用元件自带图）
-+M.playerImageNow = 0      -- 当前已经 SetImage 上去的那个 ID（0 = 还没换过）
-+                          --   只在朝向变化时换图，避免每步都多一次 SetImage
++M.playerFacing = "S"      -- 当前朝向（W/S/A/D）
 +M.playerBodyH = 0         -- 小人本体的视觉高度（像素）；素材 1.0 格 / 纯色 0.94 格
  M.playerHeadCtrl = nil    -- 小人头（仅回退模式创建；深色块，小尺寸下也能认出朝向）
  M.playerShadowCtrl = nil  -- 小人脚下的接触阴影（2.5D：让小人真的踩在草地上）
++-- ★ 像素画模式：角色不是「引用一张图」，而是用几十块纯色矩形**画**出来的
++--   （数据在 heroArt.lua，由 _tools/make_hero_pixels.py 生成）。
++--   整幅画装在一个容器里，每帧只移动容器 —— 否则一块一块地改坐标，
++--   一帧就要几十次 SetAnchoredPosition，白白烧性能。
++M.heroPixel = false       -- 本次构建是否走像素画（false = 回退立绘 / 纯色）
++M.heroPixelOn = true      -- 脚本参数 heroPixelOn（OnStart 读取后覆盖；false = 用素材立绘）
++M.heroArtBox = nil        -- 承载像素块的容器（整幅画的坐标系原点在它中心）
++M.heroArtW = 0            -- 画布宽（像素）—— 摆位时要用
++M.heroArtH = 0            -- 画布高（像素）
++M.heroBlocks = {}         -- 像素块控件池（矩形；按 heroArt 的矩形数据摆放）
++M.heroBlockUsed = 0       -- 本轮画了多少块
++M.heroDrawn = ""          -- 已经画好的朝向（"" = 还没画；换朝向 / 换边长时重画）
  M.rippleCtrl = nil        -- 涟漪特效控件
 +M.dustCtrl = nil          -- 落地 / 立木扬尘控件（和涟漪分开，可同时出现）
 +-- ★ 木头「倒 / 立」的过渡代理池：6 块纯色矩形叠出「一帧木头」——

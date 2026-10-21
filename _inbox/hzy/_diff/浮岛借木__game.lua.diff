@@ -85,20 +85,15 @@
      --   全靠它 + imageColor 染色画出来。
      --   首选「矩形」元件（1073741894，自带矩形图元，真机不需要再配白图）；
      --   当前存档里没有它时，utils.instantiateRect 会自动回退「图片」元件（1073741870）。
-@@ -463,6 +483,17 @@
+@@ -463,6 +483,12 @@
      state.treePrefabId   = getParamNumber("treePrefabId",   config.DEFAULT_PREFAB_TREE)
      state.playerPrefabId = getParamNumber("playerPrefabId", config.DEFAULT_PREFAB_PLAYER)
  
-+    -- ★ 小人四向立绘的图源（可选）：同一个「人物」元件，按朝向 SetImage 换图。
-+    --   向下 = 正面（S）/ 向上 = 背面（W）/ 向左（A）/ 向右（D）。
-+    --   全填 0 → 始终用元件自带那张图（老行为）。缺哪个方向就只影响那个方向。
-+    state.playerImageIds = {
-+        S = getParamNumber("playerImageS", config.DEFAULT_PLAYER_IMAGE_S),
-+        W = getParamNumber("playerImageW", config.DEFAULT_PLAYER_IMAGE_W),
-+        A = getParamNumber("playerImageA", config.DEFAULT_PLAYER_IMAGE_A),
-+        D = getParamNumber("playerImageD", config.DEFAULT_PLAYER_IMAGE_D),
-+    }
-+    state.playerFacing = "S"     -- 出生时面朝下（正面），第一帧就是正确的图
++    -- ★ 小人用「像素矩形绘画」而不是引用图片：
++    --   数据在 heroArt.lua，运行时用几十块纯色矩形拼出角色，按朝向换一套矩形 = 转身。
++    --   所以**不需要任何图片 ID**，只需要这个开关（0 = 退回「人物」元件自带立绘）。
++    state.heroPixelOn = (getParamNumber("heroPixelOn", config.DEFAULT_HERO_PIXEL_ON) or 0) > 0
++    state.playerFacing = "S"     -- 出生时面朝下（正面），第一帧就是正确的画
 +
      -- ★ 2.5D 视角（可选）：地块厚度 + 岛缘投影 + 水面细网格线
      --   view25d = 0 → 退回改动前的平面正交画法（沙边改用 DEFAULT_COAST_PAD 像素）
