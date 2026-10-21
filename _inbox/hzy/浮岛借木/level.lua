@@ -1077,7 +1077,7 @@ local function buildPlayer(palette)
     if heroArt == nil then
         why = "heroArt 模块没加载（heroArt.lua 没导入 / 有语法错）"
     elseif not pixelOn then
-        why = "脚本参数 heroPixelOn = 0"
+        why = "脚本参数 heroPixelOn 被关闭（填了 -1）"
     elseif not ensureHeroBox() then
         why = "像素画容器建不出来（世界容器缺失）"
     else

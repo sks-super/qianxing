@@ -1,0 +1,11 @@
+--- /tmp/a10_level.lua	2026-10-21 23:39:50.024105000 +0800
++++ 浮岛借木/level.lua	2026-10-21 23:38:24.681806000 +0800
+@@ -1077,7 +1077,7 @@
+     if heroArt == nil then
+         why = "heroArt 模块没加载（heroArt.lua 没导入 / 有语法错）"
+     elseif not pixelOn then
+-        why = "脚本参数 heroPixelOn = 0"
++        why = "脚本参数 heroPixelOn 被关闭（填了 -1）"
+     elseif not ensureHeroBox() then
+         why = "像素画容器建不出来（世界容器缺失）"
+     else

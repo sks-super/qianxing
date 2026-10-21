@@ -1,0 +1,108 @@
+--- /tmp/a10_game.lua	2026-10-21 23:39:48.418231200 +0800
++++ 浮岛借木/game.lua	2026-10-21 23:32:50.078879800 +0800
+@@ -427,6 +427,29 @@
+ end
+ 
+ -- ================================================================
++-- ★ 开关型 / 索引型参数的「没配」兜底
++--   ⚠️ 真机脚本参数面板里**没填的数字参数会返回 0**（不是 nil）——
++--      而 `getParamNumber` 的默认值只对「非数字」生效，数字 0 会原样透出。
++--      于是所有「默认开」的可选项（useArt / heroPixelOn / view25d / waterGridLines）
++--      在真机上全被判成 false：画面退回纯色块（小人 = F2A03C 橙色身体矩形）。
++--      ★ 这就是「导入脚本后像素小人不见了、只剩一个橙色块」的真正原因。
++--   约定（改这里就要改 README 参数表）：
++--     · 开关：**-1 = 明确关闭**；0 / 空 = 没配 = 用 config 默认（默认都是开）
++--     · 索引：0 / 空 = 无效 = 用 config 默认（0 从来不是合法元件索引）
++-- ================================================================
++local function paramSwitch(name, dflt)
++    local v = getParamNumber(name, dflt)
++    if v == nil or v == 0 then return (tonumber(dflt) or 0) > 0 end
++    return v > 0
++end
++
++local function paramId(name, dflt)
++    local v = getParamNumber(name, dflt)
++    if v == nil or v <= 0 then return tonumber(dflt) or 0 end
++    return v
++end
++
++-- ================================================================
+ -- ★ 工具：判断当前设备是否触屏
+ -- ================================================================
+ function detectTouchDevice()
+@@ -448,12 +471,12 @@
+ 
+     -- ★ 容器节点模板（可选）：5 个层级容器由它创建；留空则回退到矩形元件
+     --   真机内置模板索引 1073741876（内部名 SoloTurnPoolHost），零配置即可命中
+-    state.containerPrefabId = getParamNumber("containerPrefabId", config.DEFAULT_PREFAB_CONTAINER)
++    state.containerPrefabId = paramId("containerPrefabId", config.DEFAULT_PREFAB_CONTAINER)
+     -- ★ 纯色底图模板：沙滩 / 树根 / 倒下的树 / 石头 / 终点旗 / HUD 底衬 / 涟漪 / 黑幕
+     --   全靠它 + imageColor 染色画出来。
+     --   首选「矩形」元件（1073741894，自带矩形图元，真机不需要再配白图）；
+     --   当前存档里没有它时，utils.instantiateRect 会自动回退「图片」元件（1073741870）。
+-    state.rectPrefabId = getParamNumber("rectPrefabId", config.DEFAULT_PREFAB_RECT)
++    state.rectPrefabId = paramId("rectPrefabId", config.DEFAULT_PREFAB_RECT)
+     if state.rectPrefabId <= 0 then
+         state.rectPrefabId = config.DEFAULT_PREFAB_IMAGE
+     end
+@@ -464,10 +487,10 @@
+     -- ★ 纯色底图的回退备胎（可选）：只在「矩形」拿不到控件时顶上来。
+     --   ⚠️ 它是官方内置的「图片」元件，默认不带图源，真机会画成彩色「?」
+     --      → 真机上要么给它配一张纯白图，要么填 rectImageId。
+-    state.imagePrefabId = getParamNumber("imagePrefabId", config.DEFAULT_PREFAB_IMAGE)
++    state.imagePrefabId = paramId("imagePrefabId", config.DEFAULT_PREFAB_IMAGE)
+     -- ★ 文本模板（可选）：关卡名 / 步数 / 消息 / 提示
+     --   真机内置模板索引 1073741868（文本框）
+-    state.textPrefabId = getParamNumber("textPrefabId", config.DEFAULT_PREFAB_TEXT)
++    state.textPrefabId = paramId("textPrefabId", config.DEFAULT_PREFAB_TEXT)
+     -- ★ 纯色底图的图源（可选）：真机若出现「?」缺失框，填编辑器图库里的图片 ID 即可，
+     --   脚本会在创建每个底图控件后 SetImage 指定；留空/0 则沿用元件自带图源。
+     state.rectImageId = getParamNumber("rectImageId", config.DEFAULT_RECT_IMAGE_ID)
+@@ -475,25 +498,36 @@
+     -- ★ 美术素材元件（海水 / 草地 / 树木 / 人物）
+     --   这 4 个元件里**已经关联好美术素材**，脚本只管把它们摆到位置上，
+     --   创建时**不写 imageColor** —— 一写就把素材乘上去了（变暗、串色）。
+-    --   总开关 useArt = 0（或任一索引填 0）→ 该类退回矩形 + 调色板染色，
+-    --   画面与加入素材之前完全一致，方便对照排查。
+-    state.useArt = (getParamNumber("useArt", config.DEFAULT_USE_ART) or 0) > 0
+-    state.waterPrefabId  = getParamNumber("waterPrefabId",  config.DEFAULT_PREFAB_WATER)
+-    state.landPrefabId   = getParamNumber("landPrefabId",   config.DEFAULT_PREFAB_LAND)
+-    state.treePrefabId   = getParamNumber("treePrefabId",   config.DEFAULT_PREFAB_TREE)
+-    state.playerPrefabId = getParamNumber("playerPrefabId", config.DEFAULT_PREFAB_PLAYER)
++    --   总开关 useArt 填 **-1** 才关闭（0 / 空 = 没配 = 用 DEFAULT_USE_ART）；
++    --   ⚠️ 不能拿 0 当「关」：真机面板里**没填**的数字参数就是 0，会把默认开的东西全关掉。
++    state.useArt = paramSwitch("useArt", config.DEFAULT_USE_ART)
++    state.waterPrefabId  = paramId("waterPrefabId",  config.DEFAULT_PREFAB_WATER)
++    state.landPrefabId   = paramId("landPrefabId",   config.DEFAULT_PREFAB_LAND)
++    state.treePrefabId   = paramId("treePrefabId",   config.DEFAULT_PREFAB_TREE)
++    state.playerPrefabId = paramId("playerPrefabId", config.DEFAULT_PREFAB_PLAYER)
+ 
+     -- ★ 小人用「像素矩形绘画」而不是引用图片：
+     --   数据在 heroArt.lua，运行时用几十块纯色矩形拼出角色，按朝向换一套矩形 = 转身。
+-    --   所以**不需要任何图片 ID**，只需要这个开关（0 = 退回「人物」元件自带立绘）。
+-    state.heroPixelOn = (getParamNumber("heroPixelOn", config.DEFAULT_HERO_PIXEL_ON) or 0) > 0
++    --   所以**不需要任何图片 ID**，只需要这个开关（**-1** = 退回「人物」元件自带立绘）。
++    state.heroPixelOn = paramSwitch("heroPixelOn", config.DEFAULT_HERO_PIXEL_ON)
+     state.playerFacing = "S"     -- 出生时面朝下（正面），第一帧就是正确的画
+ 
+     -- ★ 2.5D 视角（可选）：地块厚度 + 岛缘投影 + 水面细网格线
+     --   view25d = 0 → 退回改动前的平面正交画法（沙边改用 DEFAULT_COAST_PAD 像素）
+     --   waterGridLines = 0 → 水面只留旧的水下深色棋盘（不画细网格线）
+-    state.view25d = (getParamNumber("view25d", config.DEFAULT_VIEW_25D) or 0) > 0
+-    state.waterGridLines = (getParamNumber("waterGridLines", config.DEFAULT_WATER_GRID_LINES) or 0) > 0
++    state.view25d = paramSwitch("view25d", config.DEFAULT_VIEW_25D)
++    state.waterGridLines = paramSwitch("waterGridLines", config.DEFAULT_WATER_GRID_LINES)
++
++    -- ★ 参数快照：真机「为什么全是纯色块 / 小人是个橙块」时，先看这一行。
++    --   只打一次；print 被裁掉就跳过。
++    if type(print) == "function" then
++        pcall(print, string.format(
++            "[浮岛借木] 参数 useArt=%s heroPixelOn=%s view25d=%s | 元件 rect=%s container=%s player=%s",
++            tostring(state.useArt), tostring(state.heroPixelOn),
++            tostring(state.view25d),
++            tostring(state.rectPrefabId), tostring(state.containerPrefabId),
++            tostring(state.playerPrefabId)))
++    end
+ 
+     -- ★ 先启用 OnUpdate：输入监听与初始化都依赖脚本更新被引擎驱动
+     script:EnableUpdate(true)
