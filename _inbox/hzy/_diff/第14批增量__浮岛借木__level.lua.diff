@@ -1,0 +1,174 @@
+--- /tmp/b13_level.lua	（第 13 批版本）
++++ 浮岛借木/level.lua
+@@ -41,7 +41,7 @@
+ local utils = require("utils")
+ local world = require("world")
+ 
+-M.BUILD = "b13"   -- 版本戳：真机日志里能一眼看出用的是哪一版文件
++M.BUILD = "b14"   -- 版本戳：真机日志里能一眼看出用的是哪一版文件
+ 
+ -- ★ 小人像素画数据（由 _tools/make_hero_pixels.py 从四张立绘生成）
+ --   ★ 这里只是「可选覆盖」：真正保底的是文件下方内联的 M.HERO_BUILTIN。
+@@ -346,6 +346,12 @@
+ -- ★ 几何：按画布与地图尺寸算出格子边长与棋盘中心
+ --   2.5D 下格子之外还多出「岛缘描边 + 侧面厚度」，一并计入可用区域，
+ --   否则最上 / 最下 / 最左 / 最右会被画到画布外面去。
++--
++--   ★ 两步走（这是「放大一倍 + 镜头跟随」的全部机关）：
++--     ① 先按「整张地图塞满一屏」求一个基准边长 base（zoom = 1 时就是它）；
++--     ② base × state.viewZoom 才是真正用的 cell。
++--   乘上去之后地图很可能比屏幕大 —— 那不要紧，超出的部分由镜头平移补
++--   （见 applyCamera / updateCamera）。
+ -- ================================================================
+ function M.computeGeometry()
+     local cw = state.canvasW or config.DEFAULT_VIEW_WIDTH
+@@ -367,13 +373,22 @@
+         padPx = 2 * (config.DEFAULT_COAST_PAD or 5)         -- 旧画法：描边是固定像素
+     end
+ 
+-    -- ② 求格子边长：横竖各解一遍，取小的
++    -- ② 求「整图一屏」的基准边长：横竖各解一遍，取小的
+     local spanX = cols + 2 * rimRatio
+     local spanY = rows + 2 * rimRatio + sideRatio
+     local availW = (cw - marginX * 2) * scale - padPx
+     local availH = (ch - barH - reserve) * scale - padPx
+-    local cell = math.floor(math.min(availW / spanX, availH / spanY))
+-    cell = utils.clamp(cell, config.DEFAULT_CELL_MIN or 22, config.DEFAULT_CELL_MAX or 64)
++    local base = math.floor(math.min(availW / spanX, availH / spanY))
++    base = utils.clamp(base, config.DEFAULT_CELL_MIN or 22, config.DEFAULT_CELL_MAX or 64)
++
++    -- ③ 放大：cell = base × zoom
++    --   ★ 上限单独一条（DEFAULT_CELL_MAX_ZOOM）：不能复用 base 的 64 ——
++    --     否则「64 × 2」会被同一个 clamp 压回 64，放大完全失效。
++    local zoom = tonumber(state.viewZoom) or 1
++    if zoom <= 0 then zoom = 1 end
++    local cell = math.floor(base * zoom + 0.5)
++    cell = utils.clamp(cell, config.DEFAULT_CELL_MIN or 22,
++                       config.DEFAULT_CELL_MAX_ZOOM or 176)
+ 
+     state.cellSize = cell
+     state.boardW = cols * cell
+@@ -384,10 +399,71 @@
+     -- 所以把棋盘中心再往上抬 side/2，让多出来的那块不至于压到底部消息栏。
+     local bandCy = ((ch / 2 - barH) + (-ch / 2 + reserve)) / 2
+     state.boardCy = bandCy + sideRatio * cell / 2
++
++    -- ④ 镜头要用到的两个量
++    --   viewCenterY：可视区的正中心（小人就钉在这个高度）
++    --   worldPxW/H：整张地图占多少像素（含外扩；用来判断「一屏到底放不放得下」）
++    state.viewCenterY = bandCy
++    state.worldPxW = spanX * cell + padPx
++    state.worldPxH = spanY * cell + padPx
+     return cell
+ end
+ 
+ -- ================================================================
++-- ★ 镜头：放大后的「视野平移」
++--   放大 2 倍后地图 22×13 格 = 1584×936 px，一屏（1280×720，还要扣 HUD）
++--   装不下 —— 于是把**整个世界容器整体平移**，平移量正好等于小人的位移量：
++--
++--       世界容器位置 = -小人世界坐标 + 可视中心
++--
++--   于是「小人屏幕位置 + 容器偏移 = 固定值」→ 小人永远钉在屏幕中央，
++--   动的是地图本身。这正是「镜头跟着角色走」的常见做法。
++--
++--   ★ 为什么平移容器而不是重算每个控件的坐标：
++--     地形 + 物体 + 小人加起来几百个控件，逐帧重算 = 几百次 SetAnchoredPosition；
++--     平移容器只有 2 次（world + fx），和小人补间同一帧完成，稳。
++--     前提是「世界坐标 = 容器的子节点坐标」—— 容器的 anchoredPosition 原本是 (0,0)，
++--     子控件又都是 anchor 0.5 / pivot 0.5，所以这条等式成立。
++--   ★ 为什么 fx 容器也要跟着动：涟漪 / 扬尘用的是同一套世界坐标，
++--     只动 world 会让特效留在原地（小人脚下踩空）。
++--   ★ bg（整屏海面）与 hud **不能动**：一个要铺满屏，一个要固定在界面层。
++-- ================================================================
++local function camTargetFor(px, py)
++    local cell = state.cellSize or 1
++    local centerY = state.viewCenterY or 0
++    -- 让「小人身体的中心」落在可视区中心：脚底 py + 半格
++    return -px, centerY - (py + cell * 0.5)
++end
++
++function M.applyCamera()
++    local cx, cy = state.camX or 0, state.camY or 0
++    utils.setPosition(state.containerWorld, cx, cy)
++    utils.setPosition(state.containerFx, cx, cy)
++end
++
++-- 立刻对准（换关 / 重开 / 第一帧用，不做补间，免得从上一关的位置滑进来）
++function M.snapCamera()
++    local tx, ty = camTargetFor(state.playerVisX or 0, state.playerVisY or 0)
++    state.camX, state.camY = tx, ty
++    state.camReady = true
++    M.applyCamera()
++end
++
++-- 每帧跟随：跟着**小人的补间位置**走，所以镜头与角色天然同速
++local function updateCamera()
++    if not state.camReady then M.snapCamera() return end
++    local tx, ty = camTargetFor(state.playerVisX or 0, state.playerVisY or 0)
++    local k = utils.clamp(state.camFollow or 1, 0, 1)
++    if k >= 0.999 then
++        state.camX, state.camY = tx, ty
++    else
++        state.camX = utils.lerp(state.camX, tx, k)
++        state.camY = utils.lerp(state.camY, ty, k)
++    end
++    M.applyCamera()
++end
++
++-- ================================================================
+ -- ★ 深度键：2.5D 的排序依据
+ --   行号是主序（row 越大越靠近镜头 → 越晚绘制 → 压住后面的一切），
+ --   同一行内再分「层」，层内再用小数次序微调。
+@@ -593,7 +669,12 @@
+         -- 否则会看见网格方形区域的边界，很出戏）。它压在陆地下面，被地块盖住。
+         local lw = math.max(1, math.floor(cell * 0.035))
+         local alpha = config.DEFAULT_WATER_LINE_ALPHA or 70
+-        local over = 8                                   -- 向四周多铺的格数
++        -- ★ 向四周多铺几格（第 14 批按屏幕算，原来写死 8）：
++        --   镜头会把地图推离屏幕中心，最多推出「半屏」；网格必须铺到那之外，
++        --   否则移镜头时会看见「一片有网格、一片没网格」的硬边界 ——
++        --   放大 2 倍后 8 格（约 544px）已经不够了。
++        --   竖直方向永远更小（屏高 < 屏宽），不用另算。多十几条线，可忽略。
++        local over = math.ceil((state.canvasW or config.DEFAULT_VIEW_WIDTH) / (2 * cell)) + 2
+         local left = cellCenterX(1) - cell / 2 - over * cell
+         local top = cellCenterY(1) + cell / 2 + over * cell
+         local spanX = (cols + over * 2) * cell
+@@ -1450,6 +1531,17 @@
+     buildRipple(palette)
+     buildDust(palette)
+     M.updateHudDisplay()
++    -- ★ 镜头自检：真机上「地块还是原来那么大 / 走起来人物不居中」时先看这一行
++    if type(print) == "function" then
++        local ww, wh = math.floor(state.worldPxW or 0), math.floor(state.worldPxH or 0)
++        local cw, chh = math.floor(state.canvasW or 0), math.floor(state.canvasH or 0)
++        local needFollow = (ww > cw) or (wh > (chh - (config.DEFAULT_HUD_BAR_HEIGHT or 74)
++            - (config.DEFAULT_HUD_BOTTOM_RESERVE or 88)))
++        pcall(print, string.format(
++            "[浮岛借木] 镜头 zoom=%s cell=%d 地图=%dx%d 画布=%dx%d | %s",
++            tostring(state.viewZoom), math.floor(state.cellSize or 0), ww, wh, cw, chh,
++            needFollow and "一屏装不下 → 镜头跟随（人物钉中央）" or "一屏装得下 → 镜头不动"))
++    end
+     return (state.playerCtrl ~= nil) or (state.heroPixel and state.heroArtBox ~= nil)
+ end
+ 
+@@ -1471,6 +1563,8 @@
+     local bodyH = state.playerBodyH
+     if not bodyH or bodyH <= 0 then bodyH = cell * PLAYER_BODY_RATIO end
+     utils.setPosition(state.playerHeadCtrl, px, py + bodyH * 0.5 - cell * PLAYER_HEAD_RATIO * 0.5)
++    -- ★ 位置刚吸附好，镜头也立刻对准（换关 / 重开时不要让画面从上一关滑过来）
++    M.snapCamera()
+ end
+ 
+ -- ================================================================
+@@ -1511,6 +1605,10 @@
+     utils.setPosition(state.playerHeadCtrl, state.playerVisX,
+                       state.playerVisY + bodyH * 0.5 - cell * PLAYER_HEAD_RATIO * 0.5)
+ 
++    -- ★ ①-b 镜头：跟着**刚算出来的** playerVisX/Y 走，所以和位移补间同一曲线。
++    --   顺序很关键 —— 必须在小人位姿更新之后，否则镜头会慢一帧（走起来画面会抖）。
++    updateCamera()
++
+     -- ② 涟漪
+     if state.rippleActive and state.rippleCtrl then
+         local dur = state.rippleDur or config.DEFAULT_RIPPLE_TIME or 0.45

@@ -1,0 +1,46 @@
+--- /tmp/b13_game.lua	（第 13 批版本）
++++ 浮岛借木/game.lua
+@@ -175,7 +175,17 @@
+     -- 顶部信息条底
+     state.hudBar = utils.createControl(
+         state.rectPrefabId, 0, barY, cw + 80, barH,
+-        utils.hexToColorA(palette.hudBar, config.DEFAULT_HUD_ALPHA or 130),
++        utils.hexToColorA(palette.hudBar, config.DEFAULT_HUD_ALPHA or 230),
++        state.containerHud)
++
++    -- ★ 底部信息条底（第 14 批新增）
++    --   放大之后地图会铺到屏幕下沿，消息 / 提示文字会直接压在草地上
++    --   （白字压深绿，勉强能看但很脏）→ 补一条与顶部同款的底色带。
++    --   高度 = 底部预留高度，正好覆盖「一步一报」的消息行与三行提示。
++    local reserveH = config.DEFAULT_HUD_BOTTOM_RESERVE or 124
++    state.hudBottomBar = utils.createControl(
++        state.rectPrefabId, 0, -ch / 2 + reserveH / 2, cw + 80, reserveH,
++        utils.hexToColorA(palette.hudBar, config.DEFAULT_HUD_ALPHA or 230),
+         state.containerHud)
+ 
+     -- 关卡名（左半区居中）
+@@ -518,13 +528,22 @@
+     state.view25d = paramSwitch("view25d", config.DEFAULT_VIEW_25D)
+     state.waterGridLines = paramSwitch("waterGridLines", config.DEFAULT_WATER_GRID_LINES)
+ 
++    -- ★ 镜头放大（可选）：地块 / 树 / 石头 / 小人 / 旗子一律按倍数放大。
++    --   0 / 空 = 没配 = 用 config 默认（DEFAULT_VIEW_ZOOM = 2 倍）；
++    --   填 1 = 退回「整张地图正好一屏」的老样子。
++    --   ⚠️ 不能写 0 当「关」：真机里没填的数字参数就是 0。
++    local vz = getParamNumber("viewZoom", config.DEFAULT_VIEW_ZOOM)
++    if vz == nil or vz <= 0 then vz = config.DEFAULT_VIEW_ZOOM end
++    state.viewZoom = utils.clamp(vz, 0.5, 4)
++    state.camFollow = config.DEFAULT_CAM_FOLLOW or 1
++
+     -- ★ 参数快照：真机「为什么全是纯色块 / 小人是个橙块」时，先看这一行。
+     --   只打一次；print 被裁掉就跳过。
+     if type(print) == "function" then
+         pcall(print, string.format(
+-            "[浮岛借木] 参数 useArt=%s heroPixelOn=%s view25d=%s | 元件 rect=%s container=%s player=%s",
++            "[浮岛借木] 参数 useArt=%s heroPixelOn=%s view25d=%s zoom=%s | 元件 rect=%s container=%s player=%s",
+             tostring(state.useArt), tostring(state.heroPixelOn),
+-            tostring(state.view25d),
++            tostring(state.view25d), tostring(state.viewZoom),
+             tostring(state.rectPrefabId), tostring(state.containerPrefabId),
+             tostring(state.playerPrefabId)))
+         -- ★ 版本戳：一眼看出编辑器里 level 脚本是不是最新那份。
