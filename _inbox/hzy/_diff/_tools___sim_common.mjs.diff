@@ -1,0 +1,187 @@
+# 统一 diff：仓库现有版本(a) -> hzy 提交版本(b)
+# 换行符已归一化为 LF 后再比，因此本 diff 不含 CRLF/LF 噪音。
+# 生成方式： python + difflib.unified_diff，上下文 3 行。
+# 用法： git apply --check 本文件（若基线一致）或人工逐块 review。
+
+--- a/_tools/_sim_common.mjs
++++ b/_tools/_sim_common.mjs
+@@ -7,7 +7,29 @@
+ import path from 'node:path';
+ 
+ // 模拟器就绪存档里的模板 guid（与 qxqy_simsave.mjs 保持一致）
+-export const SIM_TEMPLATE_GUIDS = { rectPrefabId: 2000001, textPrefabId: 2000002 };
++//
++// ★ 这些值刻意使用「真机编辑器内置模板的元件索引」，而不是自造的 2000001/2000002：
++//   模拟器注册模板的规则是 registerTemplate(prefabIndex = node.guid)，所以 guid 一旦与
++//   真机索引同源，游戏里 config.DEFAULT_PREFAB_* 的回退值就能在两边同时命中 →
++//   「模拟器里跑通」与「搬进真机跑通」之间不再有参数错位。
++//   索引来源见 _shared/编辑器元件索引.md
++//   （容器节点 1073741876，内部名 SoloTurnPoolHost；游戏的 7 个分层容器由它创建）
++//
++// ★ water / land / tree / player 是「美术素材元件」：
++//   真机上它们自带美术素材，游戏**不写 imageColor**（一写就把素材乘上去了）。
++//   模拟器没有真机素材，所以 qxqy_simsave.mjs 把对应模板的 imageColor 预置成代表色 ——
++//   游戏不写 color，预置色就留在控件上，于是模拟器里照样有可见画面、截图可比对。
++//   这四个 key 只有 浮岛借木 在用；其余工程传进来也无害（不读就不用）。
++export const SIM_TEMPLATE_GUIDS = {
++  rectPrefabId: 1073741894,
++  imagePrefabId: 1073741870,
++  textPrefabId: 1073741868,
++  containerPrefabId: 1073741876,
++  waterPrefabId: 1073741879,
++  landPrefabId: 1073741881,
++  treePrefabId: 1073741883,
++  playerPrefabId: 1073741886,
++};
+ 
+ // Web 端的存档扫描标记：文件内容必须含这个子串才会出现在存档下拉里
+ // （见 beyond-simulator-web/dist/server.js 的 ia()：u.includes("qxqy-simulator-save")）
+@@ -98,16 +120,26 @@
+ // local state；OnUpdate 是引擎调用的全局函数，覆写即生效。
+ export function buildZOrderFix(frame, origin = '_tools/qxqy_mount.mjs') {
+   return `
+--- ===== [SIM_ZFIX] 第 ${frame} 帧反转容器兄弟顺序（由 ${origin} 注入） =====
++-- ===== [SIM_ZFIX] 第 ${frame} 帧还原容器层级 + 容器内部顺序（由 ${origin} 注入） =====
+ do
+     local __zFrame = 0
+     local __zLifted = -1
++    local __zSeq = {}        -- 控件 -> 创建序号（越大越晚创建 = 真机上越靠上）；用控件本身当键
++    local __zSeqNext = 0
++    local __zCtrls = {}      -- 游戏自己的容器在 state 里的键名（如 containerBg）
++    local __zCount = {}      -- 上次整理时各容器的子节点数（只在结构变化时重排）
+     -- 同级最上层 / 最下层（这两个便捷方法的效果与真机一致，见文件顶部说明）
+     local function __lift(c)
+         if c then pcall(function() c:SetAsLastSibling() end) end
+     end
+     local function __sink(c)
+         if c then pcall(function() c:SetAsFirstSibling() end) end
++    end
++    -- ★ 认定「游戏自己的控件」一律用**引用相等**，不依赖 .Id ——
++    --   模拟器的 Control 没有 Id 字段（实测 cw.Id == nil），按字段名认会全部落空。
++    local function __isObj(v)
++        local t = type(v)
++        return t == "table" or t == "userdata"
+     end
+     local __origOnUpdate = OnUpdate
+     OnUpdate = function(dt)
+@@ -118,32 +150,102 @@
+             if not root then printerr("[Z] root 为 nil") return end
+             local kids = root:GetChildren()
+             local total = kids and #kids or 0
+-            -- 顶层往下层排：先 fade（最终 index 0 = 最上），最后 bg（index 最大 = 最下）
+-            local pushOrder = { "containerFade", "containerMenu", "containerHud", "containerPlayer", "containerPickup", "containerGoal", "containerPlatform", "containerBg" }
++
++            -- ① 给整棵树按「数组顺序」编创建序号。
++            --    此刻还没有动过任何兄弟顺序，而 Control.children 是创建顺序 push 的，
++            --    所以数组顺序 == 创建顺序 == 真机的由底到顶。
++            local function __seed(n)
++                if __zSeq[n] == nil then
++                    __zSeqNext = __zSeqNext + 1
++                    __zSeq[n] = __zSeqNext
++                end
++                for _, ch in ipairs(n:GetChildren() or {}) do __seed(ch) end
++            end
++            __seed(root)
++
++            -- ② 认准「游戏自己的容器」：state 里名为 container* 的字段。
++            --    ★ 不再写死容器名 —— 每个游戏的分层命名不同（本工程用
++            --      containerWater/Sand/World/Props/Player/Hud/Menu/Fade）。
++            local mineList, ctrlRefs = {}, {}
++            for k, v in pairs(state) do
++                if __isObj(v) then
++                    mineList[#mineList + 1] = v
++                    if type(k) == "string" and k:sub(1, 9) == "container" then
++                        ctrlRefs[#ctrlRefs + 1] = v
++                        __zCtrls[#__zCtrls + 1] = k
++                    end
++                end
++            end
++            local function __isMine(ch)
++                for i = 1, #mineList do if mineList[i] == ch then return true end end
++                return false
++            end
++            local function __isCtrl(ch)
++                for i = 1, #ctrlRefs do if ctrlRefs[i] == ch then return true end end
++                return false
++            end
++
++            -- ③ 容器按创建顺序（由底到顶）逐个置到最顶层。
++            --    模拟器里 SetAsLastSibling 会落到数组下标 0 = 最后绘制 = 最上层，
++            --    于是数组最终背面朝上，绘制顺序与真机一致。该操作幂等。
+             local moved = 0
+-            for _, k in ipairs(pushOrder) do
+-                local c = state[k]
+-                if c then
+-                    local ok = pcall(function() c:SetAsFirstSibling() end)
+-                    if ok then moved = moved + 1 end
+-                end
+-            end
+-            -- 顺带隐藏场景工程自带的脚手架节点，它们与游戏无关
+-            local isMine = {}
+-            for _, k in ipairs(pushOrder) do
+-                local c = state[k]
+-                if c then isMine[c.Id] = true end
+-            end
++            for _, ch in ipairs(kids or {}) do
++                if __isCtrl(ch) then
++                    if pcall(function() ch:SetAsLastSibling() end) then moved = moved + 1 end
++                end
++            end
++
++            -- ④ 隐藏工程自带脚手架（与游戏无关），但绝不碰游戏自己的控件
+             local hidden = 0
+             for _, ch in ipairs(root:GetChildren() or {}) do
+-                if not isMine[ch.Id] then
++                if not __isMine(ch) then
+                     pcall(function() ch:SetVisible(false) end)
+                     pcall(function() ch:SetActive(false) end)
+                     hidden = hidden + 1
+                 end
+             end
+-            printerr("[Z] 容器层级已反转 total=" .. tostring(total) .. " moved=" .. tostring(moved)
+-                .. " 隐藏脚手架=" .. tostring(hidden))
++            printerr("[Z] 容器归位 total=" .. tostring(total) .. " moved=" .. tostring(moved)
++                .. " 隐藏脚手架=" .. tostring(hidden)
++                .. " 识别容器=" .. table.concat(__zCtrls, ","))
++        end
++
++        -- ⑤ 每帧幂等：容器「内部」同样是反的 —— 同级的兄弟绘制顺序与真机相反，
++        --    后创建的（真机上更靠上）反而先画、被压在底下。
++        --    做法：按创建序号升序逐个 SetAsLastSibling()，序号最大的落到数组下标 0
++        --    = 最后绘制 = 最上层。排序键固定，所以重复执行结果不变（幂等）；
++        --    池子后来才扩建的控件在这里补号，天然排到最后 = 置顶，与真机一致。
++        --    只在某容器的子节点数变化时重排，避免每帧对数百个格槽做无用功。
++        --
++        -- ★ 例外：state.selfOrderedContainers 里点名的容器**跳过**。
++        --   工程在这些容器里自己按「由底到顶」调 SetAsLastSibling（见 level.lua 的
++        --   restack），引擎语义两边一致，比这里按创建序猜更可靠。
++        --   这里这套启发式本身有个坑：__zSeq 是「按当时的数组顺序」补号的，
++        --   而对象池复用会打乱数组顺序 —— 于是每次子节点数变化都会把整段顺序
++        --   翻转一次，最终朝向取决于翻转次数的奇偶（实测：对象层被翻反，
++        --   树干盖住树冠、石头顶面消失）。所以凡是工程能自己点名的，一律让它自己管。
++        if __zFrame >= ${frame} then
++            local __selfOrdered = state.selfOrderedContainers
++            for _, key in ipairs(__zCtrls) do
++                local c = state[key]
++                local skip = (type(__selfOrdered) == "table") and (__selfOrdered[key] == true)
++                if c and not skip then
++                    local chs = c:GetChildren() or {}
++                    local n = #chs
++                    for i = 1, n do
++                        if __zSeq[chs[i]] == nil then
++                            __zSeqNext = __zSeqNext + 1
++                            __zSeq[chs[i]] = __zSeqNext
++                        end
++                    end
++                    if n ~= (__zCount[key] or -1) then
++                        __zCount[key] = n
++                        table.sort(chs, function(a, b)
++                            return (__zSeq[a] or 0) < (__zSeq[b] or 0)
++                        end)
++                        for i = 1, n do pcall(function() chs[i]:SetAsLastSibling() end) end
++                    end
++                end
++            end
+         end
+         -- 每帧幂等：把平台秒数标签提到同级最上层（平台建得比容器晚，必须持续做）
+         if __zFrame >= ${frame} and state.platforms then
