@@ -207,6 +207,18 @@ function M.setSize(ctrl, w, h)
 end
 
 -- ================================================================
+-- ★ 绕 Z 轴旋转（单位：度）—— 图元笔触里的椭圆靠它摆方向（第 16 批）
+--   ★ 方向约定：正数 = 屏幕逆时针（模拟器渲染是 ctx.rotate(-deg)，与真机一致）。
+--   老桩没有这个方法时 pcall 静默失败 → 不转而已，不会报错。
+-- ================================================================
+function M.setRotation(ctrl, deg)
+    if not ctrl then return end
+    local d = tonumber(deg) or 0
+    if pcall(function() ctrl:SetLocalRotation(0, 0, d) end) then return true end
+    return pcall(function() ctrl.localRotation = { 0, 0, d } end)
+end
+
+-- ================================================================
 -- ★ 显示控件 / 隐藏控件
 -- ================================================================
 function M.setVisible(ctrl, visible)

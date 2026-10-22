@@ -1,0 +1,32 @@
+--- /tmp/b15_game.lua	2026-10-22 22:27:30.046146500 +0800
++++ _inbox/hzy/浮岛借木/game.lua	2026-10-22 22:27:16.762282800 +0800
+@@ -535,6 +535,14 @@
+     }
+     state.heroImageOn = (state.heroImageIds.S or 0) > 0
+ 
++    -- ★ 图元笔触路径（第 16 批）：把「图元拟合拼图」的四视角脚本接进来画小人。
++    --   每一笔 = 一个「图片」控件 + 内置椭圆图源(100002) + imageColor 染色 + Z 轴旋转。
++    --   **不需要图库、不需要上传图片** —— 纯脚本复现，且四视角可切换。
++    --   heroPrimsOn 填 -1 关闭；元件/图源留空就用 config 默认（1073741870 / 100002）。
++    state.heroPrSwitch = paramSwitch("heroPrimsOn", config.DEFAULT_HERO_PRIMS_ON)
++    state.heroPrPrefabId = paramId("heroPrimsPrefabId", config.DEFAULT_PREFAB_HERO_PRIMS)
++    state.heroPrImageId = paramId("heroPrimsImageId", config.DEFAULT_HERO_PRIMS_IMAGE)
++
+     -- ★ 2.5D 视角（可选）：地块厚度 + 岛缘投影 + 水面细网格线
+     --   view25d = 0 → 退回改动前的平面正交画法（沙边改用 DEFAULT_COAST_PAD 像素）
+     --   waterGridLines = 0 → 水面只留旧的水下深色棋盘（不画细网格线）
+@@ -554,11 +562,12 @@
+     --   只打一次；print 被裁掉就跳过。
+     if type(print) == "function" then
+         pcall(print, string.format(
+-            "[浮岛借木] 参数 useArt=%s heroPixelOn=%s view25d=%s zoom=%s | 元件 rect=%s container=%s player=%s | 立绘图 S=%s W=%s A=%s D=%s",
++            "[浮岛借木] 参数 useArt=%s heroPixelOn=%s heroPrimsOn=%s view25d=%s zoom=%s | 元件 rect=%s container=%s player=%s prims=%s | 立绘图 S=%s W=%s A=%s D=%s",
+             tostring(state.useArt), tostring(state.heroPixelOn),
++            tostring(state.heroPrSwitch),
+             tostring(state.view25d), tostring(state.viewZoom),
+             tostring(state.rectPrefabId), tostring(state.containerPrefabId),
+-            tostring(state.playerPrefabId),
++            tostring(state.playerPrefabId), tostring(state.heroPrPrefabId),
+             tostring(state.heroImageIds.S), tostring(state.heroImageIds.W),
+             tostring(state.heroImageIds.A), tostring(state.heroImageIds.D)))
+         -- ★ 版本戳：一眼看出编辑器里 level 脚本是不是最新那份。

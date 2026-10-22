@@ -41,7 +41,18 @@ local config = require("config")
 local utils = require("utils")
 local world = require("world")
 
-M.BUILD = "b15"   -- 版本戳：真机日志里能一眼看出用的是哪一版文件
+M.BUILD = "b16"   -- 版本戳：真机日志里能一眼看出用的是哪一版文件
+
+-- ★ 小人「图元笔触」数据（第 16 批）：来自「图元拟合拼图」四视角脚本，
+--   已按游戏内 68px 尺度裁掉看不见的椭圆。没有这个模块就自动退回像素画/立绘。
+local heroPrims = nil
+do
+    local ok, mod = pcall(require, "heroPrims")
+    if ok and type(mod) == "table" and type(mod.S) == "table" then
+        heroPrims = mod
+    end
+end
+M.HERO_PRIMS_LOADED = (heroPrims ~= nil)
 
 -- ★ 小人像素画数据（由 _tools/make_hero_pixels.py 从四张立绘生成）
 --   ★ 这里只是「可选覆盖」：真正保底的是文件下方内联的 M.HERO_BUILTIN。
@@ -275,6 +286,19 @@ local function heroSprite(key)
     return nil
 end
 
+-- ================================================================
+-- ★ 小人图元笔触数据（第 16 批）
+--   每个视角一张平表，每 7 个数一个椭圆：x, y, w, h, rot, rgb, alpha
+--   x,y 相对「脚底线中点」，单位 = 1 格；w,h 也是格；rot 是度。
+--   ★ 缺的朝向自动回退正面（和立绘那条路一致：只给一套也能跑）。
+-- ================================================================
+local function heroPrData(key)
+    if not heroPrims then return nil end
+    local d = heroPrims[key or "S"] or heroPrims.S
+    if type(d) ~= "table" or #d < 7 then return nil end
+    return d
+end
+
 -- ★ 小人纯色回退的身高（格）：素材那条路的高度由 config.DEFAULT_ART_FIT.player 说了算，
 --   这里只管「没有素材时」画多高。
 --   ⚠️ 必须声明在文件顶部：下面的 playerFootOffset / playerAnchor 就要用它们。
@@ -339,6 +363,7 @@ end
 --   ★ 图片立绘 = 半格：控件是「1 格高 × 0.62 格宽」、pivot 在中心，
 --     中心离底边正好半格 —— 返回半格，playerAnchor 就直接给出控件中心。
 local function playerFootOffset()
+    if state.heroPr then return 0 end        -- 图元笔触：容器底边本身压着脚线
     if state.heroPixel then return 0 end
     if state.playerCtrlImg then return (state.cellSize or 1) * 0.5 end
     if state.playerCtrlArt then
@@ -610,6 +635,7 @@ function M.restackWorld()
     pushPlayer(state.playerShadowCtrl, SUB_SHADOW)
     pushPlayer(state.playerCtrl, SUB_PLAYER)
     pushPlayer(state.heroArtBox, SUB_PLAYER)   -- 像素画整幅（一块容器）当作小人本体
+    pushPlayer(state.heroPrBox, SUB_PLAYER)    -- 图元笔触整幅（一块容器）同理
     pushPlayer(state.playerHeadCtrl, SUB_PLAYER + 0.1)
 
     table.sort(list, function(a, b)
@@ -1319,6 +1345,119 @@ local function placeHeroArt()
 end
 
 -- ================================================================
+-- ★ 图元笔触（第 16 批）：四视角小人由几百个「旋转椭圆」画出来
+--   每个椭圆 = 「图片」元件 + SetImage(静态图源 100002 = 内置椭圆)
+--              + imageColor 染色 + SetLocalRotation(0,0,rot)
+--   ★ 为什么不需要图库、不需要上传 PNG：
+--     100001 / 100002 / 100003 是引擎**内置**的矩形 / 椭圆 / 三角形图元。
+--     只要「图片」元件有图源，真机就不会画成彩色「?」——这一点和立绘那条路正相反。
+--   ★ 数据单位是「格」：x/y 相对脚底线中点（x 向右、y 向上）。
+--     所以容器中心摆在「脚线 + 半格」，子控件 y 再减半格 —— 正好一格高。
+--   ★ 四视角图元数不同（正面最多），池只按需要增长：换到笔画少的视角时把多余控件
+--     **藏起来**而不销毁，来回转身不新建控件。
+-- ================================================================
+local function ensureHeroPrBox()
+    if state.heroPrBox then return true end
+    if not state.containerWorld then return false end
+
+    local c = nil
+    local cid = state.containerPrefabId or 0
+    if cid > 0 then
+        local ok, r = pcall(game.InstantiateClientUIControl, cid, state.containerWorld)
+        if ok then c = r end
+    end
+    if not c then
+        c = utils.instantiateRect(state.containerWorld)
+        if not c then return false end
+        utils.applyImage(c, state.rectImageId)
+        pcall(function() c.imageColor = Color.FromRGBA(255, 255, 255, 0) end)
+    end
+
+    pcall(function()
+        c:SetAnchorMin(0.5, 0.5)
+        c:SetAnchorMax(0.5, 0.5)
+        c:SetPivot(0.5, 0.5)
+        c:SetAnchoredPosition(0, 0)
+        c:SetSizeDelta(1, 1)
+    end)
+    c:SetActive(true)
+    state.heroPrBox = c
+    return true
+end
+
+-- 取 / 建池里第 i 个图元控件
+local function heroPrSlot(i, parent, prefabId, imageId)
+    local item = state.heroPrPool[i]
+    if item then return item end
+    local ctrl = utils.createControl(prefabId, 0, 0, 1, 1, nil, parent, imageId)
+    if not ctrl then return nil end
+    pcall(function() ctrl.imageType = Enum.ImageType.Stretch end)
+    item = { c = ctrl }
+    state.heroPrPool[i] = item
+    return item
+end
+
+function M.repaintHeroPrims()
+    if not state.heroPr or not state.heroPrBox then return false end
+    local d = heroPrData(state.playerFacing or "S")
+    if not d then return false end
+
+    local cell = state.cellSize or 1
+    local prefabId = state.heroPrPrefabId or 0
+    if prefabId <= 0 then prefabId = config.DEFAULT_PREFAB_HERO_PRIMS end
+    local imageId = state.heroPrImageId or 0
+    if imageId <= 0 then imageId = config.DEFAULT_HERO_PRIMS_IMAGE end
+
+    local parent = state.heroPrBox
+    local n = math.floor(#d / 7)
+    local used, failRun = 0, 0
+    for k = 1, n do
+        local b = (k - 1) * 7
+        local x, y = d[b + 1], d[b + 2]
+        local w, h = d[b + 3], d[b + 4]
+        local rot, rgb, alpha = d[b + 5], d[b + 6], d[b + 7]
+        local item = heroPrSlot(used + 1, parent, prefabId, imageId)
+        if not item then
+            failRun = failRun + 1
+            if failRun >= 6 then break end
+        else
+            failRun = 0
+            used = used + 1
+            local c = item.c
+            utils.setSize(c, w * cell, h * cell)
+            utils.setPosition(c, x * cell, (y - 0.5) * cell)
+            utils.setRotation(c, rot)
+            utils.setAlpha(c, string.format("%06X", math.floor(rgb or 0)), alpha or 255)
+            utils.setVisible(c, true)
+        end
+    end
+
+    -- 笔画少的视角：把上次多出来的控件藏起来（不销毁，转身还能复用）
+    for j = used + 1, #state.heroPrPool do
+        local it = state.heroPrPool[j]
+        utils.setVisible(it and it.c, false)
+    end
+
+    -- 一个都建不出来 = 明确认输，交给后面的回退链
+    if used < math.floor(n * 0.5) then
+        utils.setVisible(state.heroPrBox, false)
+        return false
+    end
+    state.heroPrUsed = used
+    state.heroPrDrawn = state.playerFacing or "S"
+    utils.setVisible(state.heroPrBox, true)
+    return true
+end
+
+-- 摆位：容器中心 = 脚线 + 半格（子控件 y 已按 -0.5 格摆过，正好一格高）
+local function placeHeroPrims()
+    if not state.heroPr or not state.heroPrBox then return end
+    local cell = state.cellSize or 1
+    utils.setSize(state.heroPrBox, cell, cell)
+    utils.setPosition(state.heroPrBox, state.playerVisX, state.playerVisY + cell * 0.5)
+end
+
+-- ================================================================
 -- ★ 图片立绘：按当前朝向换图源（第 15 批）
 --   ★ 四向共用一个控件、只换图 —— 省控件也省内存。
 --   ★ 缺的朝向自动回退正面：只填 heroImageS 也能跑，只是转身不变图。
@@ -1344,7 +1483,9 @@ function M.setPlayerFacing(key)
     if not key or not world.DIRS[key] then return end
     if state.playerFacing == key then return end
     state.playerFacing = key
-    if state.heroPixel then
+    if state.heroPr then
+        M.repaintHeroPrims()      -- 图元笔触：换一套椭圆 = 转身
+    elseif state.heroPixel then
         M.repaintPlayerArt()
     elseif state.playerCtrlImg then
         M.applyPlayerImage()      -- 图片立绘：换一张图就是转身
@@ -1362,12 +1503,40 @@ local function buildPlayer(palette)
     local cell = state.cellSize
     local slot = makeSlot(state.playerPrefabId)
 
+    -- ★ 图元笔触路径（第 16 批）：优先级最高 —— 用户要的就是「用这套图元脚本当主角」。
+    --   四道门全过才启用：开关开着 + 数据在 + 容器拿得到 + 真的画出来了。
+    local prSwitch = state.heroPrSwitch
+    if prSwitch == nil then
+        prSwitch = (tonumber(config.DEFAULT_HERO_PRIMS_ON) or 0) > 0
+    end
+    local prWhy = ""
+    state.heroPr = false
+    local prReady = false
+    if not prSwitch then
+        prWhy = "脚本参数 heroPrimsOn 被关闭（填了 -1）"
+    elseif not heroPrData(state.playerFacing or "S") then
+        prWhy = "heroPrims.lua 没导入或数据缺失"
+    elseif not ensureHeroPrBox() then
+        prWhy = "图元笔触容器建不出来（世界容器缺失）"
+    else
+        state.heroPr = true
+        state.playerBodyH = cell
+        if M.repaintHeroPrims() then
+            prReady = true
+            prWhy = ""
+        else
+            state.heroPr = false
+            prWhy = "图元控件一个也没建出来"
+        end
+    end
+    state.heroPrWhy = prWhy
+
     -- ★ 立绘图片路径（第 15 批）：填了图库 ID 就优先用「图片」元件显示原画。
     --   比像素画清晰得多 —— 原图是平滑矢量风，压到 68px 高再像素化，侧面必糊。
     --   ⚠️ 没填 ID 时**绝不**走这条路：图片元件不带图源，真机会画成彩色「?」。
     local heroImgOn = state.heroImageOn and (state.heroImageIds.S or 0) > 0
 
-    if not state.playerCtrl then
+    if not state.playerCtrl and not prReady then
         if heroImgOn then
             local ctrl = utils.createControl(
                 state.heroImagePrefabId or config.DEFAULT_PREFAB_IMAGE,
@@ -1389,7 +1558,7 @@ local function buildPlayer(palette)
             state.playerCtrlImg = false
         end
     end
-    if not state.playerCtrl then return end
+    if not state.playerCtrl and not prReady then return end
 
     -- 脚下滑影（只是个很淡的深色块，紧贴脚线）
     if not state.playerShadowCtrl then
@@ -1416,7 +1585,9 @@ local function buildPlayer(palette)
 
     local why = ""
     state.heroPixel = false
-    if heroImgOn and state.playerCtrlImg then
+    if prReady then
+        why = "走图元笔触（heroPrims.lua）"
+    elseif heroImgOn and state.playerCtrlImg then
         why = "走图片立绘（填了图库图片 ID）"
     elseif not pixelOn then
         why = "脚本参数 heroPixelOn 被关闭（填了 -1）"
@@ -1442,7 +1613,8 @@ local function buildPlayer(palette)
         state.heroPixelLogged = true
         if type(print) == "function" then
             local mode = "素材立绘/纯色"
-            if state.heroPixel then mode = "像素画"
+            if state.heroPr then mode = string.format("图元笔触(%d 笔)", state.heroPrUsed or 0)
+            elseif state.heroPixel then mode = "像素画"
             elseif state.playerCtrlImg then
                 mode = string.format("图片立绘(元件=%s)",
                     tostring(state.heroImagePrefabId or 0))
@@ -1456,7 +1628,14 @@ local function buildPlayer(palette)
         end
     end
 
-    if state.heroPixel then
+    if prReady then
+        -- 图元笔触已在上面画好：1 格高、底边压脚线，其余形态一律让位
+        state.playerBodyH = cell
+        utils.setVisible(state.playerCtrl, false)
+        utils.setVisible(state.playerHeadCtrl, false)
+        utils.setVisible(state.heroArtBox, false)
+        placeHeroPrims()
+    elseif state.heroPixel then
         -- 已在上面画好，这里什么都不用做（保留分支只为结构清晰）
     elseif state.playerCtrlImg then
         -- ★ 图片立绘：1 格高 × 原图宽高比，底边压脚线（playerFootOffset 返回半格）
@@ -1568,6 +1747,11 @@ function M.clear()
     poolTrim(state.heroBlocks, 0)
     state.heroBlockUsed = 0
     state.heroDrawn = ""
+    utils.setVisible(state.heroPrBox, false)
+    for i = 1, #state.heroPrPool do
+        utils.setVisible(state.heroPrPool[i] and state.heroPrPool[i].c, false)
+    end
+    state.heroPrDrawn = ""
     utils.setVisible(state.rippleCtrl, false)
     utils.setVisible(state.dustCtrl, false)
     state.terrainUsed = 0
@@ -1612,7 +1796,9 @@ function M.build(data)
             tostring(state.viewZoom), math.floor(state.cellSize or 0), ww, wh, cw, chh,
             needFollow and "一屏装不下 → 镜头跟随（人物钉中央）" or "一屏装得下 → 镜头不动"))
     end
-    return (state.playerCtrl ~= nil) or (state.heroPixel and state.heroArtBox ~= nil)
+    return (state.playerCtrl ~= nil)
+        or (state.heroPr and state.heroPrBox ~= nil)
+        or (state.heroPixel and state.heroArtBox ~= nil)
 end
 
 -- ================================================================
@@ -1628,6 +1814,7 @@ function M.syncPlayerNow()
     state.playerAnimDur = 0
     utils.setPosition(state.playerCtrl, px, py)
     placeHeroArt()                       -- 像素画：整幅画贴在脚底线上
+    placeHeroPrims()                     -- 图元笔触：整幅画贴在脚底线上
     utils.setPosition(state.playerShadowCtrl, px, py - playerFootOffset() - (state.cellSize or 1) * 0.01)
     local cell = state.cellSize or 1
     local bodyH = state.playerBodyH
@@ -1670,6 +1857,7 @@ function M.updateVisuals(dt)
     end
     utils.setPosition(state.playerCtrl, state.playerVisX, state.playerVisY)
     placeHeroArt()                       -- 像素画：每帧只移动这一个容器
+    placeHeroPrims()                     -- 图元笔触：每帧只移动这一个容器
     utils.setPosition(state.playerShadowCtrl, state.playerVisX,
                       state.playerVisY - playerFootOffset() - cell * 0.01)
     utils.setPosition(state.playerHeadCtrl, state.playerVisX,
