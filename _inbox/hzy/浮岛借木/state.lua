@@ -246,10 +246,16 @@ M.heroPrSwitch = true     -- 脚本参数 heroPrimsOn（OnStart 读取后覆盖�
 M.heroPrPrefabId = 0      -- 图元用的元件索引（默认 1073741870「图片」）
 M.heroPrImageId = 0       -- 静态图源 ID（默认 100002 椭圆）
 M.heroPrBox = nil         -- 承载图元的容器（整幅画坐标系原点在它中心）
-M.heroPrPool = {}         -- 图元控件池（图片元件，带椭圆图源）
+M.heroPrBoxes = {}        -- 6 个部件容器（中心钉在各自关节上，旋转 = 摆臂 / 迈腿）
+M.heroPrPivots = {}       -- 各部件关节位置（格坐标；抬脚时按它重摆）
+M.heroPrPools = {}        -- 每个部件一个控件池（下标 = 部件序号）
 M.heroPrUsed = 0          -- 本轮画了多少个
 M.heroPrDrawn = ""        -- 已经画好的朝向（"" = 还没画）
 M.heroPrWhy = ""          -- 真机排查用：没走这条路时是哪一道门没过
+-- ★ 走路摆动（第 17 批）：相位 / 振幅。振幅 0 = 完全静止，1 = 满幅摆动。
+M.heroWalkOn = true       -- 脚本参数 heroWalkOn（-1 = 关掉摆动，画面回到「滑行」）
+M.heroWalkPhase = 0       -- 相位(弧度)：一步 = 2π
+M.heroWalkAmp = 0         -- 振幅包络 0~1（起步渐入、停下渐出，不硬弹）
 M.rippleCtrl = nil        -- 涟漪特效控件
 M.dustCtrl = nil          -- 落地 / 立木扬尘控件（和涟漪分开，可同时出现）
 -- ★ 木头「倒 / 立」的过渡代理池：6 块纯色矩形叠出「一帧木头」——

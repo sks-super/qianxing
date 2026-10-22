@@ -41,7 +41,7 @@ local config = require("config")
 local utils = require("utils")
 local world = require("world")
 
-M.BUILD = "b16"   -- 版本戳：真机日志里能一眼看出用的是哪一版文件
+M.BUILD = "b17"   -- 版本戳：真机日志里能一眼看出用的是哪一版文件
 
 -- ★ 小人「图元笔触」数据（第 16 批）：来自「图元拟合拼图」四视角脚本，
 --   已按游戏内 68px 尺度裁掉看不见的椭圆。没有这个模块就自动退回像素画/立绘。
@@ -295,7 +295,8 @@ end
 local function heroPrData(key)
     if not heroPrims then return nil end
     local d = heroPrims[key or "S"] or heroPrims.S
-    if type(d) ~= "table" or #d < 7 then return nil end
+    -- 第 17 批起格式为「6 个部件」：{ {px,py,n,...}, ... }
+    if type(d) ~= "table" or #d < 2 then return nil end
     return d
 end
 
@@ -1386,21 +1387,70 @@ local function ensureHeroPrBox()
 end
 
 -- 取 / 建池里第 i 个图元控件
-local function heroPrSlot(i, parent, prefabId, imageId)
-    local item = state.heroPrPool[i]
+-- 部件索引（与 heroPrims.lua 的 M.PARTS 顺序一致）
+local PR_HEAD, PR_TORSO, PR_ARM_L, PR_ARM_R, PR_LEG_L, PR_LEG_R = 1, 2, 3, 4, 5, 6
+
+-- 每个部件一个容器：容器中心钉在该部件的**关节**上，绕 Z 旋转 = 绕关节摆臂 / 迈腿。
+--   ★ 为什么要分成 6 个容器而不是把 300 多个椭圆全平铺：
+--     只有「部件」能整组旋转。旋转一个容器 = 一次 SetLocalRotation，
+--     子控件一个都不用改坐标 —— 这是能不能每帧摆腿的关键。
+local function heroPrPartBox(pi)
+    if not state.heroPrBox then return nil end
+    state.heroPrBoxes = state.heroPrBoxes or {}
+    local box = state.heroPrBoxes[pi]
+    if box then return box end
+
+    local c = nil
+    local cid = state.containerPrefabId or 0
+    if cid > 0 then
+        local ok, r = pcall(game.InstantiateClientUIControl, cid, state.heroPrBox)
+        if ok then c = r end
+    end
+    if not c then
+        c = utils.instantiateRect(state.heroPrBox)
+        if not c then return nil end
+        utils.applyImage(c, state.rectImageId)
+        pcall(function() c.imageColor = Color.FromRGBA(255, 255, 255, 0) end)
+    end
+    pcall(function()
+        c:SetAnchorMin(0.5, 0.5)
+        c:SetAnchorMax(0.5, 0.5)
+        c:SetPivot(0.5, 0.5)
+        c:SetAnchoredPosition(0, 0)
+        c:SetSizeDelta(1, 1)
+    end)
+    c:SetActive(true)
+    state.heroPrBoxes[pi] = c
+    return c
+end
+
+-- 取 / 建第 pi 个部件的第 i 个图元控件（每个部件一个独立池：父子关系稳定，换视角不用搬家）
+local function heroPrSlot(pi, i, parent, prefabId, imageId)
+    state.heroPrPools = state.heroPrPools or {}
+    local pool = state.heroPrPools[pi]
+    if not pool then
+        pool = {}
+        state.heroPrPools[pi] = pool
+    end
+    local item = pool[i]
     if item then return item end
     local ctrl = utils.createControl(prefabId, 0, 0, 1, 1, nil, parent, imageId)
     if not ctrl then return nil end
     pcall(function() ctrl.imageType = Enum.ImageType.Stretch end)
     item = { c = ctrl }
-    state.heroPrPool[i] = item
+    pool[i] = item
     return item
 end
 
+-- ================================================================
+-- ★ 画一帧小人（第 17 批：按部件画，含关节）
+--   数据形如：{ {px,py,n, x,y,w,h,rot,rgb,alpha ×n}, ... 6 个部件 }
+--   其中 x,y 已经是**相对关节**的偏移，所以直接贴到部件容器里就行。
+-- ================================================================
 function M.repaintHeroPrims()
     if not state.heroPr or not state.heroPrBox then return false end
-    local d = heroPrData(state.playerFacing or "S")
-    if not d then return false end
+    local view = (heroPrims and (heroPrims[state.playerFacing or "S"] or heroPrims.S)) or nil
+    if type(view) ~= "table" then return false end
 
     local cell = state.cellSize or 1
     local prefabId = state.heroPrPrefabId or 0
@@ -1408,38 +1458,52 @@ function M.repaintHeroPrims()
     local imageId = state.heroPrImageId or 0
     if imageId <= 0 then imageId = config.DEFAULT_HERO_PRIMS_IMAGE end
 
-    local parent = state.heroPrBox
-    local n = math.floor(#d / 7)
-    local used, failRun = 0, 0
-    for k = 1, n do
-        local b = (k - 1) * 7
-        local x, y = d[b + 1], d[b + 2]
-        local w, h = d[b + 3], d[b + 4]
-        local rot, rgb, alpha = d[b + 5], d[b + 6], d[b + 7]
-        local item = heroPrSlot(used + 1, parent, prefabId, imageId)
-        if not item then
-            failRun = failRun + 1
-            if failRun >= 6 then break end
-        else
-            failRun = 0
-            used = used + 1
-            local c = item.c
-            utils.setSize(c, w * cell, h * cell)
-            utils.setPosition(c, x * cell, (y - 0.5) * cell)
-            utils.setRotation(c, rot)
-            utils.setAlpha(c, string.format("%06X", math.floor(rgb or 0)), alpha or 255)
-            utils.setVisible(c, true)
+    local used, want, failRun = 0, 0, 0
+    for pi = 1, #view do
+        local part = view[pi]
+        if type(part) == "table" and #part >= 3 then
+            local px, py, n = part[1], part[2], part[3]
+            local box = heroPrPartBox(pi)
+            if box then
+                state.heroPrPivots = state.heroPrPivots or {}
+                state.heroPrPivots[pi] = { x = px, y = py }   -- 关节位置（摆腿/抬脚要用）
+                -- ★ 部件容器**必须保持 1×1**，不要设成 1 格大小：
+                --   容器的旋转原点跟它自身的尺寸挂钩，尺寸一大，子控件就绕着
+                --   「容器左上角」转 —— 一摆臂整条胳膊会被甩出去十几像素（踩过）。
+                --   1×1 时这点误差是亚像素，等于精确绕关节转。
+                utils.setSize(box, 1, 1)
+                utils.setPosition(box, px * cell, (py - 0.5) * cell)
+                utils.setVisible(box, true)
+                local k = 4
+                for e = 1, n do
+                    want = want + 1
+                    local item = heroPrSlot(pi, e, box, prefabId, imageId)
+                    if item then
+                        local c = item.c
+                        utils.setSize(c, part[k + 2] * cell, part[k + 3] * cell)
+                        utils.setPosition(c, part[k] * cell, part[k + 1] * cell)
+                        utils.setRotation(c, part[k + 4])
+                        utils.setAlpha(c, string.format("%06X", math.floor(part[k + 5] or 0)), part[k + 6] or 255)
+                        utils.setVisible(c, true)
+                        used = used + 1
+                        failRun = 0
+                    else
+                        failRun = failRun + 1
+                    end
+                    k = k + 7
+                end
+                -- 该部件多出来的控件藏起来（换视角时数量会变）
+                local pool = state.heroPrPools and state.heroPrPools[pi]
+                if pool then
+                    for j = n + 1, #pool do
+                        utils.setVisible(pool[j] and pool[j].c, false)
+                    end
+                end
+            end
         end
     end
 
-    -- 笔画少的视角：把上次多出来的控件藏起来（不销毁，转身还能复用）
-    for j = used + 1, #state.heroPrPool do
-        local it = state.heroPrPool[j]
-        utils.setVisible(it and it.c, false)
-    end
-
-    -- 一个都建不出来 = 明确认输，交给后面的回退链
-    if used < math.floor(n * 0.5) then
+    if failRun >= 6 or used < math.floor(want * 0.5) then
         utils.setVisible(state.heroPrBox, false)
         return false
     end
@@ -1449,12 +1513,88 @@ function M.repaintHeroPrims()
     return true
 end
 
--- 摆位：容器中心 = 脚线 + 半格（子控件 y 已按 -0.5 格摆过，正好一格高）
+-- ================================================================
+-- ★ 走路摆动（第 17 批）
+--   ★ 相位跟着「一步」的时长走：一步 = 一个完整的前后摆（2π），
+--     所以按住方向键连走时腿是连续摆的，不会一步一卡。
+--   ★ 停下时振幅平滑衰减到 0，不会「腿突然弹回原位」。
+--   ★ 手臂与腿**反相**：左腿前摆时右臂前摆 —— 这是人走路能读出来的关键。
+-- ================================================================
+local function setPartRot(pi, deg)
+    local boxes = state.heroPrBoxes
+    if not boxes or not boxes[pi] then return end
+    utils.setRotation(boxes[pi], deg)
+end
+
+-- 把某个部件按「关节 + 前后位移 + 抬脚高度」重新摆一次
+--   ★ 腿走的是**位移**（迈出去 / 抬起来），不是旋转：
+--     这个角色穿长裙，腿一转就会看到裙子从腰上撕开；位移只让脚整体挪一点，剪影不裂。
+local function setPartPlace(pi, dx, lift)
+    local boxes = state.heroPrBoxes
+    local piv = state.heroPrPivots
+    if not boxes or not boxes[pi] or not piv or not piv[pi] then return end
+    local cell = state.cellSize or 1
+    utils.setPosition(boxes[pi], (piv[pi].x + (dx or 0)) * cell,
+                      (piv[pi].y - 0.5) * cell + (lift or 0))
+end
+
+function M.updateHeroWalk(dt)
+    if not state.heroPr or not state.heroPrBox then return end
+    local walkOn = state.heroWalkOn
+    if walkOn == nil then walkOn = (tonumber(config.DEFAULT_HERO_WALK_ON) or 1) > 0 end
+    if not walkOn then return end
+
+    local moving = (state.playerAnimT or 0) < (state.playerAnimDur or 0)
+    local amp = state.heroWalkAmp or 0
+    local d = tonumber(dt) or 0
+
+    if moving then
+        -- ★ 摆动周期固定（默认 0.3 秒一个来回），**不跟单步动画时长绑死**：
+        --   一步只有 0.1 秒 ≈ 3 帧，绑在一步上会快到只剩闪烁。
+        local period = math.max(0.12, tonumber(config.DEFAULT_HERO_WALK_PERIOD) or 0.3)
+        state.heroWalkPhase = (state.heroWalkPhase or 0) + d / period * math.pi * 2
+        amp = math.min(1, amp + d * 14)
+    else
+        amp = math.max(0, amp - d * 8)
+    end
+    state.heroWalkAmp = amp
+
+    local phase = state.heroWalkPhase or 0
+    local cell = state.cellSize or 1
+    local sA = math.sin(phase)
+    local sB = -math.sin(phase)          -- 另一条腿反相
+
+    -- 手臂：绕肩关节摆（手臂是独立的窄条，转起来不会撕坏别处）
+    local armA = (config.DEFAULT_HERO_WALK_ARM or 13) * math.sin(phase) * amp
+    setPartRot(PR_ARM_L, -armA)
+    setPartRot(PR_ARM_R, armA)
+
+    -- 腿：前后迈 + 抬脚（位移，不旋转）
+    --   ⚠️ 单位：stepX 必须是**格**（setPartPlace 内部会再乘格宽），
+    --      抬脚 lift 是**像素**（它直接加在算好的 y 上）。这里搞反过一次，
+    --      腿被甩到身体两侧各 0.5 格远 —— 真机上一眼就能看出来。
+    local stepX = (config.DEFAULT_HERO_WALK_STEP_X or 0.03) * amp
+    local liftMax = cell * (config.DEFAULT_HERO_WALK_LIFT or 0.03) * amp
+    local legA = (config.DEFAULT_HERO_WALK_LEG or 0) * math.sin(phase) * amp
+    setPartRot(PR_LEG_L, legA)
+    setPartRot(PR_LEG_R, -legA)
+    local upL = (sA > 0 and sA or 0)
+    local upR = (sB > 0 and sB or 0)
+    setPartPlace(PR_LEG_L, -sA * stepX, upL * liftMax)
+    setPartPlace(PR_LEG_R, -sB * stepX, upR * liftMax)
+end
+
 local function placeHeroPrims()
     if not state.heroPr or not state.heroPrBox then return end
     local cell = state.cellSize or 1
     utils.setSize(state.heroPrBox, cell, cell)
-    utils.setPosition(state.heroPrBox, state.playerVisX, state.playerVisY + cell * 0.5)
+    -- 走路时整幅画轻微上下浮动（一个步幅两次），像身体重心在起落；静止时不动
+    local amp = state.heroWalkAmp or 0
+    local bob = 0
+    if amp > 0.01 then
+        bob = cell * 0.012 * amp * math.abs(math.sin((state.heroWalkPhase or 0) * 2))
+    end
+    utils.setPosition(state.heroPrBox, state.playerVisX, state.playerVisY + cell * 0.5 + bob)
 end
 
 -- ================================================================
@@ -1748,10 +1888,20 @@ function M.clear()
     state.heroBlockUsed = 0
     state.heroDrawn = ""
     utils.setVisible(state.heroPrBox, false)
-    for i = 1, #state.heroPrPool do
-        utils.setVisible(state.heroPrPool[i] and state.heroPrPool[i].c, false)
+    if state.heroPrBoxes then
+        for i = 1, #state.heroPrBoxes do
+            utils.setVisible(state.heroPrBoxes[i], false)
+        end
     end
-    state.heroPrDrawn = ""
+    if state.heroPrPools then
+        for pi = 1, #state.heroPrPools do
+            local pool = state.heroPrPools[pi]
+            for i = 1, #pool do
+                utils.setVisible(pool[i] and pool[i].c, false)
+            end
+        end
+    end
+    state.heroPrDrawn = "" 
     utils.setVisible(state.rippleCtrl, false)
     utils.setVisible(state.dustCtrl, false)
     state.terrainUsed = 0
@@ -1814,6 +1964,9 @@ function M.syncPlayerNow()
     state.playerAnimDur = 0
     utils.setPosition(state.playerCtrl, px, py)
     placeHeroArt()                       -- 像素画：整幅画贴在脚底线上
+    state.heroWalkPhase = 0              -- 换关 / 重开：摆动归零，别带着旧相位
+    state.heroWalkAmp = 0
+    M.updateHeroWalk(0)
     placeHeroPrims()                     -- 图元笔触：整幅画贴在脚底线上
     utils.setPosition(state.playerShadowCtrl, px, py - playerFootOffset() - (state.cellSize or 1) * 0.01)
     local cell = state.cellSize or 1
@@ -1857,6 +2010,7 @@ function M.updateVisuals(dt)
     end
     utils.setPosition(state.playerCtrl, state.playerVisX, state.playerVisY)
     placeHeroArt()                       -- 像素画：每帧只移动这一个容器
+    M.updateHeroWalk(dt)                 -- 图元笔触：先更新摆臂/迈腿的角度
     placeHeroPrims()                     -- 图元笔触：每帧只移动这一个容器
     utils.setPosition(state.playerShadowCtrl, state.playerVisX,
                       state.playerVisY - playerFootOffset() - cell * 0.01)

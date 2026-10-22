@@ -542,6 +542,10 @@ function OnStart()
     state.heroPrSwitch = paramSwitch("heroPrimsOn", config.DEFAULT_HERO_PRIMS_ON)
     state.heroPrPrefabId = paramId("heroPrimsPrefabId", config.DEFAULT_PREFAB_HERO_PRIMS)
     state.heroPrImageId = paramId("heroPrimsImageId", config.DEFAULT_HERO_PRIMS_IMAGE)
+    -- ★ 走路摆动（第 17 批）：椭圆已按部件（头/躯干/两臂/两腿）分组，
+    --   每个部件绕自己的关节旋转 —— 走路时腿前后摆、手臂反相摆，加一点重心起伏。
+    --   填 -1 关掉，小人退回「整体滑行」。
+    state.heroWalkOn = paramSwitch("heroWalkOn", config.DEFAULT_HERO_WALK_ON)
 
     -- ★ 2.5D 视角（可选）：地块厚度 + 岛缘投影 + 水面细网格线
     --   view25d = 0 → 退回改动前的平面正交画法（沙边改用 DEFAULT_COAST_PAD 像素）
