@@ -1,6 +1,7 @@
 -- ================================================================
 -- 浮岛借木（Float & Fathom）主脚本
---   玩法内核：撞树、推木桩、立桩、铺桥 —— 让小岛之间借一根木头连起来。
+--   玩法内核：撞倒立着的树 → 侧面推着树干滑一格 / 正面推让它在前一格立起来
+--             → 让树干落进水道当桥，把两座浮岛连起来。
 --   架构沿用本工作区「割绳子 / TickHop」工程的既有分层：
 --     容器化父节点管理层级 → 黑幕过渡掩护关卡切换 → 模块各司其职。
 --   ★ 挂载位置：客户端控件容器的「容器节点」上（script.object 即父节点）。
@@ -8,14 +9,14 @@
 
 ---@diagnostic disable: undefined-global
 
-local config = require("default_import_file/config")
-local state = require("default_import_file/state")
-local utils = require("default_import_file/utils")
-local world = require("default_import_file/world")
-local level = require("default_import_file/level")
-local audio = require("default_import_file/audio")
-local signal = require("default_import_file/signal")
-local fadeScreen = require("default_import_file/fadeScreen")
+local config = require("config")
+local state = require("state")
+local utils = require("utils")
+local world = require("world")
+local level = require("level")
+local audio = require("audio")
+local signal = require("signal")
+local fadeScreen = require("fadeScreen")
 
 -- ================================================================
 -- ★ 前置声明：loadLevel 的 onPeak 闭包会在运行时引用 doLoadLevel，
@@ -71,7 +72,7 @@ local function createContainer()
 end
 
 -- ================================================================
--- ★ 检查 7 个层级容器，缺失的补建（创建顺序即显示层级，从下到上）
+-- ★ 检查 5 个层级容器，缺失的补建（创建顺序即显示层级，从下到上）
 -- ================================================================
 local function ensureContainers()
     local order = {
@@ -111,8 +112,21 @@ local function tryMove(key)
             if kind ~= "move" then dur = config.DEFAULT_ACTION_ANIM_TIME end
             level.beginPlayerMove(dur)
         end
-        if act.changed then level.rebuildObjects() end
+        if act.changed then
+            -- ★ 先登记「倒 / 立 / 侧推」的过渡，再重建：
+            --   rebuild 会跳过终点格上的真实木头，把那一格让给过渡代理逐帧画。
+            level.setObjectAnim(act)
+            level.rebuildObjects()
+        end
         level.spawnRipple(act.c, act.r)
+        -- ★ 木头落点补一圈扬尘：撞倒砸得重（大圈），立起 / 侧推轻（小圈）
+        if act.animTo then
+            if kind == "knock" then
+                level.spawnDust(act.animTo.c, act.animTo.r, 1.5)
+            elseif kind == "raise" or kind == "slide" then
+                level.spawnDust(act.animTo.c, act.animTo.r, 0.85)
+            end
+        end
         level.updateHudDisplay()
 
         if kind == "move" then
@@ -120,17 +134,18 @@ local function tryMove(key)
             audio.playStep()
         else
             utils.setMessage(act.msg or "")
+            -- 撞倒立着的树是「砰」，推动树干是「咕咚」—— 两套音效
             if kind == "knock" then audio.playKnock() else audio.playPush() end
             if act.changed then state.actionLock = config.DEFAULT_ACTION_COOLDOWN or 0.1 end
         end
 
         -- 出站：把玩家的关键动作报给服务器（便于外部统计/成就/关卡校验）
         if kind == "knock" then
-            signal.send("撞断树木")
+            signal.send("撞倒树木")
+        elseif kind == "slide" then
+            signal.send("推滑树干")
         elseif kind == "raise" then
-            signal.send("木桩立起")
-        elseif kind == "fall" then
-            signal.send("木桩倒下")
+            signal.send("树干立起")
         end
 
         if world.isWin() then state.won = true end
@@ -429,7 +444,7 @@ function OnStart()
     -- ★ 容器节点模板（可选）：5 个层级容器由它创建；留空则回退到矩形元件
     --   真机内置模板索引 1073741876（内部名 SoloTurnPoolHost），零配置即可命中
     state.containerPrefabId = getParamNumber("containerPrefabId", config.DEFAULT_PREFAB_CONTAINER)
-    -- ★ 纯色底图模板：沙滩 / 木桩 / 立桩 / 树根 / 石头 / 终点旗 / HUD 底衬 / 涟漪 / 黑幕
+    -- ★ 纯色底图模板：沙滩 / 树根 / 倒下的树 / 石头 / 终点旗 / HUD 底衬 / 涟漪 / 黑幕
     --   全靠它 + imageColor 染色画出来。
     --   首选「矩形」元件（1073741894，自带矩形图元，真机不需要再配白图）；
     --   当前存档里没有它时，utils.instantiateRect 会自动回退「图片」元件（1073741870）。

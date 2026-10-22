@@ -7,8 +7,8 @@
 ---@diagnostic disable: undefined-global
 
 local M = {}
-local state = require("default_import_file/state")
-local config = require("default_import_file/config")
+local state = require("state")
+local config = require("config")
 
 -- ================================================================
 -- ★ 配色：十六进制 RGB 字符串 → Color
@@ -97,7 +97,7 @@ end
 
 -- ================================================================
 -- ★ 创建图片控件（parent 缺省挂根）
---   本工程所有可视对象（海面/陆地/装饰/木桩/石头/小人/HUD/黑幕）都由它创建。
+--   本工程所有可视对象（海面/陆地/装饰/树根/倒下的树/石头/小人/HUD/黑幕）都由它创建。
 --   color = nil 时**不写 imageColor** —— 保留元件自带的配色与美术素材。
 --   ★ 「海水 / 草地 / 树木 / 人物」这四个素材元件必须走 color = nil 这条路：
 --     一旦写 imageColor，美术素材会被乘上一遍调色板颜色（变暗、串色）。
@@ -250,18 +250,19 @@ end
 
 -- ================================================================
 -- ★ 动作名 → 中文描述（HUD 与消息栏共用）
+--   键必须与 world.step() 返回的 kind 一一对应：
+--   move / knock / slide / raise / blocked / rock / water / high / invalid
 -- ================================================================
 function M.actionText(kind)
     local map = {
         move    = "移动",
-        knock   = "撞断树木",
-        push    = "推木桩",
-        raise   = "木桩立起",
-        fall    = "木桩倒下",
-        step_on = "踩上木桩",
+        knock   = "撞倒树木",
+        slide   = "侧推树干",
+        raise   = "树干立起",
         blocked = "此路不通",
         water   = "前方是水",
         rock    = "石头挡住了",
+        high    = "跨不上去",
         invalid = "过不去",
     }
     return map[kind] or tostring(kind or "")
