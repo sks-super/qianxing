@@ -219,6 +219,13 @@ M.playerShadowCtrl = nil  -- 小人脚下的接触阴影（2.5D：让小人真�
 --   一帧就要几十次 SetAnchoredPosition，白白烧性能。
 M.heroPixel = false       -- 本次构建是否走像素画（false = 回退立绘 / 纯色）
 M.heroPixelOn = true      -- 脚本参数 heroPixelOn（OnStart 读取后覆盖；false = 用素材立绘）
+-- ★ 立绘图片路径（第 15 批）：参数 heroImageS/W/A/D 填了图库图片 ID 就走这条，
+--   用「图片」元件 + SetImage 显示原画，比像素画清晰。四向共用一个控件。
+M.heroImageOn = false     -- 是否走图片立绘（S 向 ID > 0 即视为可用）
+M.heroImagePrefabId = 0   -- 立绘用的图片元件索引（默认 1073741870）
+M.heroImageIds = { S = 0, W = 0, A = 0, D = 0 }   -- 四向图库图片 ID（缺的朝向回退正面）
+M.playerCtrlImg = false   -- state.playerCtrl 是不是「图片立绘」（true 时不染色、底边压脚线）
+
 M.heroArtBox = nil        -- 承载像素块的容器（整幅画的坐标系原点在它中心）
 M.heroArtW = 0            -- 画布宽（像素）—— 摆位时要用
 M.heroArtH = 0            -- 画布高（像素）

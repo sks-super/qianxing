@@ -1,0 +1,38 @@
+--- /tmp/b14_game.lua	（第 14 批版本）
++++ 浮岛借木/game.lua
+@@ -522,6 +522,19 @@
+     state.heroPixelOn = paramSwitch("heroPixelOn", config.DEFAULT_HERO_PIXEL_ON)
+     state.playerFacing = "S"     -- 出生时面朝下（正面），第一帧就是正确的画
+ 
++    -- ★ 立绘图片路径（可选，第 15 批）：填**图库图片 ID** 就用「图片」元件直接显示原画，
++    --   比像素画清晰得多；一个都不填就退回像素画（保证真机不会出现一排「?」占位框）。
++    --   元件默认 1073741870（官方内置「图片」）；四向共用一个控件，换朝向只换图源。
++    --   缺的朝向自动回退正面（只填 heroImageS 也能跑，只是转身不变图）。
++    state.heroImagePrefabId = paramId("heroImagePrefabId", config.DEFAULT_PREFAB_IMAGE)
++    state.heroImageIds = {
++        S = paramId("heroImageS", 0),
++        W = paramId("heroImageW", 0),
++        A = paramId("heroImageA", 0),
++        D = paramId("heroImageD", 0),
++    }
++    state.heroImageOn = (state.heroImageIds.S or 0) > 0
++
+     -- ★ 2.5D 视角（可选）：地块厚度 + 岛缘投影 + 水面细网格线
+     --   view25d = 0 → 退回改动前的平面正交画法（沙边改用 DEFAULT_COAST_PAD 像素）
+     --   waterGridLines = 0 → 水面只留旧的水下深色棋盘（不画细网格线）
+@@ -541,11 +554,13 @@
+     --   只打一次；print 被裁掉就跳过。
+     if type(print) == "function" then
+         pcall(print, string.format(
+-            "[浮岛借木] 参数 useArt=%s heroPixelOn=%s view25d=%s zoom=%s | 元件 rect=%s container=%s player=%s",
++            "[浮岛借木] 参数 useArt=%s heroPixelOn=%s view25d=%s zoom=%s | 元件 rect=%s container=%s player=%s | 立绘图 S=%s W=%s A=%s D=%s",
+             tostring(state.useArt), tostring(state.heroPixelOn),
+             tostring(state.view25d), tostring(state.viewZoom),
+             tostring(state.rectPrefabId), tostring(state.containerPrefabId),
+-            tostring(state.playerPrefabId)))
++            tostring(state.playerPrefabId),
++            tostring(state.heroImageIds.S), tostring(state.heroImageIds.W),
++            tostring(state.heroImageIds.A), tostring(state.heroImageIds.D)))
+         -- ★ 版本戳：一眼看出编辑器里 level 脚本是不是最新那份。
+         --   level=b11 且 heroArt=有/无 都正常（像素画已经内置，不依赖 heroArt.lua）。
+         --   如果这里打的是「旧版」，说明 level.lua 还是老的，重新导入它。

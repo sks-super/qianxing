@@ -41,7 +41,7 @@ local config = require("config")
 local utils = require("utils")
 local world = require("world")
 
-M.BUILD = "b14"   -- 版本戳：真机日志里能一眼看出用的是哪一版文件
+M.BUILD = "b15"   -- 版本戳：真机日志里能一眼看出用的是哪一版文件
 
 -- ★ 小人像素画数据（由 _tools/make_hero_pixels.py 从四张立绘生成）
 --   ★ 这里只是「可选覆盖」：真正保底的是文件下方内联的 M.HERO_BUILTIN。
@@ -60,147 +60,162 @@ M.HERO_ART_LOADED = (heroArt ~= nil)   -- 供 game.lua 打版本日志；false �
 
 -- >>> HERO_BUILTIN BEGIN（由 _tools/emit_hero_builtin.py 生成，别手改）
 -- 小人的像素画底稿：heroArt.lua 没导入时用它，保证「不引用任何脚本/图片」也能画出小人。
--- 每格一个字符（0123456789abcde），"." = 透明；行内连续同色在运行时合并成一块矩形。
-M.HERO_BUILTIN_COLS = 17
-M.HERO_BUILTIN_ROWS = 28
-M.HERO_BUILTIN_CHARS = "0123456789abcde"
+-- 每格一个字符（0123456789abcd），"." = 透明；行内连续同色在运行时合并成一块矩形。
+M.HERO_BUILTIN_COLS = 20
+M.HERO_BUILTIN_ROWS = 32
+M.HERO_BUILTIN_CHARS = "0123456789abcd"
 M.HERO_BUILTIN_COLORS = {
-    "07080F",     -- 0
-    "38394F",     -- 1
-    "595D76",     -- 2
-    "506BAD",     -- 3
-    "82849A",     -- 4
-    "6E8DC8",     -- 5
-    "9BA2BD",     -- 6
-    "74AEE6",     -- 7
-    "ADB3CB",     -- 8
-    "9DC4E6",     -- 9
+    "585D74",     -- 0
+    "5779B7",     -- 1
+    "7091C0",     -- 2
+    "86A3C5",     -- 3
+    "73B5DB",     -- 4
+    "AAB4C4",     -- 5
+    "A0C4DC",     -- 6
+    "BEC5D4",     -- 7
+    "CED4E0",     -- 8
+    "DDD3D1",     -- 9
     "F2D8C4",     -- 10
-    "DCE2EE",     -- 11
-    "F8F7F6",     -- 12
-    "C2C9DC",     -- 13
-    "9AA3BE",     -- 14
+    "DCE0E8",     -- 11
+    "EFDFDA",     -- 12
+    "EFF2F7",     -- 13
 }
 M.HERO_BUILTIN = {
-    S = {   -- 185 块
-        "........2........",
-        "........3........",
-        ".....007772e.....",
-        "....03777773.....",
-        "...030edeed03....",
-        "..b33ddddddd0....",
-        "..033dddddddde...",
-        "..d0ddddddddde...",
-        ".0eedddddddddd...",
-        "eeeedddddddddd...",
-        "eeeedddbbddbdd...",
-        ".ebedde21eeebd...",
-        ".0eedddddcddbe...",
-        ".eeeedeccccce0...",
-        "..000ee121eee....",
-        "....00b02c0b.....",
-        "....b10b9900.....",
-        "....b010bb00.....",
-        "...88c03bb1cc....",
-        "..b6cc091299b....",
-        ".b681119cbc916...",
-        ".b8c55b9ccc9b6b..",
-        "9b8ccbcbccccc1b..",
-        "99bbbcbcbbcccb1..",
-        ".9888ccb1aabcbb..",
-        ".bbcb86162688cbb.",
-        "bbbcb88200888bbbb",
-        ".b8b...0909...8b.",
+    S = {   -- 152 块
+        "....................",
+        ".........44.........",
+        "......4.4444........",
+        "......41111114......",
+        "....41111111114.....",
+        "....41188888811.....",
+        "...511888888881.....",
+        "...1188888888888....",
+        "..55188888888888....",
+        "..55888888888888....",
+        "..558888888888888...",
+        "..558888c88888888...",
+        ".555888c008800888...",
+        ".55c888022cc22088...",
+        ".555888c6ccccc885...",
+        "..55888ccccccc885...",
+        "...55888522cc588....",
+        ".......8c22c........",
+        "......2d22222.......",
+        "......111dd411......",
+        ".....31122b811......",
+        "....3dd022822dd.....",
+        "...33dd222dd22d3....",
+        "..33ccd226dd6223....",
+        "..3336646dddd6433...",
+        "..336666dddddd663...",
+        ".33.bbdddddddddb33..",
+        "...bbbddccdd5ddbb...",
+        "..bbbdddcc5555dbbb..",
+        ".bbbb77588555577bbb.",
+        "bbbbbb55cc5c555bbbbb",
+        "........33.4........",
     },
-    W = {   -- 176 块
-        "........e........",
-        "........e........",
-        ".....727e500.....",
-        ".....3777773.....",
-        "...730dedde030...",
-        "...13ddddddd30...",
-        "...0dddddddd33...",
-        "...0ddddddddd0...",
-        "...0eddddddde0...",
-        "...eeeeeddeeee...",
-        "...eeeeeeeeeee...",
-        "..cedeeeeeeeddc..",
-        "...1eddededdd1...",
-        "...eeeeeeeeeee...",
-        "....0eeeeeee06...",
-        ".....0512c18b....",
-        ".....b5ccc33.....",
-        "....8b99bb310....",
-        "...68993b30cc....",
-        "..b6bbb1b19cbc...",
-        ".b668b55bb951c...",
-        ".b68189ccc9b9cc..",
-        "8b8151bcccbcbcc..",
-        "89b1bcbbbc8cbbbb.",
-        ".9888cbbbabcbb8..",
-        ".bbbbb1b0b1bbcbb.",
-        "bbbbb8620928bcbbb",
-        ".88b...0.0...b88.",
+    W = {   -- 103 块
+        "....................",
+        ".........44.........",
+        "......4.4444........",
+        "......41114114......",
+        "....45111111114.....",
+        "....41188888811.....",
+        "....118888888811....",
+        "....188888888881....",
+        "....888888888888....",
+        "....888888888888....",
+        "....888888888888....",
+        "...8888888888888....",
+        "...88888888888888...",
+        "..cc8888888888888...",
+        "....8888888888888...",
+        "....888888888888....",
+        ".....88888888888....",
+        ".......cc11c........",
+        ".......dccccd.......",
+        "......11222211......",
+        "......11222211......",
+        ".....dd622226dd.....",
+        "....cdd222222ddc....",
+        "....cc6222d2266c....",
+        "....6666dddd6666....",
+        "...6666ddddddd666...",
+        "...6bbddddddddd86...",
+        "...bbbdddddd5dd8b...",
+        "..bbbdddccdc55dbbb..",
+        ".bbbbd7588585577bbb.",
+        "bbbbbb55cccc555bbbbb",
+        "........33.3........",
     },
-    A = {   -- 168 块
-        ".................",
-        "......2..........",
-        ".....9200........",
-        ".....77710.......",
-        "....eede300e.....",
-        "....eddde3ede....",
-        "...eddddd30dde...",
-        "...dddddd3edde...",
-        "..eddddddededee..",
-        "..eddddddedeeee..",
-        "..eddbdddeeeeed..",
-        "...e82edddbdeee..",
-        "....cddddeedee0..",
-        "....ccedeeeee0e..",
-        "....0eeeeee2ee...",
-        ".....b1b06b82....",
-        "....82b8308b.....",
-        ".....003338b.....",
-        ".....b30cc6bb....",
-        "....0290cb666b...",
-        "....0c998c0666b..",
-        "....cc9b5c5966b..",
-        "...bccbc9cc928b8.",
-        "...bbbcbbbcbb699.",
-        "...b86bcb888889..",
-        "...8881bbbcbcb...",
-        "...8881c2bbccbb..",
-        "......00..bb88b..",
+    A = {   -- 101 块
+        "....................",
+        ".......4............",
+        "......44............",
+        "......41148.........",
+        "......1114888.......",
+        ".....888111888......",
+        "....88888118888.....",
+        "...8888881188888....",
+        "...8888888888888....",
+        "...8888888888888....",
+        "...8888888888888....",
+        "...8800888888888....",
+        "....823088cc88888...",
+        "....cccc88cc88888...",
+        ".....cc8888888888...",
+        "......c888488888....",
+        ".......821..77......",
+        ".......22cd.777.....",
+        "......42211.777.....",
+        ".......2211.777.....",
+        ".......22dd.777.....",
+        "......422ddd.777....",
+        "......d22ddd.777....",
+        ".....6d624c66777....",
+        ".....ddd666666777...",
+        ".....dddd66666677...",
+        ".....dddddbbbbb.7...",
+        ".....555dddbbbbb....",
+        "......55dddbbbbb....",
+        "......55887bbbbbb...",
+        ".......5c35bbbbbbbb.",
+        ".......333...bbbbbb.",
     },
-    D = {   -- 153 块
-        ".................",
-        ".........e.......",
-        "........019......",
-        "......be377......",
-        "....bee33ede.....",
-        "....ddd3eddde....",
-        "...eddeeddddde...",
-        "...eddeedddddd...",
-        "..ededdedddddd...",
-        "..0eeeeedddddd0..",
-        "..eeeeeeddddbd...",
-        "..0eddbedde21e...",
-        "..e1dededdddc....",
-        "..e1edeeeeecc....",
-        "...eeeee0eecc....",
-        "...b822c081......",
-        "...bbcc2300......",
-        "..b6cc8333b9.....",
-        "..bbc8ccc3bb.....",
-        "..91660cc299.....",
-        "..bb625cc99b.....",
-        ".0bb699c19ccc....",
-        "..b889cc9bbcc....",
-        ".99888bbcbbbb....",
-        "..928888cbb68....",
-        "...bb888bb88.....",
-        "..bc8cb81c2......",
-        "..b888b..00......",
+    D = {   -- 111 块
+        "....................",
+        "..........44........",
+        "..........44........",
+        ".......55414........",
+        "......5511118.......",
+        ".....554118888......",
+        "....55511188888.....",
+        "...5555118888888....",
+        "...5555518888888....",
+        "...5555588888888....",
+        "...5555588888888....",
+        "...5555588888888....",
+        "..55555588880088....",
+        "..55555c888802c.....",
+        "..5555558888ccc.....",
+        "...555555888ccc.....",
+        ".....55558188.......",
+        ".........c11........",
+        "........3b222.......",
+        ".......3111b4.......",
+        "......3311128.......",
+        ".....333dd222.......",
+        "....3332dd2224......",
+        "....3332cc22dd......",
+        "...333366246dd......",
+        "...33366666dddd.....",
+        "..33.bb68dddddd.....",
+        "....bbb88ddd55......",
+        "...bbbb8dddc55......",
+        "..bbbbb8dd8855......",
+        ".bbbb88bb5cc55......",
+        "..bbb88...333.......",
     },
 }
 -- <<< HERO_BUILTIN END
@@ -321,8 +336,11 @@ end
 
 -- 小人身体当前形态的「中心 → 脚下」距离
 --   ★ 像素画模式下 = 0：画布的底边本身就压着脚线，playerVisY 直接就是脚底高度。
+--   ★ 图片立绘 = 半格：控件是「1 格高 × 0.62 格宽」、pivot 在中心，
+--     中心离底边正好半格 —— 返回半格，playerAnchor 就直接给出控件中心。
 local function playerFootOffset()
     if state.heroPixel then return 0 end
+    if state.playerCtrlImg then return (state.cellSize or 1) * 0.5 end
     if state.playerCtrlArt then
         return artFootOffset("player")
     end
@@ -1301,6 +1319,22 @@ local function placeHeroArt()
 end
 
 -- ================================================================
+-- ★ 图片立绘：按当前朝向换图源（第 15 批）
+--   ★ 四向共用一个控件、只换图 —— 省控件也省内存。
+--   ★ 缺的朝向自动回退正面：只填 heroImageS 也能跑，只是转身不变图。
+--   ★ 换不了（ID 不存在 / 绑定不认 SetImage）时**什么都不做**：
+--     宁可停在上一张，也绝不把人藏起来变成「人没了」。
+-- ================================================================
+function M.applyPlayerImage()
+    if not state.playerCtrlImg or not state.playerCtrl then return false end
+    local ids = state.heroImageIds or {}
+    local id = tonumber(ids[state.playerFacing or "S"] or 0) or 0
+    if id <= 0 then id = tonumber(ids.S or 0) or 0 end
+    if id <= 0 then return false end
+    return utils.applyImage(state.playerCtrl, id)
+end
+
+-- ================================================================
 -- ★ 换朝向（走一步之前调用；只换画，不碰位置）
 --   ★ 只认 W/S/A/D 四个方向，别的键忽略 —— 免得把奇怪的值写进 state。
 --   ★ 转身在**规则判定之前**发生：顶着墙按方向键，人也会先转过去，
@@ -1312,6 +1346,8 @@ function M.setPlayerFacing(key)
     state.playerFacing = key
     if state.heroPixel then
         M.repaintPlayerArt()
+    elseif state.playerCtrlImg then
+        M.applyPlayerImage()      -- 图片立绘：换一张图就是转身
     end
 end
 
@@ -1326,14 +1362,32 @@ local function buildPlayer(palette)
     local cell = state.cellSize
     local slot = makeSlot(state.playerPrefabId)
 
+    -- ★ 立绘图片路径（第 15 批）：填了图库 ID 就优先用「图片」元件显示原画。
+    --   比像素画清晰得多 —— 原图是平滑矢量风，压到 68px 高再像素化，侧面必糊。
+    --   ⚠️ 没填 ID 时**绝不**走这条路：图片元件不带图源，真机会画成彩色「?」。
+    local heroImgOn = state.heroImageOn and (state.heroImageIds.S or 0) > 0
+
     if not state.playerCtrl then
-        local ctrl = utils.createControl(slot.prefab, 0, 0, 1, 1, nil, state.containerWorld)
-        state.playerCtrlArt = (ctrl ~= nil) and slot.art
-        if not ctrl then
-            ctrl = utils.createControl(state.rectPrefabId, 0, 0, 1, 1, nil, state.containerWorld)
-            state.playerCtrlArt = false
+        if heroImgOn then
+            local ctrl = utils.createControl(
+                state.heroImagePrefabId or config.DEFAULT_PREFAB_IMAGE,
+                0, 0, 1, 1, nil, state.containerWorld)
+            if ctrl then
+                state.playerCtrlImg = true
+                state.playerCtrlArt = true      -- 自带图源 → 不染色
+                state.playerCtrl = ctrl
+            end
         end
-        state.playerCtrl = ctrl
+        if not state.playerCtrl then
+            local ctrl = utils.createControl(slot.prefab, 0, 0, 1, 1, nil, state.containerWorld)
+            state.playerCtrlArt = (ctrl ~= nil) and slot.art
+            if not ctrl then
+                ctrl = utils.createControl(state.rectPrefabId, 0, 0, 1, 1, nil, state.containerWorld)
+                state.playerCtrlArt = false
+            end
+            state.playerCtrl = ctrl
+            state.playerCtrlImg = false
+        end
     end
     if not state.playerCtrl then return end
 
@@ -1362,7 +1416,9 @@ local function buildPlayer(palette)
 
     local why = ""
     state.heroPixel = false
-    if not pixelOn then
+    if heroImgOn and state.playerCtrlImg then
+        why = "走图片立绘（填了图库图片 ID）"
+    elseif not pixelOn then
         why = "脚本参数 heroPixelOn 被关闭（填了 -1）"
     elseif not heroSprite(state.playerFacing or "S") then
         why = "像素画数据不可用（heroArt.lua 没导入，且 level.lua 内置数据缺失）"
@@ -1385,9 +1441,15 @@ local function buildPlayer(palette)
     if not state.heroPixelLogged then
         state.heroPixelLogged = true
         if type(print) == "function" then
+            local mode = "素材立绘/纯色"
+            if state.heroPixel then mode = "像素画"
+            elseif state.playerCtrlImg then
+                mode = string.format("图片立绘(元件=%s)",
+                    tostring(state.heroImagePrefabId or 0))
+            end
             pcall(print, string.format(
                 "[浮岛借木] 小人=%s | 像素块=%d | 数据源=%s | 原因=%s",
-                state.heroPixel and "像素画" or "回退立绘/纯色",
+                mode,
                 state.heroBlockUsed or 0,
                 (heroDataFrom ~= "" and heroDataFrom) or "无",
                 (why ~= "" and why) or "无"))
@@ -1396,6 +1458,14 @@ local function buildPlayer(palette)
 
     if state.heroPixel then
         -- 已在上面画好，这里什么都不用做（保留分支只为结构清晰）
+    elseif state.playerCtrlImg then
+        -- ★ 图片立绘：1 格高 × 原图宽高比，底边压脚线（playerFootOffset 返回半格）
+        state.playerBodyH = cell
+        utils.setSize(state.playerCtrl, cell * (config.DEFAULT_HERO_IMG_W or 0.62), cell)
+        M.applyPlayerImage()
+        utils.setVisible(state.playerCtrl, true)
+        utils.setVisible(state.playerHeadCtrl, false)   -- 立绘自带头部
+        utils.setVisible(state.heroArtBox, false)
     elseif state.playerCtrlArt then
         local fit = (config.DEFAULT_ART_FIT or {}).player or { w = 0.751, h = 1.126, dy = 0.508 }
         state.playerBodyH = cell * (fit.h or 1.126)   -- 控件的实际高度（锚点换算用得到）
