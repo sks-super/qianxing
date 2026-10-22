@@ -362,10 +362,13 @@ B 的做法：把四张立绘离线压成「有限色 + 少量矩形」，**运�
 并且让它们**绕关节动**。
 
 ```
-heroPrims.lua 的每个视角 = 6 个部件（顺序固定）
-  1 head / 2 torso / 3 armL / 4 armR / 5 legL / 6 legR
+heroPrims.lua 的每个视角 = 7 个部件（顺序固定）
+  1 back（白底虚化） / 2 head / 3 torso / 4 armL / 5 armR / 6 legL / 7 legR
   每个部件：{ pivotX, pivotY, n, 然后 n × {x,y,w,h,rot,rgb,alpha} }
   ★ x,y 已经是「相对该部件关节」的偏移，直接贴进部件容器即可
+  ★ 部件容器之间的**绘制层次**必须按 PR_DRAW_ORDER：
+      back → legL/legR → torso → armL/armR → head
+    （衬裙在蓝裙子后面；反过来画就会看到「白衬裙盖住裙子」= 像裙子敞开）
 ```
 
 运行时结构（3 层）：

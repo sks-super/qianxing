@@ -1388,7 +1388,14 @@ end
 
 -- 取 / 建池里第 i 个图元控件
 -- 部件索引（与 heroPrims.lua 的 M.PARTS 顺序一致）
-local PR_HEAD, PR_TORSO, PR_ARM_L, PR_ARM_R, PR_LEG_L, PR_LEG_R = 1, 2, 3, 4, 5, 6
+--   1 back（白底虚化） / 2 head / 3 torso / 4 armL / 5 armR / 6 legL / 7 legR
+local PR_BACK, PR_HEAD, PR_TORSO, PR_ARM_L, PR_ARM_R, PR_LEG_L, PR_LEG_R = 1, 2, 3, 4, 5, 6, 7
+
+-- ★ 部件之间的**绘制层次**（后面 = 盖在上面），照原脚本的顺序还原：
+--     垫底白雾 → 腿（衬裙在蓝裙子后面） → 躯干（蓝裙子） → 两臂 → 头
+--   ⚠️ 一开始按「头/躯干/臂/腿」的自然顺序画，腿就排到了躯干之后——
+--      白色衬裙被画到蓝裙子上，看上去就像「裙子敞开」了。真机上一眼就是错的。
+local PR_DRAW_ORDER = { PR_BACK, PR_LEG_L, PR_LEG_R, PR_TORSO, PR_ARM_L, PR_ARM_R, PR_HEAD }
 
 -- 每个部件一个容器：容器中心钉在该部件的**关节**上，绕 Z 旋转 = 绕关节摆臂 / 迈腿。
 --   ★ 为什么要分成 6 个容器而不是把 300 多个椭圆全平铺：
@@ -1507,6 +1514,12 @@ function M.repaintHeroPrims()
         utils.setVisible(state.heroPrBox, false)
         return false
     end
+    -- ★ 按 PR_DRAW_ORDER 重排部件容器（SetAsLastSibling = 依次提到最上）
+    for i = 1, #PR_DRAW_ORDER do
+        local box = state.heroPrBoxes and state.heroPrBoxes[PR_DRAW_ORDER[i]]
+        if box then pcall(function() box:SetAsLastSibling() end) end
+    end
+
     state.heroPrUsed = used
     state.heroPrDrawn = state.playerFacing or "S"
     utils.setVisible(state.heroPrBox, true)
