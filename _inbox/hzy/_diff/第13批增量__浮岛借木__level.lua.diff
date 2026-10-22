@@ -1,0 +1,174 @@
+--- /tmp/b12_level.lua	（第 12 批版本）
++++ 浮岛借木/level.lua
+@@ -41,7 +41,7 @@
+ local utils = require("utils")
+ local world = require("world")
+ 
+-M.BUILD = "b12"   -- 版本戳：真机日志里能一眼看出用的是哪一版文件
++M.BUILD = "b13"   -- 版本戳：真机日志里能一眼看出用的是哪一版文件
+ 
+ -- ★ 小人像素画数据（由 _tools/make_hero_pixels.py 从四张立绘生成）
+ --   ★ 这里只是「可选覆盖」：真正保底的是文件下方内联的 M.HERO_BUILTIN。
+@@ -60,10 +60,10 @@
+ 
+ -- >>> HERO_BUILTIN BEGIN（由 _tools/emit_hero_builtin.py 生成，别手改）
+ -- 小人的像素画底稿：heroArt.lua 没导入时用它，保证「不引用任何脚本/图片」也能画出小人。
+--- 每格一个字符（0123456789abc），"." = 透明；行内连续同色在运行时合并成一块矩形。
++-- 每格一个字符（0123456789abcde），"." = 透明；行内连续同色在运行时合并成一块矩形。
+ M.HERO_BUILTIN_COLS = 17
+ M.HERO_BUILTIN_ROWS = 28
+-M.HERO_BUILTIN_CHARS = "0123456789abc"
++M.HERO_BUILTIN_CHARS = "0123456789abcde"
+ M.HERO_BUILTIN_COLORS = {
+     "07080F",     -- 0
+     "38394F",     -- 1
+@@ -78,24 +78,26 @@
+     "F2D8C4",     -- 10
+     "DCE2EE",     -- 11
+     "F8F7F6",     -- 12
++    "C2C9DC",     -- 13
++    "9AA3BE",     -- 14
+ }
+ M.HERO_BUILTIN = {
+-    S = {   -- 167 块
++    S = {   -- 185 块
+         "........2........",
+         "........3........",
+-        ".....0077729.....",
++        ".....007772e.....",
+         "....03777773.....",
+-        "...030bbbbb03....",
+-        "..b33bbbbbbb0....",
+-        "..033bbbbbbbbb...",
+-        "..b0bbbbbbbbbb...",
+-        ".0bbbbbbbbbbbb...",
+-        "bbbbbbbbbbbbbb...",
+-        "bbbbbbbbbbbbbb...",
+-        ".cbbbbb21bbbbb...",
+-        ".0bbbbb9cccbbb...",
+-        ".8bbbbbcccccb0...",
+-        "..0008b12188b....",
++        "...030edeed03....",
++        "..b33ddddddd0....",
++        "..033dddddddde...",
++        "..d0ddddddddde...",
++        ".0eedddddddddd...",
++        "eeeedddddddddd...",
++        "eeeedddbbddbdd...",
++        ".ebedde21eeebd...",
++        ".0eedddddcddbe...",
++        ".eeeedeccccce0...",
++        "..000ee121eee....",
+         "....00b02c0b.....",
+         "....b10b9900.....",
+         "....b010bb00.....",
+@@ -110,22 +112,22 @@
+         "bbbcb88200888bbbb",
+         ".b8b...0909...8b.",
+     },
+-    W = {   -- 165 块
+-        "........9........",
+-        "........9........",
+-        ".....7279500.....",
++    W = {   -- 176 块
++        "........e........",
++        "........e........",
++        ".....727e500.....",
+         ".....3777773.....",
+-        "...730bbbbb030...",
+-        "...13bbbbbbb30...",
+-        "...0bbbbbbbb33...",
+-        "...0bbbbbbbbb0...",
+-        "...0bbbbbbbbb0...",
+-        "...bbbbbbbbbbb...",
+-        "...bbbbbbbbbbb...",
+-        "..ccbbbbbbbbbbc..",
+-        "...1bbbbbbbbb1...",
+-        "...6bbbbbbbb88...",
+-        "....08bbb66606...",
++        "...730dedde030...",
++        "...13ddddddd30...",
++        "...0dddddddd33...",
++        "...0ddddddddd0...",
++        "...0eddddddde0...",
++        "...eeeeeddeeee...",
++        "...eeeeeeeeeee...",
++        "..cedeeeeeeeddc..",
++        "...1eddededdd1...",
++        "...eeeeeeeeeee...",
++        "....0eeeeeee06...",
+         ".....0512c18b....",
+         ".....b5ccc33.....",
+         "....8b99bb310....",
+@@ -140,22 +142,22 @@
+         "bbbbb8620928bcbbb",
+         ".88b...0.0...b88.",
+     },
+-    A = {   -- 138 块
++    A = {   -- 168 块
+         ".................",
+         "......2..........",
+         ".....9200........",
+         ".....77710.......",
+-        "....bbbb300b.....",
+-        "....bbbbb3bbb....",
+-        "...bbbbbb30bbb...",
+-        "...bbbbbb3bbbb...",
+-        "..bbbbbbbbbbbbb..",
+-        "..bbbbbbbbbbbbb..",
+-        "..bbbbbbbbbbbbb..",
+-        "...b82bbbbbbbb6..",
+-        "....ccbbbbbbbb0..",
+-        "....ccbbbb8bb08..",
+-        "....0c88888266...",
++        "....eede300e.....",
++        "....eddde3ede....",
++        "...eddddd30dde...",
++        "...dddddd3edde...",
++        "..eddddddededee..",
++        "..eddddddedeeee..",
++        "..eddbdddeeeeed..",
++        "...e82edddbdeee..",
++        "....cddddeedee0..",
++        "....ccedeeeee0e..",
++        "....0eeeeee2ee...",
+         ".....b1b06b82....",
+         "....82b8308b.....",
+         ".....003338b.....",
+@@ -170,22 +172,22 @@
+         "...8881c2bbccbb..",
+         "......00..bb88b..",
+     },
+-    D = {   -- 126 块
++    D = {   -- 153 块
+         ".................",
+-        ".........9.......",
++        ".........e.......",
+         "........019......",
+-        "......bb377......",
+-        "....bbb33bbb.....",
+-        "....bbb3bbbbb....",
+-        "...bbbbbbbbbbb...",
+-        "...bbbbbbbbbbb...",
+-        "..bbbbbbbbbbbb...",
+-        "..0bbbbbbbbbbb0..",
+-        "..bbbbbbbbbbbb...",
+-        "..06bbbbbbb218...",
+-        "..81bbbbbbbcc....",
+-        "..61bb8b8bbcc....",
+-        "...88666088cc....",
++        "......be377......",
++        "....bee33ede.....",
++        "....ddd3eddde....",
++        "...eddeeddddde...",
++        "...eddeedddddd...",
++        "..ededdedddddd...",
++        "..0eeeeedddddd0..",
++        "..eeeeeeddddbd...",
++        "..0eddbedde21e...",
++        "..e1dededdddc....",
++        "..e1edeeeeecc....",
++        "...eeeee0eecc....",
+         "...b822c081......",
+         "...bbcc2300......",
+         "..b6cc8333b9.....",
