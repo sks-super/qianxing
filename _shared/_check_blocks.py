@@ -124,7 +124,8 @@ def check_file(path: str):
                     # else/elseif 不算开启块，但 end 会闭合它们所在的 if
                     stack.pop()
 
-    for kw, ln in stack:
+    for item in stack:
+        kw, ln = item[0], item[1]
         errors.append(f"行{ln}: '{kw}' 未闭合（缺少 end/until）")
 
     # 前向引用粗检：文件中出现 `local xxx` 前置声明但从未赋值的弱提示

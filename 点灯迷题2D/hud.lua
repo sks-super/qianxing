@@ -33,12 +33,6 @@ function M.init()
     M.sub = utils.createText(-416, 268, 380, 26, "", utils.hexToColor(pal.textDim or "8296B8"),
         config.DEFAULT_HUD_SUB_SIZE or 15, par, "left")
 
-    M.modeBtn = utils.createButton(432, 300, config.DEFAULT_MODE_BTN_W or 122,
-        config.DEFAULT_MODE_BTN_H or 38, par, {
-        text = "找不同", fontSize = 17,
-        bg = pal.btn, bgDown = pal.btnDown, textColor = pal.accent,
-        onClick = function() if actions.onMode then actions.onMode() end end,
-    })
 
     M.steps = utils.createText(228, 300, 260, 40, "步数 0 / 最优 0",
         utils.hexToColor(pal.text or "E9F0FF"), 20, par, "right")
@@ -81,7 +75,7 @@ function M.init()
         onClick = function() if actions.onHint then actions.onHint() end end,
     })
     M.btnChapter = utils.createButton(bx + (bw + bgap) * 3, -300, bw, bh, par, {
-        text = "换大关", fontSize = config.DEFAULT_BTN_SIZE or 18,
+        text = "选关", fontSize = config.DEFAULT_BTN_SIZE or 18,
         bg = pal.btn, bgDown = pal.btnDown, textColor = pal.btnText,
         onClick = function() if actions.onChapter then actions.onChapter() end end,
     })
@@ -100,9 +94,6 @@ function M.refresh()
     utils.setText(M.title, (ch and ch.name or "") .. " · " .. (piece.name or ""))
     utils.setText(M.sub, "第 " .. state.chapterIndex .. "/" .. config.chapterCount()
         .. " 大关 · 第 " .. state.pieceIndex .. "/4 块 · 最优 " .. (state.bestSteps or 0) .. " 步")
-    if M.modeBtn then
-        utils.setText(M.modeBtn.label, (state.mode == 1) and "找不同" or "无参照")
-    end
     M.setSteps(state.moves or 0)
 
     for i = 1, 4 do
@@ -136,6 +127,7 @@ end
 
 function M.setButtons()
     local playing = (state.phase == "play")
+    if M.buttonsOff then return end
     if M.btnUndo then utils.setButtonEnabled(M.btnUndo, playing and #state.history > 0) end
     if M.btnHint then utils.setButtonEnabled(M.btnHint, playing) end
     if M.btnReset then utils.setButtonEnabled(M.btnReset, playing) end
@@ -154,6 +146,20 @@ function M.setChipDone(i)
     if M.chipText[i] then
         utils.setText(M.chipText[i], "★")
         utils.setTextColor(M.chipText[i], pal.star or "FFD166", 255)
+    end
+end
+
+-- ★ 整组隐藏按钮（结算/画册里这些按钮都没意义）
+function M.setButtonsVisible(v)
+    M.buttonsOff = not v
+    local list = { M.btnUndo, M.btnReset, M.btnHint, M.btnChapter }
+    for i = 1, #list do
+        local b = list[i]
+        if b then
+            if b.base then utils.setVisible(b.base, v) end
+            if b.label then utils.setVisible(b.label, v) end
+            if b.hit then utils.setVisible(b.hit, v) end
+        end
     end
 end
 

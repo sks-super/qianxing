@@ -51,6 +51,7 @@ function M.playClick() play(M.ids.click) end
 function M.playOpen()  play(M.ids.open) end
 function M.playWin()   play(M.ids.win) end
 function M.playFlip()  play(M.ids.flip) end
+-- 星星音（未配置就静默；「胜利音效」由 playWin 在通关那一刻播）
 function M.playStar()  play(M.ids.star) end
 
 return M

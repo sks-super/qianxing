@@ -267,6 +267,11 @@ function M.setVisible(v)
     if state.containerBoard then utils.setVisible(state.containerBoard, v) end
 end
 
+function M.setPlayVisible(v)
+    -- 只控右侧盘面（进关演出时要单独藏/放右侧，而左侧目标图另有安排）
+    if state.containerBoard then utils.setVisible(state.containerBoard, v) end
+end
+
 function M.setRefVisible(v)
     if state.containerRef then utils.setVisible(state.containerRef, v) end
 end

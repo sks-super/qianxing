@@ -10,6 +10,8 @@
 //
 // scenario: none（纯关卡） / select（选关面板） / win（通关面板） / fail（失败面板）
 //           cleared（通关第01关后再开选关，用于核对卡片上的通关标记）
+// ★ 没有 play 场景：游玩界面客户端不建任何控件（3D 由节点图渲染），
+//   scene.nodes 为空，渲染出来就是一张空图 —— 想验游玩界面请跑 _verify_ui.mjs。
 
 import { pathToFileURL } from 'node:url';
 import fs from 'node:fs';
@@ -29,6 +31,8 @@ const CANVAS_ID = opt('canvas', 'mobile-16-9');
 const ARCHIVE = opt('archive', '_simulator/TickHop.web.save.json');
 const SCENARIO = opt('scenario', 'select');
 const FRAMES = parseInt(opt('frames', '80'), 10);
+const PRESS = parseInt(opt('press', '0'), 10);   // 仅 scenario=guide/handbook 用：往后翻几页
+const UNLOCK = parseInt(opt('unlock', '0'), 10); // 仅 scenario=handbook 用：先发「服客同步存档信息」解锁到第 N 片
 
 const { api } = loadWebSession('cli');
 const call = (a, args = {}) => api('play', { action: a, args });
@@ -54,6 +58,34 @@ if (SCENARIO === 'select') {
 } else if (SCENARIO === 'win') {
   await call('key', { key: 'KeyboardMoveRightKeyDown' });
   await stepN(150);
+} else if (SCENARIO === 'win-signal') {
+  // ★ 通用做法：模拟服务器下发「服客关卡胜利」让客户端自己弹结算。
+  //   比按方向键走到终点稳定得多（不依赖各工程的按键映射）。
+  //   scenario win/fail 是旧版按键流，保留给 TickHop。
+  await call('serverSend', { target: 'PlayerSelf', name: '服客关卡胜利', params: [1] });
+  await stepN(120);
+} else if (SCENARIO === 'guide') {
+  // 教程 / 图册：首屏会自动弹序章，--press N 表示往后翻 N 页（每页 14 帧动画）。
+  // 例：--scenario guide --press 2 渲染序章第 3 页（选果园）。
+  for (let i = 0; i < PRESS; i++) {
+    await call('key', { key: 'KeyboardMoveRightKeyDown' });
+    await stepN(14);
+  }
+} else if (SCENARIO === 'handbook') {
+  // 完整图册（序章 + 第 1..N 课）：先关掉自动弹出的序章，再按 H 打开，然后往后翻 PRESS 页。
+  // --unlock 50 先模拟服务器下发「服客同步存档信息」，把全部教程课都解锁出来。
+  if (UNLOCK > 0) {
+    await call('serverSend', { target: 'PlayerSelf', name: '服客同步存档信息', params: [UNLOCK, []] });
+    await stepN(20);
+  }
+  await call('key', { key: 'KeyboardCraftspersonKey21Down' });   // L：关掉首屏序章
+  await stepN(10);
+  await call('key', { key: 'KeyboardCharacterSkill2KeyDown' });  // H：打开完整图册
+  await stepN(24);
+  for (let i = 0; i < PRESS; i++) {
+    await call('key', { key: 'KeyboardMoveRightKeyDown' });
+    await stepN(14);
+  }
 } else if (SCENARIO === 'cleared') {
   // 走到终点通关 → T 进下一关 → L 开选关：此时第01关卡片应带通关标记
   await call('key', { key: 'KeyboardMoveRightKeyDown' });

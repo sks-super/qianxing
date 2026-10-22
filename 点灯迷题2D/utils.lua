@@ -16,6 +16,7 @@
 local M = {}
 local state = require("default_import_file/state")
 local config = require("default_import_file/config")
+local audio = require("default_import_file/audio")
 
 -- ★ 文本框最小高度（绝对下限）。真机实测：高 56/54/30 正常、26/22 完全空白。
 --   对外暴露：布局必须按「兜高之后的盒子」排，否则会和隔壁打架。
@@ -370,6 +371,12 @@ function M.setScale(ctrl, s)
     pcall(function() ctrl:SetLocalScale(s, s, 1) end)
 end
 
+function M.setScaleXY(ctrl, sx, sy)
+    -- 非等比缩放（撞击时的「压扁—回弹」squash & stretch 用得到）
+    if not ctrl then return end
+    pcall(function() ctrl:SetLocalScale(sx, sy, 1) end)
+end
+
 function M.setPos(ctrl, x, y)
     if not ctrl then return end
     pcall(function() ctrl:SetAnchoredPosition(x, y) end)
@@ -533,7 +540,12 @@ function M.onClick(btn, fn)
     local target = (type(btn) == "table") and btn.hit or btn
     if not target or not fn then return false end
     local ok = pcall(function()
-        target:AddCursorEventListener(Enum.CursorEventType.CursorClick, function() fn() end)
+        target:AddCursorEventListener(Enum.CursorEventType.CursorClick, function()
+            -- ★ 所有按钮的统一点击音：clickAudioId（禁用的按钮不响）
+            if type(btn) == "table" and btn.enabled == false then return end
+            audio.playClick()
+            fn()
+        end)
     end)
     return ok == true
 end

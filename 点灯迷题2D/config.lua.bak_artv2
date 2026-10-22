@@ -1,0 +1,356 @@
+-- ================================================================
+-- 点灯迷题 16 · 参数配置（唯一真源）
+-- ================================================================
+-- 结构：一个大关 = 一张 16×16 勾线图 = 4 个 8×8 小关（左上/右上/左下/右下）。
+-- 每个小关单独玩，4/4 才合成大图并触发上色演出。
+-- ★ 8×8 十字翻转核满秩（64/64）→ 每个小盘面的解唯一，最优步数 = |A|。
+-- ================================================================
+
+---@diagnostic disable: undefined-global
+
+local M = {}
+
+-- ================================================================
+-- 一、棋盘
+-- ================================================================
+M.DEFAULT_ROWS = 8                  -- 小关边长（8×8 = 64 格）
+M.DEFAULT_COLS = 8
+M.DEFAULT_CELL = 46                 -- 小关格子边长（设计坐标）
+M.DEFAULT_GAP = 5
+M.DEFAULT_BOARD_CX = 236            -- 右侧「当前盘面」中心
+M.DEFAULT_BOARD_CY = -34
+M.DEFAULT_REF_CX = -236             -- 左侧「目标图案」中心
+M.DEFAULT_REF_CY = -34
+M.DEFAULT_BOARD_PAD = 10            -- 棋盘底板外扩
+
+-- ================================================================
+-- 二、画布
+-- ================================================================
+M.DEFAULT_VIEW_WIDTH = 1280
+M.DEFAULT_VIEW_HEIGHT = 720
+M.DEFAULT_DESIGN_WIDTH = 1280
+M.DEFAULT_DESIGN_HEIGHT = 720
+M.DEFAULT_MIN_SCALE = 0.42
+
+-- ================================================================
+-- 三、动效
+-- ================================================================
+M.DEFAULT_ANIM_FLIP_HALF = 0.070    -- 翻牌压扁
+M.DEFAULT_ANIM_FLIP_BACK = 0.150    -- 翻牌展开
+M.DEFAULT_ANIM_STAGGER = 0.030      -- 涟漪错峰
+M.DEFAULT_ANIM_INPUT_LOCK = 0.10    -- 额外锁（保证翻牌播完）
+M.DEFAULT_ANIM_SLOT_FLY = 0.55      -- 小关完成 → 拼图块飞入槽位
+M.DEFAULT_ANIM_ASSEMBLE = 0.60      -- 四块合拢
+M.DEFAULT_ANIM_COLOR_STAGGER = 0.006
+M.DEFAULT_ANIM_COLOR_TIME = 0.42
+M.DEFAULT_ANIM_NUMBER_TIME = 0.24
+M.DEFAULT_ANIM_NUMBER_POP = 1.20
+M.DEFAULT_ANIM_HINT_TIME = 1.20
+M.DEFAULT_ANIM_INTRO_TIME = 0.36
+M.DEFAULT_ANIM_INTRO_STAGGER = 0.012
+M.DEFAULT_ANIM_SHAKE = 3.0
+M.DEFAULT_ANIM_SHAKE_TIME = 0.14
+M.DEFAULT_SETTLE_GUARD = 0.55
+
+-- ================================================================
+-- 四、特效
+-- ================================================================
+M.DEFAULT_FX_PARTICLE_COUNT = 8
+M.DEFAULT_FX_PARTICLE_MAX = 220
+M.DEFAULT_FX_PARTICLE_SPEED = 220
+M.DEFAULT_FX_PARTICLE_SIZE = 8
+M.DEFAULT_FX_PARTICLE_LIFE = 0.42
+M.DEFAULT_FX_PARTICLE_GRAVITY = 700
+M.DEFAULT_FX_PARTICLE_SPIN = 200
+M.DEFAULT_FX_RING_TIME = 0.36
+M.DEFAULT_FX_RING_SCALE = 3.0
+M.DEFAULT_FX_RING_WIDTH = 3
+M.DEFAULT_FX_FLOAT_SIZE = 24
+M.DEFAULT_FX_FLOAT_LIFE = 0.70
+M.DEFAULT_FX_FLOAT_RISE = 62
+M.DEFAULT_FX_CONFETTI_COUNT = 44
+M.DEFAULT_FX_CONFETTI_SPEED = 380
+M.DEFAULT_FX_CONFETTI_LIFE = 1.25
+
+-- ================================================================
+-- 五、UI
+-- ================================================================
+M.DEFAULT_HUD_TITLE_SIZE = 30
+M.DEFAULT_HUD_SUB_SIZE = 15
+M.DEFAULT_HUD_STAT_SIZE = 30
+M.DEFAULT_HUD_STAT_LABEL_SIZE = 13
+M.DEFAULT_BTN_W = 132
+M.DEFAULT_BTN_H = 48
+M.DEFAULT_BTN_SIZE = 18
+M.DEFAULT_BTN_PRESS = 0.94
+M.DEFAULT_BTN_DISABLED_ALPHA = 96
+M.DEFAULT_CHIP = 46                 -- 顶部拼图槽单块尺寸
+M.DEFAULT_CHIP_GAP = 8
+M.DEFAULT_CHIP_Y = 258
+M.DEFAULT_MODE_BTN_W = 122
+M.DEFAULT_MODE_BTN_H = 38
+
+-- 黑幕过渡（fadeScreen.lua 用）
+M.DEFAULT_FADE_IN_TIME = 0.18
+M.DEFAULT_FADE_HOLD_TIME = 0.24
+M.DEFAULT_FADE_OUT_TIME = 0.20
+M.DEFAULT_FADE_MAX_ALPHA = 255
+
+-- ================================================================
+-- 六、玩法
+-- ================================================================
+M.DEFAULT_A_BY_PIECE = { 2, 3, 3, 4 }   -- 四块小关的 |A|（左上/右上/左下/右下）
+M.DEFAULT_STAR_TWO_EXTRA = 2
+M.DEFAULT_HINT_ENABLED = 1
+M.DEFAULT_UNDO_ENABLED = 1
+M.DEFAULT_MODE = 1                  -- 1=找不同复原 / 2=无参照复原
+
+-- ================================================================
+-- 七、配色（棋盘是白纸黑线，UI 是深色，对比拉满）
+-- ================================================================
+M.DEFAULT_PALETTE = {
+    bg        = "070A12",
+    bgGlow    = "152348",
+    bgGlow2   = "2A1550",
+    panel     = "111A2E",
+    panelEdge = "1E2A47",
+    paper     = "F7F8FA",   -- 棋盘白底
+    ink       = "111318",   -- 勾线
+    inkDim    = "4A5266",   -- 未完成槽位的示意线
+    cellOn    = "FFCB6B",
+    cellOnTop = "FFE9B8",
+    glow      = "FFB020",
+    cellOff   = "1B2742",
+    cellOffTop = "2A3A60",
+    accent    = "4CC9F0",
+    accentSoft = "1E4A63",
+    good      = "5BE7A9",
+    star      = "FFD166",
+    text      = "E9F0FF",
+    textDim   = "8296B8",
+    btn       = "1C2740",
+    btnDown   = "27364F",
+    btnText   = "DCE7FA",
+    scrim     = "05070F",
+}
+
+-- ================================================================
+-- 八、图案（16×16 勾线；# = 黑线，. = 白底）
+-- ================================================================
+local CAT = {
+"................",
+"................",
+"...#........#...",
+"..#.#......#.#..",
+"..#..######..#..",
+"..#..........#..",
+"..#..#....#..#..",
+"..#..#....#..#..",
+"..#....##....#..",
+"..#..........#..",
+"..#..........#..",
+"...#........#...",
+"....########....",
+"................",
+"................",
+"................",
+}
+
+local MUSHROOM = {
+"................",
+"................",
+"....########....",
+"...##......##...",
+"..##..#..#..##..",
+".##..........##.",
+".##############.",
+".......##.......",
+".......##.......",
+".......##.......",
+"......####......",
+"................",
+"................",
+"................",
+"................",
+"................",
+}
+
+-- 每个大关：一张 16×16 图 + 主色/辅助色/高光色
+M.CHAPTERS = {
+    {
+        key = "cat", name = "猫脸", pic = CAT,
+        colors = { "B8C2CC", "E8EEF5", "FF9AA2" },
+        tip = "点一格，十字五格一起黑白翻转",
+    },
+    {
+        key = "mushroom", name = "蘑菇", pic = MUSHROOM,
+        colors = { "E4572E", "F2E9D6", "FFD666" },
+        tip = "把左边那条线，在右边一比一还原",
+    },
+}
+
+function M.chapterCount()
+    return #M.CHAPTERS
+end
+
+function M.getChapter(i)
+    i = math.floor(tonumber(i) or 0)
+    if i < 1 or i > #M.CHAPTERS then return nil end
+    return M.CHAPTERS[i]
+end
+
+-- ================================================================
+-- 64×64 彩色画（由 _art/gen_art64.py 生成）
+--   每行是 RLE：字符 = 调色板下标（0-9A-Z，Z 表示透明），紧跟一位是连续个数
+--   ★ 不要手改，改美术请改生成器再回归
+-- ================================================================
+M.ART64 = {
+    mushroom = {
+        pal = { "7C2A11", "CF7C4A", "DE804B", "DB7D49", "D27241", "EC824A", "D06E3D", "DF733E", "E9D5B4", "EB733D", "CC6738", "FFF6E3", "D66A39", "C75B30", "C35C30", "DC6736", "CF5F31", "B8522B", "C7582D", "B64F28", "B29C76", "E0D1B2", "DDCEAD", "B19A73", "DACAA8", "D7C6A3", "B09872", "D4C39E", "AF9871" },
+        rows = {
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+            "ZG0WZG",
+            "ZG0WZG",
+            "ZG0WZG",
+            "ZG0WZG",
+            "ZC081O08ZC",
+            "ZC08112I341108ZC",
+            "ZC0841315234583452314108ZC",
+            "ZC084131513164315631647151716108ZC",
+            "Z808644151416184614191529141A184A1419141A408Z8",
+            "Z808A1437241A181B281A1C1715271C1A181B281A1C172C3A108Z8",
+            "Z808A1C1729171C1A181B281A1C1719271C1A181B281A1C1719172C1D108Z8",
+            "Z808E1C1719271C1E184D1C1F192F1C1D184D1C1F192F1G1D108Z8",
+            "Z408E4G1F194F1G1E4G1F194F1G1E4G1F194F1G1E408Z4",
+            "Z408E1G3F8G4F8D4F2G6D3H108Z4",
+            "Z408H1DIIKH108Z4",
+            "Z408HEJQ08Z4",
+            "Z40Z0LZ4",
+            "Z40Z0LZ4",
+            "Z40Z0LZ4",
+            "Z40Z0LZ4",
+            "ZSK8ZS",
+            "ZSK1L6K1ZS",
+            "ZSK1L6K1ZS",
+            "ZSK1M6K1ZS",
+            "ZSN1M6N1ZS",
+            "ZSN1O6N1ZS",
+            "ZSN1O6N1ZS",
+            "ZSN1O6N1ZS",
+            "ZSN1P6N1ZS",
+            "ZSQ1P6Q1ZS",
+            "ZSQ1P6Q1ZS",
+            "ZSQ1R6Q1ZS",
+            "ZOS4R8S4ZO",
+            "ZOS1RES1ZO",
+            "ZOS1RES1ZO",
+            "ZOSGZO",
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+        },
+    },
+    cat = {
+        pal = { "3F4C63", "FC99AA", "A1ABC1", "ACB9CF", "9DABC0", "A7B5CC", "EE7E94", "9AA7BB", "A5B3CA", "B1BFD6", "B0BDD2", "A5B0C7", "B9C7DB", "98A4B9", "A2B0C6", "A0AFC6", "B4C2D9", "94A1B7", "A9B8CF", "22354E", "909DB1", "C7D1E2", "ADBCD4", "8C9AAE", "A3B3CC", "8791A7", "9698AE", "AFA8C1", "AB97AD" },
+        rows = {
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+            "ZC04ZW04ZC",
+            "ZC04ZW04ZC",
+            "ZC04ZW04ZC",
+            "ZC04ZW04ZC",
+            "Z8041404ZO042414Z8",
+            "Z8041404ZO0421322114Z8",
+            "Z8041404ZO0441524114Z8",
+            "Z8046404ZO0441527164Z8",
+            "Z804480O748191817104Z8",
+            "Z8047156710O7183A2B17104Z8",
+            "Z8047181A481710O71B1A2C1A1B17104Z8",
+            "Z80471B1A1C2A1B1710OD1E1A1C2A1E1D104Z8",
+            "Z804D1B1A1C3A1B1DOE131C331E1D104Z8",
+            "Z804D1E131C431EEFA31G431F1H104Z8",
+            "Z804D1E131C431E2F23G2431G4I121H104Z8",
+            "Z804H12131G33121H421I1GCI141H441I1G3I141H104Z8",
+            "Z804H121I1G2I121H1J4H141I1GA5141H1J4H14151925141K104Z8",
+            "Z804H14151G25141H1J1L1J2H141519A5141K1J1L1J2K14181928141K104Z8",
+            "Z804H14151925141K1J4K141519A8141K1J4K1718191M18171K104Z8",
+            "Z804K14181928171K1J4K17181MA8171K1J4K171B1M2E171K104Z8",
+            "Z804K1718191M18171K1J4K17181MAB171K1J4K171E1M2E171K104Z8",
+            "Z804K17181M28171K1J4K171B1M1E8M1E171N1J4N1D1F1M2F1D1N104Z8",
+            "Z804K171E1M2E171N1J4N1D1F2D8F2D1N1J4N1D1F1I2F1D1N104Z8",
+            "Z804N1D1F1M131F1D1N1J4N1D1F1D1N3K2N3D1F1D1N1J4N1H1F1I2F1H1N104Z8",
+            "Z804N1D1F1I3F1D1N4H1F1D1N118N1H1F1H1N4H1F1I341H1N104Z8",
+            "Z804N1H1F1I4F1H4F2D1K168K1D1F141H44151O341H1P104Z8",
+            "Z804N1H1415544I1F1D1K168K1D1415144O541H1P104Z8",
+            "Z804N1H14156O251I1F171H168H171F151O941K1P104Z8",
+            "Z804P1H14184O451I2B141D176D141E1I151O6B371K1P104Z8",
+            "Z804P1H121B382O351I131M151B254B1E151M1I151O3F1E1B471K1P104Z8",
+            "Z804P1Q121R3B3O251I131A19131A191G192A13191A131I1O2F2B2R371Q1P104Z8",
+            "Z804Q2R5B3O151I1M1A1G1C8G1A1M1I1O2F221R5Q1P104Z8",
+            "Z804Q1S1R6B2O151I1M191G1C2L4C2G191M1I181O1F121R5S1Q1P104Z8",
+            "Z804Q1S3R4B2O2I1M191G1C1L6C1G191M1I1O1F221R4S3P104Z8",
+            "Z804Q1S4R321E1O2I1M191G1C1L6C1G191M151O1F122R3S4P104Z8",
+            "Z804P1Q1S4R221F2O15131A1G1C1L6C1G1A1I151O1F123R1S4Q1P104Z8",
+            "ZC04S323F1O151I1M191C2L4C291M1I1O1F24221S1Q204ZC",
+            "ZC04Q2D1H3D17141F1815131A1G1C2G1A13151B1F14171H3Q3P104ZC",
+            "ZC04P1Q1N2P1N2K1H1D17141E181513251B1E14171H1K1N2P604ZC",
+            "ZC04P9N1K2D1724272H1K1N2P904ZC",
+            "ZG0WZG",
+            "ZG0WZG",
+            "ZG0WZG",
+            "ZG0WZG",
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+            "ZZZT",
+        },
+    },
+}
+
+-- 四块的名称与象限原点（0 基）
+M.PIECES = {
+    { name = "左上", ox = 0, oy = 0 },
+    { name = "右上", ox = 8, oy = 0 },
+    { name = "左下", ox = 0, oy = 8 },
+    { name = "右下", ox = 8, oy = 8 },
+}
+
+return M

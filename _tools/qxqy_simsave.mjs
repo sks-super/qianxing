@@ -41,6 +41,18 @@ const GUID_TEXT = 2000002;
 //   cursor 控件则是 raycastTarget!==false 即算命中，所以必须有一个真正的 cursor 模板。
 const GUID_CURSOR = 2000003;
 const IMAGE_RECT_PRIMITIVE = 100001;
+// ★ 其它基础图元模板（圆形 / 三角形 / 四角星 / 五角星 / 圆环）
+//   真机上它们是「图片元件 + 不同图片资源」，模拟器用 imageId 100002..100006 表达。
+//   注册成独立 guid 之后，脚本只要把 circlePrefabId / ringPrefabId 等参数指过来，
+//   就能在试玩里看到真正的圆、椭圆、圆环——只注册矩形的话圆会被画成方块。
+const PRIMITIVE_TEMPLATES = [
+  { key: 'tsCircle', guid: 2000004, imageId: 100002, name: 'SIM_圆形' },
+  { key: 'tsTriangle', guid: 2000005, imageId: 100003, name: 'SIM_三角形' },
+  { key: 'tsStar4', guid: 2000006, imageId: 100004, name: 'SIM_四角星' },
+  { key: 'tsStar5', guid: 2000007, imageId: 100005, name: 'SIM_五角星' },
+  { key: 'tsRing', guid: 2000008, imageId: 100006, name: 'SIM_圆环' },
+];
+const PRIMITIVE_KEYS = PRIMITIVE_TEMPLATES.map((t) => t.key);
 
 const abs = (p) => (path.isAbsolute(p) ? p : path.resolve(WORKSPACE, p));
 
@@ -153,10 +165,27 @@ tCursor.raycastTarget = true;
 tCursor.enableMask = false;
 tCursor.imageColor = 0;          // 全透明，命中区不该被看见
 
+// 各基础图元模板：克隆矩形模板，只换 imageId（= 换图元原语）
+const primitiveNodes = PRIMITIVE_TEMPLATES.map((t) => {
+  const n = makeTemplate(protoImage, { id: t.key, guid: t.guid, name: t.name, size: { x: 100, y: 100 } });
+  n.imageSource = 'StaticReference';
+  n.imageId = t.imageId;
+  n.imageColor = 4294967295;
+  n.enableMask = false;
+  n.enableFill = false;
+  n.fillType = 'Unused';
+  n.raycastTarget = false;
+  return n;
+});
+
 // ---- 3) 挂到 client root.children 下，成为可实例化模板 ----
+// ★ 模板节点本身必须保持 active/visible = true：实测设成 false 会把
+//   InstantiateClientUIControl 造出来的副本一起变成 inactive（nodes 55 → 5，整屏全空）。
+// ★ root.children 里除了「Lua实例化面板」容器（n1，挂载目标，guid=1073742100）
+//   和我们的模板，不能有别的东西 —— 别整段替换，n1 被删掉挂载直接失败。
 const root = client.root;
-root.children = (root.children || []).filter((n) => !['tsRect', 'tsText', 'tsCursor'].includes(n.id));
-root.children.push(tRect, tText, tCursor);
+const keepContainers = (root.children || []).filter((n) => n.kind === 'container');
+root.children = [...keepContainers, tRect, tText, tCursor, ...primitiveNodes];
 
 // ---- 4) 清空模板根 n1 的装饰子节点，留出干净试玩画面 ----
 const templateRoot = root.children.find((n) => n.kind === 'container');
@@ -186,4 +215,5 @@ console.log('# 可实例化模板:');
 eachNode(root, (n) => {
   if (root.children.includes(n)) console.log(`#   guid=${n.guid}  ${n.kind.padEnd(8)} ${n.name}`);
 });
-console.log(`# 脚本参数建议: {"rectPrefabId":${GUID_RECT},"textPrefabId":${GUID_TEXT},"cursorPrefabId":${GUID_CURSOR}}`);
+console.log(`# 脚本参数建议: {"rectPrefabId":${GUID_RECT},"textPrefabId":${GUID_TEXT},"cursorPrefabId":${GUID_CURSOR}`
+  + `,"circlePrefabId":2000004,"ringPrefabId":2000008}`);

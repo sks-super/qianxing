@@ -14,6 +14,12 @@ export const SIM_TEMPLATE_GUIDS = {
   cursorPrefabId: 2000003,
   // 真容器：模拟器的命中测试只下钻真容器，图片当父节点时子控件点不到
   containerPrefabId: 1073742100,
+  // 圆形 / 圆环图元：拼云朵、果实、圆角、光晕用（不配就退化成矩形）
+  circlePrefabId: 2000004,
+  ringPrefabId: 2000008,
+  trianglePrefabId: 2000005,
+  star4PrefabId: 2000006,
+  star5PrefabId: 2000007,
 };
 
 // Web 端的存档扫描标记：文件内容必须含这个子串才会出现在存档下拉里

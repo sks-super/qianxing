@@ -38,7 +38,19 @@ M.containerFx = nil
 M.containerHud = nil
 M.containerChips = nil      -- 顶部拼图槽
 M.containerWin = nil
+M.containerBook = nil       -- 画册选关（主界面）
+M.chapterDone = nil         -- 每个大关的四块通关表：{ [chIdx] = {b,b,b,b} }
+M.bookBusy = false
 M.containerFade = nil
+M.containerTop = nil       -- 常驻浮层（结算按钮等，压着画册）
+M.containerGuide = nil     -- 教程 / 引导高亮（最上层）
+M.guideOpen = false
+M.tutorialDone = false     -- 本次会话是否看过教程
+M.tutorialHint = false     -- 是否处于「跟着高亮走」的引导模式
+M.playTime = 0             -- 本次小关已游玩秒数（结算倒计时用）
+M.settleSec = -1           -- 上一帧显示的倒计时整数秒（变化时才刷文本）
+M.settling = false         -- 正在结算 / 已结算
+M.achDone = {}             -- 已经发过成就的大关（防重复）
 
 -- 章节 / 小关
 M.chapterIndex = 1
@@ -87,5 +99,6 @@ M.clickAudioId = 0
 M.flipAudioId = 0
 M.winAudioId = 0
 M.starAudioId = 0
+M.openAudioId = 0        -- 进入关卡音效（openAudioId）
 
 return M
