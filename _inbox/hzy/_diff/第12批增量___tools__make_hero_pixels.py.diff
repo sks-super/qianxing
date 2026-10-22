@@ -1,0 +1,253 @@
+--- /tmp/b12_make_hero_pixels.py	2026-10-22 13:03:52.093320300 +0800
++++ _tools/make_hero_pixels.py	2026-10-22 12:47:42.657192400 +0800
+@@ -99,12 +99,37 @@
+     return np.clip(np.round(centers), 0, 255)
+ 
+ 
++def dedupe_palette(centers, thresh):
++    """★ 这一步是「颜色预算」的关键。
++
++    角色整身浅色，k-means 会把 F5F8FB / F3F6FA / E5EBF4 这类几乎一样的白各占一格 ——
++    12 色里有 5 格在描述同一个白，于是蓝色头冠、眼睛、裙摆的青蓝全部没名额。
++    这里把「看起来是同一个颜色」的中心并成一个，把省下的名额还给有色相的颜色。
++    """
++    cs = [np.asarray(c, dtype=float) for c in centers]
++    changed = True
++    while changed and len(cs) > 2:
++        changed = False
++        for i in range(len(cs)):
++            for j in range(i + 1, len(cs)):
++                if color_dist(cs[i], cs[j]) < thresh:
++                    cs[i] = (cs[i] + cs[j]) / 2.0
++                    del cs[j]
++                    changed = True
++                    break
++            if changed:
++                break
++    lum = np.array([c @ np.array([0.299, 0.587, 0.114]) for c in cs])
++    cs = [cs[i] for i in np.argsort(lum)]
++    return np.clip(np.round(np.array(cs)), 0, 255)
++
++
+ def nearest_index(patch_pixels, palette):
+     d = (((patch_pixels[:, None, :] - palette[None, :, :]) * CHROMA_W) ** 2).sum(axis=2)
+     return d.argmin(axis=1)
+ 
+ 
+-def sample_grid(im, bbox, rows, cols, palette, dark_lum=None):
++def sample_grid(im, bbox, rows, cols, palette, dark_lum=None, cover_min=None, dark_share=None):
+     """一格里取「众数色」。返回 (rows, cols) 的索引图，-1 = 透明。
+ 
+     ★ 暗色优先：描边和瞳孔在格子里只占少数，纯众数会把它们投掉，
+@@ -115,7 +140,12 @@
+     x0, x1, y0, y1 = bbox
+     bw, bh = x1 - x0 + 1, y1 - y0 + 1
+     wts = np.array([0.299, 0.587, 0.114])
++    cover = COVER_MIN if cover_min is None else cover_min
++    dshare = DARK_SHARE if dark_share is None else dark_share
+     grid = np.full((rows, cols), -1, dtype=np.int32)
++    darkfrac = np.zeros((rows, cols), dtype=np.float32)
++    skinfrac = np.zeros((rows, cols), dtype=np.float32)
++    skin_ref = np.asarray(ANCHORS[0], dtype=float)
+     for r in range(rows):
+         sy0 = y0 + int(round(r * bh / rows))
+         sy1 = y0 + int(round((r + 1) * bh / rows))
+@@ -124,17 +154,71 @@
+             sx1 = x0 + int(round((c + 1) * bw / cols))
+             patch = im[sy0:max(sy1, sy0 + 1), sx0:max(sx1, sx0 + 1)]
+             solid = patch[:, :, 3] > ALPHA_MIN
+-            if solid.mean() < COVER_MIN:
++            if solid.mean() < cover:
+                 continue
++            # ★ 肤色必须「暖」：R 明显高于 B。
++            #   只看 RGB 欧氏距离会把白裙 / 银发（DCE2EE、F8F7F6）也判成肤色，
++            #   一旦当成肤色，整只小人会被刷成一坨肉色（试过，直接毁掉）。
++            warm = (patch[:, :, 0] - patch[:, :, 2]) > 14
++            skin = warm & solid & \
++                (np.linalg.norm(patch[:, :, :3] - skin_ref, axis=2) < 95.0)
+             rgb = patch[:, :, :3][solid]
+             if dark_lum is not None:
+                 dark = solid & ((patch[:, :, :3] @ wts) < dark_lum)
+-                if dark.mean() >= DARK_SHARE:
++                if dark.mean() >= dshare:
+                     rgb = patch[:, :, :3][dark]
+             idx = nearest_index(rgb, palette)
+             vals, cnt = np.unique(idx, return_counts=True)
+             grid[r, c] = int(vals[cnt.argmax()])
+-    return grid
++            if dark_lum is not None:
++                darkfrac[r, c] = float((solid & ((patch[:, :, :3] @ wts) < dark_lum)).mean())
++            if skin is not None:
++                skinfrac[r, c] = float(skin.mean())
++    return grid, darkfrac, skinfrac
++
++
++def face_fix(grid, darkfrac, skinfrac, palette, skin_idx, dark_lo=0.30, dark_hi=0.52,
++             skin_min=0.45, max_share=0.22):
++    """把「脸」修成能看得懂的样子。
++
++    为什么要单独修：1 格高的小人，脸只有十几格，刘海、睫毛、瞳色在众数采样里会互相吃掉，
++    结果整张脸糊成一团深色块（看得出是个人，但看不出有眼睛）。
++    做法：按「肤色格」找出每一行脸的范围，行内补成肤色；源图在同一格**真的很暗**的地方
++    （睫毛 / 瞳孔）才放深色，而不是让深色漫到整片脸。
++
++    ⚠️ 安全阀：修出来的肤色格超过实心格的 max_share 就判定「认错了肤色」，原样返回。
++       没有这个阀，白色一旦被当成肤色，整只小人会被刷成一坨肉色。
++    """
++    rows, cols = grid.shape
++    g = grid.copy()
++    sf = skinfrac
++    solid = int((grid >= 0).sum())
++    if solid == 0:
++        return g
++    face_rows = [r for r in range(rows) if (sf[r] >= skin_min).sum() >= 2]
++    if not face_rows:
++        return g
++    # 脸只可能在角色上半部：把明显偏下的行剔掉，避免把裙摆的暖色也当脸
++    top = min(face_rows)
++    face_rows = [r for r in face_rows if r - top <= rows * 0.35]
++    painted = 0
++    for r in face_rows:
++        xs = np.nonzero(sf[r] >= skin_min)[0]
++        lo, hi = int(xs.min()), int(xs.max())
++        for c in range(lo, hi + 1):
++            if g[r, c] < 0:
++                continue
++            d = darkfrac[r, c]
++            if d >= dark_hi:
++                g[r, c] = 0                      # 瞳孔 / 睫毛：用最深的色
++            elif d >= dark_lo:
++                g[r, c] = min(2, len(palette) - 1)   # 眼的阴影
++            else:
++                g[r, c] = skin_idx
++            painted += 1
++    if painted > solid * max_share:
++        return grid                              # 认错肤色 → 放弃本次修形
++    return g
+ 
+ 
+ def denoise(grid, passes=1):
+@@ -162,8 +246,16 @@
+     return g
+ 
+ 
+-def to_rects(grid):
+-    """行 RLE + 向下合并。输出 [(x, y, w, h, colorIndex), ...]，y 从上往下。"""
++def color_dist(a, b):
++    return float(np.sqrt(((np.asarray(a, dtype=float) - np.asarray(b, dtype=float)) ** 2).sum()))
++
++
++def to_rects(grid, palette=None, merge_tol=0.0):
++    """行 RLE + 向下合并。输出 [(x, y, w, h, colorIndex), ...]，y 从上往下。
++
++    merge_tol > 0 时，上下相邻两行**颜色足够接近**也允许并成一块（用上面那条的颜色）：
++    控件数是真机的硬约束，细微色差在 1 格像素上肉眼看不出来，但能省掉大量碎块。
++    """
+     rows, cols = grid.shape
+     # ① 每行先 RLE
+     runs = []   # (y, x, w, c)
+@@ -179,19 +271,28 @@
+                 c += 1
+             runs.append([r, s, c - s + 1, int(v)])
+             c += 1
+-    # ② 向下合并：同 x / 同 w / 同色，且上一行正好有一条相同的
++    # ② 向下合并：同 x / 同 w，且上一行正好有一条「同色或近色」的
+     rects = []
+-    open_map = {}   # (x, w, c) -> rect 下标
++    open_map = {}   # (x, w) -> [rect 下标...]
+     for run in runs:
+         y, x, w, c = run
+-        key = (x, w, c)
+-        idx = open_map.get(key)
+-        if idx is not None and rects[idx][1] + rects[idx][3] == y:
+-            rects[idx][3] += 1          # 长高一行
++        cand = None
++        for idx in open_map.get((x, w), ()):
++            rr = rects[idx]
++            if rr[1] + rr[3] != y:
++                continue
++            if rr[4] == c:
++                cand = idx
++                break
++            if merge_tol > 0 and palette is not None and \
++                    color_dist(palette[rr[4]], palette[c]) <= merge_tol:
++                cand = idx
++                break
++        if cand is not None:
++            rects[cand][3] += 1          # 长高一行
+         else:
+             rects.append([x, y, w, 1, c])
+-            open_map[key] = len(rects) - 1
+-    # 清理：合并可能打断同一 key 的连续性，逐条重算（简单可靠）
++            open_map.setdefault((x, w), []).append(len(rects) - 1)
+     return [tuple(rr) for rr in rects]
+ 
+ 
+@@ -222,6 +323,19 @@
+     ap = argparse.ArgumentParser()
+     ap.add_argument("--rows", type=int, default=32, help="角色内容高的像素行数")
+     ap.add_argument("--cols", type=int, default=0, help="0 = 按原图宽高比自动算")
++    ap.add_argument("--k", type=int, default=PALETTE_K, help="调色板颜色数")
++    ap.add_argument("--pal-dedupe", type=float, default=0.0,
++                    help="把 RGB 距离小于它的两个调色板色并成一个（0 = 不去重）")
++    ap.add_argument("--cover", type=float, default=COVER_MIN, help="一格视为实心所需的内容占比")
++    ap.add_argument("--denoise", type=int, default=2, help="3×3 众数滤波遍数")
++    ap.add_argument("--dark-share", type=float, default=DARK_SHARE,
++                    help="格内暗像素占到这么多才改用暗色（越小描边越黑、脸越糊）")
++    ap.add_argument("--merge-tol", type=float, default=0.0,
++                    help="上下相邻行的颜色距离小于它也可并块（省控件，单位 RGB 欧氏距离）")
++    ap.add_argument("--face-fix", action="store_true",
++                    help="脸部修形：按肤色补脸、只在源图很暗处放瞳孔（避免整张脸糊成深色块）")
++    ap.add_argument("--out", default="", help="heroArt.lua 输出路径（默认写进游戏目录）")
++    ap.add_argument("--preview", default="", help="预览 PNG 输出路径（默认写进游戏目录）")
+     args = ap.parse_args()
+ 
+     imgs = {f: load_face(f) for f in FACES}
+@@ -238,23 +352,30 @@
+         sub = imgs[f][y0:y1 + 1, x0:x1 + 1]
+         px.append(sub[:, :, :3][sub[:, :, 3] > ALPHA_MIN])
+     px = np.concatenate(px, axis=0)
+-    palette = build_palette(px, PALETTE_K)
++    palette = build_palette(px, args.k)
++    if args.pal_dedupe > 0:
++        before = len(palette)
++        palette = dedupe_palette(palette, args.pal_dedupe)
++        print("调色板去重：%d → %d 色（阈值 %.0f）" % (before, len(palette), args.pal_dedupe))
+     lum_all = px @ np.array([0.299, 0.587, 0.114])
+     dark_lum = float(np.percentile(lum_all, DARK_LUM_PCT))
+     print("调色板 %d 色；暗色阈值 = 亮度 p%d = %.1f" % (len(palette), DARK_LUM_PCT, dark_lum))
+ 
+     grids, stats = {}, {}
+     for f in FACES:
+-        g = sample_grid(imgs[f], bbox, rows, cols, palette, dark_lum)
+-        g = denoise(g, passes=2)
++        g, df, sf = sample_grid(imgs[f], bbox, rows, cols, palette, dark_lum, args.cover, args.dark_share)
++        g = denoise(g, passes=args.denoise)
++        if args.face_fix:
++            skin_idx = int(np.argmin(((palette - np.asarray(ANCHORS[0], dtype=float)) ** 2).sum(axis=1)))
++            g = face_fix(g, df, sf, palette, skin_idx)
+         grids[f] = g
+-        rects = to_rects(g)
++        rects = to_rects(g, palette, args.merge_tol)
+         stats[f] = rects
+         print("  %s：实心格 %4d  矩形 %3d 块" % (LABEL[f], int((g >= 0).sum()), len(rects)))
+ 
+     # ---- 写 Lua ----
+     hexes = ["%02X%02X%02X" % tuple(int(v) for v in palette[i]) for i in range(len(palette))]
+-    out_lua = os.path.join(GAME, "heroArt.lua")
++    out_lua = args.out or os.path.join(GAME, "heroArt.lua")
+     L = []
+     L.append("-- ================================================================")
+     L.append("-- 浮岛借木 · 小人的「像素画」数据（由 _tools/make_hero_pixels.py 生成，别手改）")
+@@ -298,8 +419,9 @@
+     print("\n-> %s（%d 行，%d 字节）" % (out_lua, len(L), os.path.getsize(out_lua)))
+     print("   调色板：" + " ".join(hexes))
+ 
+-    size = render_preview(grids, palette, os.path.join(GAME, "预览_像素小人.png"))
+-    print("-> %s %s（放大 10 倍，四向对照）" % (os.path.join(GAME, "预览_像素小人.png"), size))
++    pv = args.preview or os.path.join(GAME, "预览_像素小人.png")
++    size = render_preview(grids, palette, pv)
++    print("-> %s %s（放大 10 倍，四向对照）" % (pv, size))
+ 
+ 
+ if __name__ == "__main__":

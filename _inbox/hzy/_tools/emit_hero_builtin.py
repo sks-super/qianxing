@@ -8,8 +8,8 @@
   把同一份数据内联进 level.lua（必然被导入）后，heroArt.lua 从「必需」降级为「可选覆盖」。
 
 编码：
-  12 色调色板 → 字符 "0".."9" "a" "b"；空格用 "."
-  每个朝向 32 行 × 20 列的字符串数组（行内一个字符 = 一格）
+  调色板索引 → 字符 "0".."9" "a".."v"（最多 32 色）；空格用 "."
+  每个朝向 COLS 列 × ROWS 行的字符串数组（行内一个字符 = 一格）
   运行时按行做游程合并还原成矩形，块数与 heroArt.lua 的贪心合并基本持平
 
 用法：
@@ -25,7 +25,7 @@ GAME = os.path.join(HERE, "..", "浮岛借木")
 ART = os.path.join(GAME, "heroArt.lua")
 LEVEL = os.path.join(GAME, "level.lua")
 
-CHARS = "0123456789ab"
+CHARS = "0123456789abcdefghijklmnopqrstuv"
 
 BEGIN = "-- >>> HERO_BUILTIN BEGIN（由 _tools/emit_hero_builtin.py 生成，别手改）"
 END = "-- <<< HERO_BUILTIN END"
@@ -83,13 +83,14 @@ def count_runs(rows_of_chars):
 
 
 def emit(cols, rows, colors, sprites):
+    cs = CHARS[:len(colors)]        # 只用到实际色数，字符串短一点
     out = []
     out.append(BEGIN)
     out.append("-- 小人的像素画底稿：heroArt.lua 没导入时用它，保证「不引用任何脚本/图片」也能画出小人。")
-    out.append("-- 每格一个字符（%s），\".\" = 透明；行内连续同色在运行时合并成一块矩形。" % CHARS)
+    out.append("-- 每格一个字符（%s），\".\" = 透明；行内连续同色在运行时合并成一块矩形。" % cs)
     out.append("M.HERO_BUILTIN_COLS = %d" % cols)
     out.append("M.HERO_BUILTIN_ROWS = %d" % rows)
-    out.append("M.HERO_BUILTIN_CHARS = \"%s\"" % CHARS)
+    out.append("M.HERO_BUILTIN_CHARS = \"%s\"" % cs)
     out.append("M.HERO_BUILTIN_COLORS = {")
     for i, c in enumerate(colors):
         out.append('    "%s",%s-- %d' % (c.upper(), " " * (5), i))
