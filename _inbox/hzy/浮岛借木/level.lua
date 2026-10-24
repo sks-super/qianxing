@@ -476,6 +476,8 @@ end
 
 function M.applyCamera()
     local cx, cy = state.camX or 0, state.camY or 0
+    -- ★ 地形层也要跟着镜头走（第 21 批拆出来的 containerGround）
+    utils.setPosition(state.containerGround, cx, cy)
     utils.setPosition(state.containerWorld, cx, cy)
     utils.setPosition(state.containerFx, cx, cy)
 end
@@ -668,6 +670,7 @@ end
 -- ================================================================
 local RESTACK_POOLS = {
     { "decoCtrls",     "decoUsed" },
+    { "rimCtrls",      "rimUsed" },     -- 岛缘描边（第 21 批从 decoCtrls 拆出来，单独一层容器）
     { "terrainCtrls",  "terrainUsed" },
     { "shadowCtrls",   "shadowUsed" },   -- 接触阴影（椭圆）—— 永远压在物体下面
     { "objectCtrls",   "objectUsed" },
@@ -791,9 +794,41 @@ local function terrainWindow()
     return { c0 = c0, c1 = c1, r0 = r0, r1 = r1 }
 end
 
+-- ================================================================
+-- ★ 地形三层子容器（第 21 批）
+--   侧面(崖面) / 岛缘描边 / 草地顶面 各挂一个子容器，**创建顺序即层级**：
+--     containerSide → containerRim → containerTile
+--   ★ 为什么不用同级排序：真机上 SetAsLastSibling 并不可靠（池扩容时新建控件
+--     默认排在同级最末 = 压在最上层）。地形和物体混在一个容器里时，这会让
+--     「草地盖住小人和树」「岛内部冒出边框」。拆层之后这两件事都变成结构性保证，
+--     和运行时排序 API 无关；对象池再怎么扩容也不会乱。
+-- ================================================================
+local function ensureGroundLayers()
+    if state.containerSide and state.containerRim and state.containerTile then return true end
+    local base = state.containerGround
+    if not base then return false end
+    local pid = state.containerPrefabId or 0
+    local function mk()
+        local ctrl = nil
+        if pid > 0 then ctrl = utils.createControl(pid, 0, 0, 1, 1, nil, base) end
+        if not ctrl then
+            -- 回退：通用矩形当容器 —— 必须染成全透明，否则是一块 1px 白点
+            ctrl = utils.createControl(state.rectPrefabId, 0, 0, 1, 1, nil, base)
+            if ctrl then utils.setAlpha(ctrl, "000000", 0) end
+        end
+        return ctrl
+    end
+    state.containerSide = state.containerSide or mk()
+    state.containerRim  = state.containerRim  or mk()
+    state.containerTile = state.containerTile or mk()
+    return (state.containerSide and state.containerRim and state.containerTile) ~= nil
+end
+
 -- 海面底 + 水面网格线（与窗口无关，只在第一次 / 换图时铺）
 local function buildSea(palette)
-    local parent = state.containerWorld
+    -- ★ 地形层（第 21 批）：网格线 / 侧面 / 描边 / 顶面全挂在 containerGround 的三层
+    --   子容器里，它们比 containerWorld 先创建 → 永远在物体与小人之下。
+    local parent = state.containerSide or state.containerGround or state.containerWorld
     local cell = state.cellSize
     local cols, rows = state.mapCols or 1, state.mapRows or 1
     local rect = rectSlot()
@@ -839,7 +874,11 @@ local function buildTerrain(palette, force)
     state.terrainWin = win
     state.terrainWinKey = key
 
-    local parent = state.containerWorld
+    -- ★ 三层子容器：侧面 / 描边 / 顶面（层级由创建顺序保证，见 ensureGroundLayers）
+    ensureGroundLayers()
+    local parent = state.containerSide or state.containerGround or state.containerWorld
+    local parentRim = state.containerRim or parent
+    local parentTile = state.containerTile or parent
     local cell = state.cellSize
     local rim = cell * (config.DEFAULT_TILE_RIM_RATIO or 0.17)
     local sideH = cell * (config.DEFAULT_TILE_SIDE_RATIO or 0.30)
@@ -847,20 +886,29 @@ local function buildTerrain(palette, force)
     local zc = cell * zVis()
     local rect = rectSlot()
     local landSlot = makeSlot(state.landPrefabId)
-    local landArt = slotUsesArt(state.terrainCtrls, parent, landSlot)
+    local landArt = slotUsesArt(state.terrainCtrls, parentTile, landSlot)
     local fit = (config.DEFAULT_ART_FIT or {}).land or { w = 1, h = 1, dy = 0 }
 
     local di = buildSea(palette)
+    local ri = 1
     local ti = 1
 
+    -- ★ 地形分**两遍**铺（第 21 批）：① 全部侧面 + 岛缘描边 → ② 全部草地顶面。
+    --
+    --   分两遍 + 分三层容器，等于把「草地永远盖住侧面和描边」写死成结构：
+    --   真机上同级 SetAsLastSibling 并不可靠（池扩容时新控件默认排在同级最末 =
+    --   压在最上层），逐格交替绘制时，隔壁格的侧面/描边就会压住这一格的草地边缘
+    --   —— 表现就是「岛内部凭空冒出边框 / 棕色横条」。
+    --   而且分两遍不会带来遮挡损失：每格的侧面只从「自己顶面的下沿」往**下**挂，
+    --   永远不会伸进上一行顶面的范围。
     for r = win.r0, win.r1 do
         for c = win.c0, win.c1 do
             if world.landAt(c, r) then
                 local cx = cellCenterX(c)
-                local dy = zRise(drawH(c, r) + 1) * cell
-                local cy = cellCenterY(r) + dy
+                local cy = cellCenterY(r) + zRise(drawH(c, r) + 1) * cell
                 local bottom = cy - cell / 2          -- 顶面的下沿
                 -- ① 侧面 / 崖面：与南邻的高差
+                --   ★ 横向多铺 rim（左右各半个），和隔壁格的侧面拼成一条连续的崖面。
                 local dh = drawH(c, r) - drawH(c, r + 1)
                 local wh = sideH + math.max(0, dh) * zc
                 if wh > cliffMax then wh = cliffMax end
@@ -870,6 +918,7 @@ local function buildTerrain(palette, force)
                 --   ★ 行号越大越靠**下**（屏幕 y 越小），所以南北两条边的 y 要用
                 --     `cy - e[2] * cell / 2`；写成 + 会把描边画到对面那条边上去
                 --     —— 于是岛屿**中间**凭空出现一条条边框（第 20 批修的就是这个）。
+                --   ★ 长度必须保持 cell + rim*2：收缩会让拐角处拼不上，岛的轮廓变成锯齿。
                 for _, e in ipairs({ { 0, -1 }, { 0, 1 }, { -1, 0 }, { 1, 0 } }) do
                     if not world.landAt(c + e[1], r + e[2]) then
                         local bw, bh, bx, by
@@ -880,20 +929,29 @@ local function buildTerrain(palette, force)
                             bw, bh = rim * 2, cell + rim * 2
                             bx, by = cx + e[1] * cell / 2, cy
                         end
-                        di = paint(state.decoCtrls, di, parent, rect, bx, by,
+                        ri = paint(state.rimCtrls, ri, parentRim, rect, bx, by,
                                    bw, bh, palette.sand, 255, depthKey(BAND_TILE, r, 0.4))
                     end
                 end
-                -- ③ 顶面
+            end
+        end
+    end
+
+    -- ② 第二遍：草地顶面（压在上面这一整片之上）
+    for r = win.r0, win.r1 do
+        for c = win.c0, win.c1 do
+            if world.landAt(c, r) then
+                local cx = cellCenterX(c)
+                local cy = cellCenterY(r) + zRise(drawH(c, r) + 1) * cell
                 if landArt then
-                    ti = paint(state.terrainCtrls, ti, parent, landSlot,
+                    ti = paint(state.terrainCtrls, ti, parentTile, landSlot,
                                cx, cy + (fit.dy or 0) * cell,
                                cell * (fit.w or 1), cell * (fit.h or 1), nil, nil,
                                depthKey(BAND_TILE, r, 0.6))
                 else
                     local hex = palette.land
                     if (c + r) % 2 == 0 then hex = palette.landDark end
-                    ti = paint(state.terrainCtrls, ti, parent, landSlot,
+                    ti = paint(state.terrainCtrls, ti, parentTile, landSlot,
                                cx, cy, cell, cell, hex, 255,
                                depthKey(BAND_TILE, r, 0.6))
                 end
@@ -903,6 +961,8 @@ local function buildTerrain(palette, force)
 
     poolTrim(state.decoCtrls, di - 1)
     state.decoUsed = di - 1
+    poolTrim(state.rimCtrls, ri - 1)
+    state.rimUsed = ri - 1
     poolTrim(state.terrainCtrls, ti - 1)
     state.terrainUsed = ti - 1
 
@@ -910,6 +970,7 @@ local function buildTerrain(palette, force)
     --   不加这一步的后果就是「走路时地图图层会变」：窗口一换，池里新造的控件默认
     --   排在同级最后 → 整片草地盖住小人和树；复用到的旧控件则带着上一窗的顺序。
     --   只在换窗口的那一帧跑一次（restackWorld 内部就是一次排序 + N 次提升）。
+    --   （第 21 批起地形三层已经靠容器分层，这里排序只对物体/小人还有意义。）
     M.restackWorld()
     return true
 end
@@ -1934,31 +1995,32 @@ local function buildPlayer(palette)
     if not state.playerCtrl and not prReady then return end
 
     -- 脚下滑影
-    --   ★ 第 20 批修「人物脚底有白框」：原来是**一块纯色矩形**，四四方方糊在脚下，
-    --     真机上染色一旦没生效（imageColor 缺省 = 纯白）就正好是个白框。
-    --     现在改用「图片」元件 + 引擎内置椭圆图元（100002，和人格图元笔触同一个），
-    --     画出来是**圆的**；拿不到就退回矩形（至少染色是对的），绝不整片白。
-    if not state.playerShadowCtrl then
-        local sw = cell * (config.DEFAULT_SHADOW_W or 0.62)
-        local sh = cell * (config.DEFAULT_SHADOW_H or 0.20)
-        local ctrl = nil
-        local eId = tonumber(config.DEFAULT_HERO_PRIMS_IMAGE) or 0
-        local pId = tonumber(state.heroPrPrefabId) or 0
-        if pId > 0 and pId ~= state.rectPrefabId and eId > 0 then
-            ctrl = utils.createControl(pId, 0, 0, sw, sh, nil, state.containerWorld, eId)
-        end
-        state.playerShadowArt = (ctrl ~= nil)
-        if not ctrl then
-            ctrl = utils.createControl(state.rectPrefabId, 0, 0, sw, sh, nil, state.containerWorld)
-        end
-        state.playerShadowCtrl = ctrl
-    end
+    --   ★ 第 21 批：**整段关掉**（config.DEFAULT_OBJ_SHADOW_ALPHA = 0）。
+    --     第 20 批曾改成「图片」元件 + 内置椭圆图元 100002 —— 那是**模拟器**的代理图元，
+    --     真机不认，图片控件拿不到图源就画成纯白方块，正好糊在人物脚下
+    --     （用户两次反馈的「白色方块」就是这个）。
+    --   → 阴影开关关掉时连控件都不建：建了也是隐藏的，留着只会再被误开。
     local shadowAlpha = config.DEFAULT_OBJ_SHADOW_ALPHA or 0
-    local shadowHex = palette.shadowLand or "33421F"     -- ★ 绝不能是 nil（nil → 纯白）
-    utils.setSize(state.playerShadowCtrl,
-                  cell * (config.DEFAULT_SHADOW_W or 0.62),
-                  cell * (config.DEFAULT_SHADOW_H or 0.20))
     if shadowAlpha > 0 then
+        if not state.playerShadowCtrl then
+            local sw = cell * (config.DEFAULT_SHADOW_W or 0.62)
+            local sh = cell * (config.DEFAULT_SHADOW_H or 0.20)
+            local ctrl = nil
+            local eId = tonumber(config.DEFAULT_HERO_PRIMS_IMAGE) or 0
+            local pId = tonumber(state.heroPrPrefabId) or 0
+            if pId > 0 and pId ~= state.rectPrefabId and eId > 0 then
+                ctrl = utils.createControl(pId, 0, 0, sw, sh, nil, state.containerWorld, eId)
+            end
+            state.playerShadowArt = (ctrl ~= nil)
+            if not ctrl then
+                ctrl = utils.createControl(state.rectPrefabId, 0, 0, sw, sh, nil, state.containerWorld)
+            end
+            state.playerShadowCtrl = ctrl
+        end
+        local shadowHex = palette.shadowLand or "33421F"     -- ★ 绝不能是 nil（nil → 纯白）
+        utils.setSize(state.playerShadowCtrl,
+                      cell * (config.DEFAULT_SHADOW_W or 0.62),
+                      cell * (config.DEFAULT_SHADOW_H or 0.20))
         utils.setAlpha(state.playerShadowCtrl, shadowHex, shadowAlpha)
         utils.setVisible(state.playerShadowCtrl, true)
     else
@@ -2127,6 +2189,7 @@ end
 function M.clear()
     poolTrim(state.terrainCtrls, 0)
     poolTrim(state.decoCtrls, 0)
+    poolTrim(state.rimCtrls, 0)
     poolTrim(state.shadowCtrls, 0)
     poolTrim(state.objectCtrls, 0)
     poolTrim(state.treeCtrls, 0)

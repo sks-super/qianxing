@@ -74,15 +74,19 @@ local function createContainer()
 end
 
 -- ================================================================
--- ★ 检查 5 个层级容器，缺失的补建（创建顺序即显示层级，从下到上）
+-- ★ 检查 6 个层级容器，缺失的补建（创建顺序即显示层级，从下到上）
+--   ★ 第 21 批把「地形」单独拆成 containerGround：真机上同级 SetAsLastSibling
+--     排序不可靠，地形偶尔压到小人身上（走路时被地图盖住）。两个容器的先后
+--     由**创建顺序**决定，这一层关系不依赖任何运行时 API。
 -- ================================================================
 local function ensureContainers()
     local order = {
         "containerBg",        -- ① 海面（整屏底）
-        "containerWorld",     -- ② 世界：地块（网格线/岛缘/顶面）+ 物体 + 小人（按深度显式排序）
-        "containerFx",        -- ③ 特效（涟漪）
-        "containerHud",       -- ④ HUD（关卡名 / 步数 / 消息 / 提示）
-        "containerFade",      -- ⑤ 黑幕过渡（最顶）
+        "containerGround",    -- ② 地形：水面网格 / 地块侧面 / 岛缘描边 / 草地顶面
+        "containerWorld",     -- ③ 世界：物体 + 小人（容器内按深度排序）
+        "containerFx",        -- ④ 特效（涟漪）
+        "containerHud",       -- ⑤ HUD（关卡名 / 步数 / 消息 / 提示）
+        "containerFade",      -- ⑥ 黑幕过渡（最顶）
     }
     local okAll = true
     for _, key in ipairs(order) do
