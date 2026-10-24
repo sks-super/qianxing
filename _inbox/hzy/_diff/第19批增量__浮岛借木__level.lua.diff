@@ -1,0 +1,737 @@
+--- 仓库/_inbox/hzy/浮岛借木/level.lua	2026-10-23 00:04:00.082470700 +0800
++++ 千星割绳子游戏/浮岛借木/level.lua	2026-10-24 18:31:10.774240800 +0800
+@@ -511,20 +511,32 @@
+ -- ★ 深度键：2.5D 的排序依据
+ --   行号是主序（row 越大越靠近镜头 → 越晚绘制 → 压住后面的一切），
+ --   同一行内再分「层」，层内再用小数次序微调。
+--- ================================================================
+-local BAND_GRID = 0       -- 水面网格线
+-local BAND_TILE = 1000    -- 地块装饰：岛缘投影 → 侧面厚度 → 沙滩描边
+-local BAND_TOP  = 2000    -- 草地顶面
+-local BAND_OBJ  = 3000    -- 站位物体与小人
+-
+--- 同一格上的站立物自下而上的固定次序
+-local SUB_SHADOW = -0.5
++--
++--   ★ 第 19 批改了「谁在谁上面」的**分组方式**，原因是地形长出了高度：
++--     老版两张表是两个全局趟（先铺满所有地块装饰、再统一盖所有顶面），
++--     只有这样才能让沙滩描边只露在岛的外缘。但一旦地块有了高低差，
++--     全局趟就会让「近处一行的崖面」被「远处一行的顶面」盖掉 —— 崖面永远看不见。
++--     现在改成**按行交错**：
++--         同一行内：侧面(0.1) → 描边(0.4) → 顶面(0.6) → 这行的物体(0.0~0.7 见 BAND_OBJ)
++--         跨 行时：第 r+1 行的一切都压住第 r 行的一切（近处压远处）
++--     于是「崖面挡住后面的台地、近处的台地挡住前面的崖面」全部自动成立。
++--   ★ 描边因此不再靠「铺大一圈再被邻格盖住」，改成**只在临水的边上**画（见 buildTerrain）。
++-- ================================================================
++local BAND_GRID = 0       -- 水面网格线（永远最底下）
++local BAND_TILE = 1000    -- 地形：按行分层（行内 sub 区分 侧面 / 描边 / 顶面）
++local BAND_OBJ  = 1005    -- 站位物体与小人（行内压在顶面之上、下一行地形之下）
++
++-- ★ 注意：物体层的 sub 会被**除以 10** 压进 (0,1) 区间（见 objKey），
++--   这样「本行的物体」永远落在「本行顶面」和「下一行地形」之间。
++local SUB_SHADOW = 0.2
+ local SUB_ROOT   = 1
+ local SUB_LOG    = 2
+ -- 3 空着：老版本这里是「立起的木桩」，现在立着与倒下只是同一棵树的两个状态
++local SUB_RAFT   = 3
+ local SUB_ROCK   = 4
+ local SUB_TREE   = 5
+-local SUB_GOAL   = 6
++local SUB_SIGN   = 6
++local SUB_GOAL   = 6.5
+ local SUB_PLAYER = 7
+ 
+ -- 小人纯色回退的身高常量 PLAYER_BODY_RATIO / PLAYER_HEAD_RATIO 声明在文件顶部
+@@ -534,6 +546,38 @@
+     return band + (tonumber(r) or 0) * 10 + (tonumber(sub) or 0)
+ end
+ 
++-- 物体层的键：sub 除以 10 压进 (0,1)；再叠一点「同格内的垫高层次」
++--   stack = 它压在同格地面上方几层（0 = 贴着地面）→ 越往上越晚画。
++--   ★ 一定要按 stack（相对值）而不是按绝对 z：真实地图的 z 能到 100+，
++--     直接拿 z 当偏移会把键推到下一行去，排序整个错乱。
++local function objKey(r, sub, stack)
++    local dz = math.min(math.max(tonumber(stack) or 0, 0), 5) * 0.02
++    return depthKey(BAND_OBJ, r, (tonumber(sub) or 0) / 10 + dz)
++end
++
++-- ================================================================
++-- ★ 高度（内核的 z 层号）→ 屏幕上的抬高量
++--   原版 HZ/T = 8/52 ≈ 0.15 格 / 层：1 层的坎「一眼看得出来」但不会顶破画面。
++--   state.baseH = 整张图最低的那一层（水面），减掉它让最低的地块正好骑在脚线上。
++-- ================================================================
++local function zVis()
++    return tonumber(config.DEFAULT_Z_VIS) or 0.15
++end
++
++-- 层号 z → 相对「最低地块的脚线」抬高多少格（y 向上为正）
++local function zRise(z)
++    return ((tonumber(z) or 1) - 1 - (state.baseH or 0)) * zVis()
++end
++M.zRise = zRise
++
++-- 某一格顶面（站人的那条线）的屏幕 y
++local function groundY(c, r)
++    local h = world.cellH(c, r)
++    if h == nil then h = 0 end        -- 水：水面与基准齐平
++    return cellFootY(r) + zRise(h + 1) * (state.cellSize or 1)
++end
++M.groundY = groundY
++
+ -- ================================================================
+ -- ★ 视觉槽位
+ --   makeSlot(素材元件索引)：打算用哪个预制体 + 是否素材
+@@ -629,7 +673,7 @@
+         seq = seq + 1
+         list[#list + 1] = {
+             c = ctrl,
+-            k = depthKey(BAND_OBJ, state.player and state.player.r, sub),
++            k = objKey(state.player and state.player.r, sub),
+             s = seq,
+         }
+     end
+@@ -673,30 +717,64 @@
+ end
+ 
+ -- ================================================================
+--- ★ 地形层（2.5D 地块）
+---   绘制顺序（深度键由小到大）：
+---     水面网格线 → 每格的「投影 → 侧面厚度 → 沙滩描边」→ 每格的「草地顶面」
+---   ★ 为什么描边要和顶面分两趟画：
+---     描边比格子大一圈，如果「一格一格地画（描边+顶面）」，相邻格的描边就会露在
+---     岛内部，看起来像铺了带缝的地砖。先铺满所有描边、再统一盖顶面，描边就只在
+---     岛的外缘露出一圈 —— 与参考图一致。
+---   ★ 为什么侧面能显出来：
+---     侧面挂在草地顶面的下沿往下 side 格；近处一行（row 更大）更晚绘制，
+---     它的描边+顶面正好盖住远处一行露出来的侧面。岛外是水，没人盖 → 侧面可见。
+--- ================================================================
+-local function buildTerrain(palette)
++-- ★ 地形层（2.5D 地块 · 逐格一次画完）
++--   每格从远到近（行号递增），行内按 sub 从小到大：
++--       ① 崖面 / 侧面厚度（挂在顶面**下沿**，高度 = 与南邻的高差）
++--       ② 临水的沙滩描边（只画在临水的那几条边上，四条边各一条窄带）
++--       ③ 草地 / 雪地顶面（素材立绘 或 纯色棋盘）
++--
++--   ★ 为什么不再「先铺满描边、再统一盖顶面」：
++--     那个两趟画法靠「相邻顶面盖住描边」来让描边只露在岛缘。地块一旦有了高低差
++--     （真实地图 cliffs 最高 100 层），崖面就会被远处一行的顶面整片盖掉 ——
++--     崖面永远看不见。现在按行交错排序（见 BAND_TILE 的说明），描边直接只画在
++--     临水的边上，既不依赖覆盖，也不再产生多余控件。
++--   ★ 崖面为什么必然落在「本行顶面下沿 → 南邻顶面上沿」之间：
++--     南邻的行号大 1，它的顶面天然低 1 格；它自己的高度再低 dh 层，于是两块的
++--     缝隙正好是 dh × zVis 格 —— 那就是崖面。所以只要「行号越大越晚画」，
++--     南邻的顶面永远不会盖住这条缝（它是从缝隙下沿开始画的）。
++--   ★ 窗口化：真实地图最大 26×72（1872 格）。一次铺满会造上千条控件，真机扛不住。
++--     只铺「当前看得见的那一窗」，窗口按 WIN_CHUNK 量化 —— 走到块边界才重铺，
++--     而窗口比屏幕大几格，所以重铺发生在屏幕之外，看不见跳变。
++-- ================================================================
++local WIN_CHUNK = 4
++local WIN_MARGIN = 2
++
++-- 可视层高（水 / 界外一律当 0）
++local function vh(c, r)
++    return world.cellH(c, r) or 0
++end
++
++local function terrainWindow()
++    local cell = state.cellSize or 1
++    local cols, rows = state.mapCols or 1, state.mapRows or 1
++    local cw = state.canvasW or config.DEFAULT_VIEW_WIDTH
++    local ch = state.canvasH or config.DEFAULT_VIEW_HEIGHT
++    local pc = (state.player and state.player.c) or 1
++    local pr = (state.player and state.player.r) or 1
++    -- 镜头把小人钉在屏幕中央 → 可见范围就是「小人 ± 半屏」再放宽一点
++    local halfC = math.ceil(cw / 2 / cell) + WIN_MARGIN
++    local halfR = math.ceil(ch / 2 / cell) + WIN_MARGIN
++    local c0 = math.max(1, pc - halfC)
++    local c1 = math.min(cols, pc + halfC)
++    local r0 = math.max(1, pr - halfR)
++    local r1 = math.min(rows, pr + halfR)
++    -- 量化到块边界（向外取整，宁可多铺一点也不频繁重铺）
++    c0 = math.max(1, math.floor((c0 - 1) / WIN_CHUNK) * WIN_CHUNK + 1)
++    r0 = math.max(1, math.floor((r0 - 1) / WIN_CHUNK) * WIN_CHUNK + 1)
++    c1 = math.min(cols, math.ceil(c1 / WIN_CHUNK) * WIN_CHUNK)
++    r1 = math.min(rows, math.ceil(r1 / WIN_CHUNK) * WIN_CHUNK)
++    return { c0 = c0, c1 = c1, r0 = r0, r1 = r1 }
++end
++
++-- 海面底 + 水面网格线（与窗口无关，只在第一次 / 换图时铺）
++local function buildSea(palette)
+     local parent = state.containerWorld
+     local cell = state.cellSize
+     local cols, rows = state.mapCols or 1, state.mapRows or 1
+-    local v25 = state.view25d and true or false
+-    local rim = cell * (config.DEFAULT_TILE_RIM_RATIO or 0.17)
+-    local sideH = cell * (config.DEFAULT_TILE_SIDE_RATIO or 0.30)
+     local rect = rectSlot()
+-    local landSlot = makeSlot(state.landPrefabId)
+     local waterSlot = makeSlot(state.waterPrefabId)
+ 
+     -- ① 海面整屏底（bg 层，跨关卡复用，只在第一次创建）
+-    --    ★ 水面在参考图里是均匀色块，所以整屏铺一张最稳，也不会出现「棋盘内外接缝」。
+     if not state.bgCtrl then
+         local bg = utils.createControl(waterSlot.prefab, 0, 0,
+             (state.canvasW or 800) + 800, (state.canvasH or 600) + 800, nil, state.containerBg)
+@@ -707,105 +785,89 @@
+         utils.setAlpha(state.bgCtrl, palette.water, 255)   -- 回退：通用矩形 + 调色板
+     end
+ 
+-    -- ② 水面网格
++    -- ② 水面细网格：屏幕水平 / 垂直，铺满**可见水面**（不只棋盘范围，
++    --    否则移镜头时会看见「一片有网格、一片没网格」的硬边界）
+     local di = 1
+-    if v25 and state.waterGridLines then
+-        -- 参考图那种细网格线：屏幕水平 / 垂直，且**铺满可见水面**（不只棋盘范围，
+-        -- 否则会看见网格方形区域的边界，很出戏）。它压在陆地下面，被地块盖住。
+-        local lw = math.max(1, math.floor(cell * 0.035))
+-        local alpha = config.DEFAULT_WATER_LINE_ALPHA or 70
+-        -- ★ 向四周多铺几格（第 14 批按屏幕算，原来写死 8）：
+-        --   镜头会把地图推离屏幕中心，最多推出「半屏」；网格必须铺到那之外，
+-        --   否则移镜头时会看见「一片有网格、一片没网格」的硬边界 ——
+-        --   放大 2 倍后 8 格（约 544px）已经不够了。
+-        --   竖直方向永远更小（屏高 < 屏宽），不用另算。多十几条线，可忽略。
+-        local over = math.ceil((state.canvasW or config.DEFAULT_VIEW_WIDTH) / (2 * cell)) + 2
+-        local left = cellCenterX(1) - cell / 2 - over * cell
+-        local top = cellCenterY(1) + cell / 2 + over * cell
+-        local spanX = (cols + over * 2) * cell
+-        local spanY = (rows + over * 2) * cell
+-        for c = 0, (cols + over * 2) do
+-            di = paint(state.decoCtrls, di, parent, rect, left + c * cell, top - spanY / 2,
+-                       lw, spanY, palette.waterLine, alpha, depthKey(BAND_GRID, 0, 0.1))
+-        end
+-        for r = 0, (rows + over * 2) do
+-            di = paint(state.decoCtrls, di, parent, rect, left + spanX / 2, top - r * cell,
+-                       spanX, lw, palette.waterLine, alpha, depthKey(BAND_GRID, 0, 0.2))
+-        end
+-    else
+-        -- 旧的水下深色棋盘（view25d / waterGridLines 关掉时的画法）
+-        local gridAlpha = config.DEFAULT_WATER_GRID_ALPHA or 110
+-        for r = 1, rows do
+-            for c = 1, cols do
+-                if (c % 2 == 1) and (r % 2 == 1) and not world.landAt(c, r) then
+-                    di = paint(state.decoCtrls, di, parent, rect, cellCenterX(c), cellCenterY(r),
+-                               cell - 1, cell - 1, palette.waterDeep, gridAlpha,
+-                               depthKey(BAND_GRID, 0, 0.3))
+-                end
+-            end
+-        end
+-    end
++    local lw = math.max(1, math.floor(cell * 0.035))
++    local alpha = config.DEFAULT_WATER_LINE_ALPHA or 70
++    local over = math.ceil((state.canvasW or config.DEFAULT_VIEW_WIDTH) / (2 * cell)) + 2
++    local overY = math.ceil((state.canvasH or config.DEFAULT_VIEW_HEIGHT) / (2 * cell)) + 2
++    local left = cellCenterX(1) - cell / 2 - over * cell
++    local top = cellCenterY(1) + cell / 2 + overY * cell
++    local spanX = (cols + over * 2) * cell
++    local spanY = (rows + overY * 2) * cell
++    for c = 0, (cols + over * 2) do
++        di = paint(state.decoCtrls, di, parent, rect, left + c * cell, top - spanY / 2,
++                   lw, spanY, palette.waterLine, alpha, depthKey(BAND_GRID, 0, 0.1))
++    end
++    for r = 0, (rows + overY * 2) do
++        di = paint(state.decoCtrls, di, parent, rect, left + spanX / 2, top - r * cell,
++                   spanX, lw, palette.waterLine, alpha, depthKey(BAND_GRID, 0, 0.2))
++    end
++    return di
++end
++
++local function buildTerrain(palette, force)
++    local win = terrainWindow()
++    local key = table.concat({ win.c0, win.c1, win.r0, win.r1 }, ":")
++    if not force and key == (state.terrainWinKey or "") then return false end
++    state.terrainWin = win
++    state.terrainWinKey = key
+ 
+-    -- ③ 陆地：装饰趟（两种模式**完全一样**）→ 顶面趟（素材立绘 或 色块）
+-    --   ★ 岛缘的轮廓（投影 / 侧面 / 描边）一律由脚本画，不依赖素材 ——
+-    --     于是「素材路径」与「纯色路径」的岛形逐像素同源，换素材只影响顶面。
+-    --   ★ 侧面挂在「沙滩描边的下沿」而不是格子下沿：描边是板块顶面的一圈边，
+-    --     侧面是板块的厚度，两者上下相接才读得出「一块有厚度的地」。
++    local parent = state.containerWorld
++    local cell = state.cellSize
++    local rim = cell * (config.DEFAULT_TILE_RIM_RATIO or 0.17)
++    local sideH = cell * (config.DEFAULT_TILE_SIDE_RATIO or 0.30)
++    local cliffMax = cell * (config.DEFAULT_CLIFF_MAX or 2.1)
++    local zc = cell * zVis()
++    local rect = rectSlot()
++    local landSlot = makeSlot(state.landPrefabId)
+     local landArt = slotUsesArt(state.terrainCtrls, parent, landSlot)
+-    local shadowAlpha = config.DEFAULT_TILE_SHADOW_ALPHA or 0
+-    for r = 1, rows do
+-        for c = 1, cols do
++    local fit = (config.DEFAULT_ART_FIT or {}).land or { w = 1, h = 1, dy = 0 }
++
++    local di = buildSea(palette)
++    local ti = 1
++
++    for r = win.r0, win.r1 do
++        for c = win.c0, win.c1 do
+             if world.landAt(c, r) then
+-                local cx, cy = cellCenterX(c), cellCenterY(r)
+-                if v25 then
+-                    -- 岛缘落进水里的投影（贴在侧面下沿，是「浮」在海上那口气）
+-                    if shadowAlpha > 0 then
+-                        local sh = sideH * 0.5
+-                        di = paint(state.decoCtrls, di, parent, rect,
+-                                   cx, cellBottomY(r) - rim - sideH - sh / 2,
+-                                   cell + rim * 2 + 4, sh, palette.waterShade, shadowAlpha,
+-                                   depthKey(BAND_TILE, r, 0.1))
++                local cx = cellCenterX(c)
++                local dy = zRise(vh(c, r) + 1) * cell
++                local cy = cellCenterY(r) + dy
++                local bottom = cy - cell / 2          -- 顶面的下沿
++                -- ① 侧面 / 崖面：与南邻的高差
++                local dh = vh(c, r) - vh(c, r + 1)
++                local wh = sideH + math.max(0, dh) * zc
++                if wh > cliffMax then wh = cliffMax end
++                di = paint(state.decoCtrls, di, parent, rect, cx, bottom - wh / 2,
++                           cell + rim * 2, wh, palette.soil, 255, depthKey(BAND_TILE, r, 0.1))
++                -- ② 临水的沙滩描边：四条边各自一条窄带（外半圈露在格子外面）
++                for _, e in ipairs({ { 0, -1 }, { 0, 1 }, { -1, 0 }, { 1, 0 } }) do
++                    if not world.landAt(c + e[1], r + e[2]) then
++                        local bw, bh, bx, by
++                        if e[1] == 0 then
++                            bw, bh = cell + rim * 2, rim * 2
++                            bx, by = cx, cy + e[2] * cell / 2
++                        else
++                            bw, bh = rim * 2, cell + rim * 2
++                            bx, by = cx + e[1] * cell / 2, cy
++                        end
++                        di = paint(state.decoCtrls, di, parent, rect, bx, by,
++                                   bw, bh, palette.sand, 255, depthKey(BAND_TILE, r, 0.4))
+                     end
+-                    -- 侧面（厚度）：完整露出，不被描边压
+-                    di = paint(state.decoCtrls, di, parent, rect,
+-                               cx, cellBottomY(r) - rim - sideH / 2,
+-                               cell + rim * 2, sideH, palette.soil, 255,
+-                               depthKey(BAND_TILE, r, 0.2))
+                 end
+-                -- 岛缘沙滩描边（放大一圈；岛内会被邻格的顶面盖住）
+-                local pad = v25 and rim or (config.DEFAULT_COAST_PAD or 5)
+-                di = paint(state.decoCtrls, di, parent, rect, cx, cy,
+-                           cell + pad * 2, cell + pad * 2, palette.sand, 255,
+-                           depthKey(BAND_TILE, r, 0.3))
+-            end
+-        end
+-    end
+-
+-    -- ④ 草地顶面
+-    --    素材模式：一格一张立绘（不染色）；顶面在素材里是正方形，正好铺满一格
+-    --    纯色模式：棋盘式深浅交替（深浅就是玩家数格子的依据）
+-    local ti = 1
+-    if landArt then
+-        local fit = (config.DEFAULT_ART_FIT or {}).land or { w = 1, h = 1, dy = 0 }
+-        for r = 1, rows do
+-            for c = 1, cols do
+-                if world.landAt(c, r) then
++                -- ③ 顶面
++                if landArt then
+                     ti = paint(state.terrainCtrls, ti, parent, landSlot,
+-                               cellCenterX(c), cellCenterY(r) + (fit.dy or 0) * cell,
++                               cx, cy + (fit.dy or 0) * cell,
+                                cell * (fit.w or 1), cell * (fit.h or 1), nil, nil,
+-                               depthKey(BAND_TOP, r, 0.5))
+-                end
+-            end
+-        end
+-    else
+-        for r = 1, rows do
+-            for c = 1, cols do
+-                if world.landAt(c, r) then
++                               depthKey(BAND_TILE, r, 0.6))
++                else
+                     local hex = palette.land
+                     if (c + r) % 2 == 0 then hex = palette.landDark end
+                     ti = paint(state.terrainCtrls, ti, parent, landSlot,
+-                               cellCenterX(c), cellCenterY(r), cell, cell, hex, 255,
+-                               depthKey(BAND_TOP, r, 0.5))
++                               cx, cy, cell, cell, hex, 255,
++                               depthKey(BAND_TILE, r, 0.6))
+                 end
+             end
+         end
+@@ -815,6 +877,14 @@
+     state.decoUsed = di - 1
+     poolTrim(state.terrainCtrls, ti - 1)
+     state.terrainUsed = ti - 1
++    return true
++end
++
++-- 每帧调一次：镜头把小人钉在中央，所以「换窗」只可能在块边界，
++-- 判定只是一次字符串比较，代价可以忽略。
++function M.ensureTerrain(palette)
++    if not state.cellSize then return false end
++    return buildTerrain(palette or utils.resolvePalette(state.levelConfig), false)
+ end
+ 
+ -- ================================================================
+@@ -835,7 +905,21 @@
+ --   alongX: 1 = 横躺（受光边在上沿）/ 0 = 竖（受光边在左侧）
+ --   stand : 1 = 立姿 / 0 = 躺姿 —— 决定用哪一套配色与「立姿专属」的根部土堆、顶端切面
+ --   row   : 所在行，过渡代理要靠它算深度键（近处压远处）
+-local function lyingShape(c, r, dir)
++-- ★ 「它踩在哪条线上」：地块顶面 + 被垫高了多少层
++--   内核的 z 是绝对层号，地块顶面 = 抬高层数 + 1，两者之差就是「它压着几层东西」。
++local function entBaseY(c, r, z)
++    local cell = state.cellSize or 1
++    local gz = vh(c, r) + 1
++    return groundY(c, r) + ((tonumber(z) or gz) - gz) * zVis() * cell
++end
++
++-- 它压在同格地面上方几层（0 = 贴着地面）—— 只用于深度排序（见 objKey）
++local function stackOf(c, r, z)
++    local gz = vh(c, r) + 1
++    return (tonumber(z) or gz) - gz
++end
++
++local function lyingShape(c, r, dir, z)
+     local cell = state.cellSize or 1
+     local thick = cell * LOG_THICK
+     local h = world.logHeightAt(c, r) or config.DEFAULT_H_LOG_LAND
+@@ -843,7 +927,8 @@
+     return {
+         c = c, r = r,
+         cx = cellCenterX(c),
+-        cy = cellFootY(r) + (h - 0.25) * cell,
++        -- 木头的**底面**落在它所在的那一层上：贴地 = 脚线，垫高 = 高半层
++        cy = entBaseY(c, r, z) + (h - 0.25) * cell,
+         w = alongX and cell * LOG_LEN or thick,
+         h = alongX and thick or cell * LOG_LEN,
+         alongX = alongX and 1 or 0,
+@@ -852,13 +937,14 @@
+     }
+ end
+ 
+-local function standingShape(c, r)
++local function standingShape(c, r, z)
+     local cell = state.cellSize or 1
+     local w, h = cell * TRUNK_W, cell * TRUNK_H
+     return {
+         c = c, r = r,
+         cx = cellCenterX(c),
+-        cy = cellFootY(r) + h / 2,
++        -- 立着的木头 / 树：底面贴在自己那一层，整个人往上长 1 格
++        cy = entBaseY(c, r, z) + h / 2,
+         w = w, h = h,
+         alongX = 0,
+         stand = 1,
+@@ -979,13 +1065,13 @@
+     local shadowAlpha = config.DEFAULT_OBJ_SHADOW_ALPHA or 0
+     local i = 1
+ 
+-    local function keyOf(r, sub) return depthKey(BAND_OBJ, r, sub) end
++    local function keyOf(r, sub, stack) return objKey(r, sub, stack) end
+ 
+-    -- 脚下的接触阴影：让物体真的「贴」在草地上，而不是浮着
+-    local function shadow(cx, footY, w, r)
++    -- 脚下的接触阴影：让物体真的「贴」在地上，而不是浮着
++    local function shadow(cx, baseY, w, r, stack)
+         if shadowAlpha <= 0 then return end
+-        i = paint(pool, i, parent, rect, cx, footY - cell * 0.01,
+-                  w, cell * 0.13, palette.shadowLand, shadowAlpha, keyOf(r, SUB_SHADOW))
++        i = paint(pool, i, parent, rect, cx, baseY - cell * 0.005,
++                  w, cell * 0.12, palette.shadowLand, shadowAlpha, keyOf(r, SUB_SHADOW, stack))
+     end
+ 
+     -- ★ 「倒 / 立」过渡期间，**终点格**上的那根真实木头这一帧不画：
+@@ -996,95 +1082,153 @@
+         return animTo ~= nil and animTo.c == c and animTo.r == r
+     end
+ 
+-    -- ① 树根（0.25 格高，贴地的一小簇）
++    -- ① 树根（★ 新规则下恒为空，保留这段只为兼容老存档里的预置树根）
+     for _, rt in ipairs(state.roots) do
+-        local bx, foot = cellCenterX(rt.c), cellFootY(rt.r)
+-        i = paint(pool, i, parent, rect, bx, foot + cell * 0.035,
++        local bx, base = cellCenterX(rt.c), groundY(rt.c, rt.r)
++        i = paint(pool, i, parent, rect, bx, base + cell * 0.035,
+                   cell * 0.74, cell * 0.07, palette.rootRing, 255, keyOf(rt.r, SUB_ROOT))
+-        i = paint(pool, i, parent, rect, bx, foot + cell * 0.14,
++        i = paint(pool, i, parent, rect, bx, base + cell * 0.14,
+                   cell * 0.60, cell * 0.21, palette.rootTop, 255, keyOf(rt.r, SUB_ROOT + 0.1))
+     end
+ 
+-    -- ② 倒下的树（占一格；dir 决定它躺着的走向）
++    -- ② 躺着的木头（含「压高」的：z 比地面高就往上摞）
+     --    东西躺（A/D）＝长 1 格 × 厚 0.5 格；南北躺（W/S）＝宽 0.5 格 × 长 1 格
+-    --    顶面高度（world.logHeightAt）：压陆地 0.5 格（半格高，跨不上去）
+-    --                               漂水面 0.25 格（半浸在水里 → 画出来就是骑在脚线上）
+     for _, lg in ipairs(state.logs) do
+-        -- ★ 正在播「倒 / 立」过渡的那一根，这一帧交给过渡代理画（这里跳过），
+-        --   不然它会和代理重叠着出现两个自己。
+         if not hideAnimAt(lg.c, lg.r) then
+-            local sp = lyingShape(lg.c, lg.r, lg.dir)
+-            shadow(sp.cx, cellFootY(lg.r), cell * 0.80, lg.r)
+-            i = paintLyingLog(pool, i, parent, rect, sp, palette, keyOf(lg.r, SUB_LOG))
++            local sp = lyingShape(lg.c, lg.r, lg.dir, lg.z)
++            shadow(sp.cx, entBaseY(lg.c, lg.r, lg.z), cell * 0.80, lg.r,
++                   stackOf(lg.c, lg.r, lg.z))
++            i = paintLyingLog(pool, i, parent, rect, sp, palette,
++                              keyOf(lg.r, SUB_LOG, stackOf(lg.c, lg.r, lg.z)))
++        end
++    end
++
++    -- ③ 木筏（两根木头叠出来的）：一根顺着躺 + 一根横着压在上面
++    --    ★ 画法必须和单根木头**一眼分得开**，否则玩家不知道「这已经能撑了」：
++    --      主木顺着躺向，中间再压一根**横的短木**（略高一点），读作「捆在一起」。
++    for _, rf in ipairs(state.rafts) do
++        local sp = lyingShape(rf.c, rf.r, rf.dir, rf.z)
++        local stack = stackOf(rf.c, rf.r, rf.z)
++        shadow(sp.cx, entBaseY(rf.c, rf.r, rf.z), cell * 0.86, rf.r, stack)
++        i = paintLyingLog(pool, i, parent, rect, sp, palette, keyOf(rf.r, SUB_RAFT, stack))
++        local crossH = cell * LOG_THICK * 0.82
++        local crossW = cell * 0.94
++        if sp.alongX == 1 then
++            i = paint(pool, i, parent, rect, sp.cx, sp.cy + cell * 0.10,
++                      crossH, crossW, palette.logStandSide, 255,
++                      keyOf(rf.r, SUB_RAFT + 0.2, stack))
++            i = paint(pool, i, parent, rect, sp.cx, sp.cy + cell * 0.10 + crossW * 0.36,
++                      crossH, crossH * 0.30, palette.logStandEdge, 255,
++                      keyOf(rf.r, SUB_RAFT + 0.3, stack))
++        else
++            i = paint(pool, i, parent, rect, sp.cx, sp.cy + cell * 0.10,
++                      crossW, crossH, palette.logStandSide, 255,
++                      keyOf(rf.r, SUB_RAFT + 0.2, stack))
++            i = paint(pool, i, parent, rect, sp.cx - crossW * 0.36, sp.cy + cell * 0.10,
++                      crossH * 0.30, crossH, palette.logStandEdge, 255,
++                      keyOf(rf.r, SUB_RAFT + 0.3, stack))
+         end
+     end
+ 
+-    -- ③ 石头（1 格 / 2 格高，不可移动、不可攀爬）
++    -- ④ 石头（不可通行格）：一块压在格子上的石块
+     for _, rk in ipairs(state.rocks) do
+-        local hh = tonumber(rk.h) or 1
+-        local x, foot = cellCenterX(rk.c), cellFootY(rk.r)
+-        local hex = palette.rock1Top
+-        if hh >= 2 then hex = palette.rock2Top end
+-        shadow(x, foot, cell * 0.8, rk.r)
+-        i = paint(pool, i, parent, rect, x, foot + hh * cell / 2, cell * 0.86, hh * cell,
++        local hh = tonumber(rk.h) or config.DEFAULT_H_ROCK1
++        local x = cellCenterX(rk.c)
++        local base = groundY(rk.c, rk.r)
++        local hex = (hh >= config.DEFAULT_H_ROCK2 - 0.01) and palette.rock2Top or palette.rock1Top
++        shadow(x, base, cell * 0.8, rk.r, 0)
++        i = paint(pool, i, parent, rect, x, base + hh * cell / 2, cell * 0.84, hh * cell,
+                   palette.rockSide, 255, keyOf(rk.r, SUB_ROCK))
+-        i = paint(pool, i, parent, rect, x, foot + hh * cell - cell * 0.11,
+-                  cell * 0.70, cell * 0.22, hex, 255, keyOf(rk.r, SUB_ROCK + 0.1))
++        i = paint(pool, i, parent, rect, x, base + hh * cell - cell * 0.055,
++                  cell * 0.68, cell * 0.11, hex, 255, keyOf(rk.r, SUB_ROCK + 0.1))
+     end
+ 
+-    -- ④ 树木（1 格高）
+-    --    素材模式：一张立绘（内容 1 格宽 × 1 格高），不染色，脚踩在顶面上
+-    --    回退模式：树干 + 树冠两块纯色矩形（合起来正好 1 格高）
+-    --    ★ 被推立起来的树干（tr.bare）**没有树冠 / 没有叶子**：它就是倒下的那根木头
+-    --      竖起来了，造型和 ② 的倒树**同源**（同一根木头、同一套配色、同一套切面语言），
+-    --      区别只在**姿态**：躺 = 长而扁 + 两端切口；立 = 窄而高 + 根部土堆 + 顶端切面。
+-    --      所以它永远走**纯色池**（走素材池的话会把「树木」那张带叶子的立绘套上去，
+-    --      又变回一棵假树）。判定顺序：bare → 素材 → 纯色回退。
++    -- ⑤ 树木（真树 1 格高 / 无叶树干 1 格高）
++    --    ★ 被推立起来的树干（tr.bare）**没有树冠**：它就是倒下的那根木头竖起来了，
++    --      造型和 ② 的倒木同源，所以永远走**纯色池**（套素材会变回一棵假树）。
+     local treeArt = slotUsesArt(state.treeCtrls, parent, treeSlot)
+     local ti = 1
+     for _, tr in ipairs(state.trees) do
+-        local x, foot = cellCenterX(tr.c), cellFootY(tr.r)
+-        shadow(x, foot, cell * 0.72, tr.r)
++        local x = cellCenterX(tr.c)
++        local base = entBaseY(tr.c, tr.r, tr.z)
++        local stack = stackOf(tr.c, tr.r, tr.z)
++        shadow(x, base, cell * 0.72, tr.r, stack)
+         if tr.bare then
+             if not hideAnimAt(tr.c, tr.r) then
+-                i = paintStandingTrunk(pool, i, parent, rect, standingShape(tr.c, tr.r),
+-                                       palette, keyOf(tr.r, SUB_TREE))
++                i = paintStandingTrunk(pool, i, parent, rect, standingShape(tr.c, tr.r, tr.z),
++                                       palette, keyOf(tr.r, SUB_TREE, stack))
+             end
+         elseif treeArt then
+             local fit = (config.DEFAULT_ART_FIT or {}).tree or { w = 1.82, h = 1.82, dy = 0.5 }
+             ti = paint(state.treeCtrls, ti, parent, treeSlot,
+-                       x, foot + (fit.dy or 0) * cell,
+-                       cell * (fit.w or 1), cell * (fit.h or 1), nil, nil, keyOf(tr.r, SUB_TREE))
++                       x, base + (fit.dy or 0) * cell,
++                       cell * (fit.w or 1), cell * (fit.h or 1), nil, nil,
++                       keyOf(tr.r, SUB_TREE, stack))
+         else
+-            ti = paint(state.treeCtrls, ti, parent, treeSlot, x, foot + cell * 0.31,
+-                       cell * 0.22, cell * 0.62, palette.treeTrunk, 255, keyOf(tr.r, SUB_TREE))
+-            ti = paint(state.treeCtrls, ti, parent, treeSlot, x, foot + cell * 0.72,
+-                       cell * 0.78, cell * 0.56, palette.treeCanopy, 255, keyOf(tr.r, SUB_TREE + 0.1))
++            ti = paint(state.treeCtrls, ti, parent, treeSlot, x, base + cell * 0.31,
++                       cell * 0.22, cell * 0.62, palette.treeTrunk, 255,
++                       keyOf(tr.r, SUB_TREE, stack))
++            ti = paint(state.treeCtrls, ti, parent, treeSlot, x, base + cell * 0.72,
++                       cell * 0.78, cell * 0.56, palette.treeCanopy, 255,
++                       keyOf(tr.r, SUB_TREE + 0.1, stack))
+         end
+     end
+     poolTrim(state.treeCtrls, ti - 1)
+     state.treeUsed = ti - 1
+ 
+-    -- ⑤ 终点旗（单独一个池：同格内它必须压在石头 / 树木之上）
+-    --    ★ 跟着新身高缩到 1.24 格高：比小人高一点，远处一眼认得出，又不会戳破画面
++    -- ⑥ 木牌（MExp 的「终点」就是一块写着 You win! 的牌子）
++    --    柱 + 板；终点牌的板子换成金色，并且顶上插一面小旗 ——
++    --    玩家得在很远的地方就认出「那块就是要读的」。
+     local gi = 1
+-    local gx, gfoot = cellCenterX(state.goal.c), cellFootY(state.goal.r)
+-    gi = paint(state.goalCtrls, gi, parent, rect, gx, gfoot + cell * 0.07,
+-               cell * 0.92, cell * 0.14, palette.goalFlag, 90, keyOf(state.goal.r, SUB_GOAL))
+-    gi = paint(state.goalCtrls, gi, parent, rect, gx - cell * 0.20, gfoot + cell * 0.62,
+-               cell * 0.08, cell * 1.24, palette.goalPole, 255, keyOf(state.goal.r, SUB_GOAL + 0.1))
+-    gi = paint(state.goalCtrls, gi, parent, rect, gx + cell * 0.08, gfoot + cell * 1.02,
+-               cell * 0.50, cell * 0.32, palette.goalFlag, 255, keyOf(state.goal.r, SUB_GOAL + 0.2))
++    for _, sg in ipairs(state.signs or {}) do
++        local x = cellCenterX(sg.c)
++        local base = entBaseY(sg.c, sg.r, sg.z)
++        local stack = stackOf(sg.c, sg.r, sg.z)
++        local sh = cell * (config.DEFAULT_SIGN_H or 0.72)
++        local board = (sg.goal and palette.goalFlag) or palette.sand
++        shadow(x, base, cell * 0.42, sg.r, stack)
++        gi = paint(state.goalCtrls, gi, parent, rect, x, base + sh * 0.5,
++                   cell * 0.11, sh, palette.goalPole, 255,
++                   keyOf(sg.r, SUB_SIGN, stack))                       -- 柱子
++        gi = paint(state.goalCtrls, gi, parent, rect, x + cell * 0.04, base + sh * 0.78,
++                   cell * 0.46, cell * 0.30, board, 255,
++                   keyOf(sg.r, SUB_SIGN + 0.1, stack))                 -- 牌子
++        gi = paint(state.goalCtrls, gi, parent, rect, x + cell * 0.04, base + sh * 0.78,
++                   cell * 0.34, cell * 0.05, palette.goalPole, 210,
++                   keyOf(sg.r, SUB_SIGN + 0.2, stack))                 -- 板上的两道「字迹」
++        gi = paint(state.goalCtrls, gi, parent, rect, x + cell * 0.04, base + sh * 0.64,
++                   cell * 0.30, cell * 0.05, palette.goalPole, 210,
++                   keyOf(sg.r, SUB_SIGN + 0.2, stack))
++        if sg.goal then
++            gi = paint(state.goalCtrls, gi, parent, rect, x - cell * 0.16, base + sh * 1.06,
++                       cell * 0.30, cell * 0.19, palette.goalFlag, 255,
++                       keyOf(sg.r, SUB_GOAL, stack))
++        end
++    end
++
++    -- ⑦ 老版「终点格」的旗子：只有编辑器自制关（没有木牌）才画
++    if state.goal and #(state.signs or {}) == 0 then
++        local gx = cellCenterX(state.goal.c)
++        local gfoot = groundY(state.goal.c, state.goal.r)
++        gi = paint(state.goalCtrls, gi, parent, rect, gx, gfoot + cell * 0.07,
++                   cell * 0.92, cell * 0.14, palette.goalFlag, 90, keyOf(state.goal.r, SUB_GOAL))
++        gi = paint(state.goalCtrls, gi, parent, rect, gx - cell * 0.20, gfoot + cell * 0.62,
++                   cell * 0.08, cell * 1.24, palette.goalPole, 255,
++                   keyOf(state.goal.r, SUB_GOAL + 0.1))
++        gi = paint(state.goalCtrls, gi, parent, rect, gx + cell * 0.08, gfoot + cell * 1.02,
++                   cell * 0.50, cell * 0.32, palette.goalFlag, 255,
++                   keyOf(state.goal.r, SUB_GOAL + 0.2))
++    end
+     poolTrim(state.goalCtrls, gi - 1)
+     state.goalUsed = gi - 1
+ 
+     poolTrim(pool, i - 1)
+     state.objectUsed = i - 1
+ 
+-    -- ⑥ 「倒 / 立」的过渡代理（不在动画期间就自动清空自己）
++    -- ⑧ 「倒 / 立」的过渡代理（不在动画期间就自动清空自己）
+     M.paintObjProxy()
+ 
+-    -- ⑦ 全局重排：地块 → 物体 → 小人，全部按深度键点名顺序
++    -- ⑨ 全局重排：地块 → 物体 → 小人，全部按深度键点名顺序
+     M.restackWorld()
+ end
+ 
+@@ -1129,8 +1273,8 @@
+     if not from or not to then return end
+ 
+     local function shapeOf(spec)
+-        if spec.stand then return standingShape(spec.c, spec.r) end
+-        return lyingShape(spec.c, spec.r, spec.dir)
++        if spec.stand then return standingShape(spec.c, spec.r, spec.z) end
++        return lyingShape(spec.c, spec.r, spec.dir, spec.z)
+     end
+ 
+     state.objAnimFrom = shapeOf(from)
+@@ -1870,7 +2014,7 @@
+     local s = tonumber(scale) or 1
+     local base = cell * (config.DEFAULT_DUST_SIZE or 0.62) * s
+     state.dustX = cellCenterX(c)
+-    state.dustY = cellFootY(r) + cell * 0.06
++    state.dustY = groundY(c, r) + cell * 0.06
+     state.dustT = 0
+     state.dustDur = config.DEFAULT_DUST_TIME or 0.34
+     state.dustScale = s
+@@ -1919,6 +2063,7 @@
+     utils.setVisible(state.dustCtrl, false)
+     state.terrainUsed = 0
+     state.decoUsed = 0
++    state.terrainWinKey = ""      -- 换关 / 重开：地形窗口必须重铺
+     state.objectUsed = 0
+     state.treeUsed = 0
+     state.goalUsed = 0
+@@ -1934,15 +2079,22 @@
+ -- ================================================================
+ -- ★ 构建一关
+ -- ================================================================
+-function M.build(data)
+-    if not data then return false end
+-    if not world.load(data) then return false end
++-- 构建一张图
++--   mapKey 给了就走**真实地图**（world.loadMap）；没给就走编辑器关卡（world.load）
++function M.build(data, mapKey)
++    if mapKey then
++        if not world.loadMap(mapKey) then return false end
++        data = state.levelConfig or data
++    else
++        if not data then return false end
++        if not world.load(data) then return false end
++    end
+ 
+     M.computeGeometry()
+     local palette = utils.resolvePalette(data)
+ 
+     M.clear()                 -- 先把上一关的可见控件收起来（池子保留复用）
+-    buildTerrain(palette)
++    buildTerrain(palette, true)
+     M.rebuildObjects()
+     buildPlayer(palette)
+     buildRipple(palette)
+@@ -2034,6 +2186,11 @@
+     --   顺序很关键 —— 必须在小人位姿更新之后，否则镜头会慢一帧（走起来画面会抖）。
+     updateCamera()
+ 
++    -- ★ ①-c 地形窗口：真实地图最大 26×72，一次铺满会造上千条控件。
++    --   镜头把小人钉在屏幕中央 → 只有走到 4 格的块边界才需要重铺；
++    --   判定只是一次字符串比较，逐帧调也不心疼。
++    M.ensureTerrain()
++
+     -- ② 涟漪
+     if state.rippleActive and state.rippleCtrl then
+         local dur = state.rippleDur or config.DEFAULT_RIPPLE_TIME or 0.45
+@@ -2087,7 +2244,7 @@
+     local data = state.levelConfig or {}
+     local palette = utils.resolvePalette(data)
+     state.rippleX = cellCenterX(c)
+-    state.rippleY = cellFootY(r) + (state.cellSize or 1) * 0.10
++    state.rippleY = groundY(c, r) + (state.cellSize or 1) * 0.10
+     state.rippleT = 0
+     state.rippleDur = config.DEFAULT_RIPPLE_TIME or 0.45
+     state.rippleActive = true
+@@ -2146,9 +2303,19 @@
+     local data = state.levelConfig or {}
+     local palette = utils.resolvePalette(data)
+     local alpha = config.DEFAULT_HUD_TEXT_ALPHA or 255
+-    utils.setText(state.hudTitle, data.name or "浮岛借木")
++    local title = state.mapName
++    if not title or title == "" then title = data.name or "浮岛借木" end
++    local total = world.mapCount and world.mapCount() or 0
++    if total > 0 and state.levelIndex then
++        title = string.format("%s（%d/%d）", title, state.levelIndex, total)
++    end
++    utils.setText(state.hudTitle, title)
+     -- ★ 禁用缺字形的符号（✓ ▶ 等）：雅黑/宋体/黑体里没有，会渲染成豆腐块
+     local info = string.format("步数 %d", state.steps or 0)
++    -- 番外图收集到的密码碎片（读到一块就 +1）
++    local nfrag = 0
++    for _ in pairs(state.fragments or {}) do nfrag = nfrag + 1 end
++    if nfrag > 0 then info = info .. string.format("   碎片 %d/8", nfrag) end
+     if state.won then info = info .. "   （已通关）" end
+     utils.setText(state.hudInfo, info)
+     utils.setTextColor(state.hudTitle, palette.hud, alpha)

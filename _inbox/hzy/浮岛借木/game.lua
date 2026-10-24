@@ -24,6 +24,8 @@ local fadeScreen = require("fadeScreen")
 --   否则会新建一个 local 遮蔽前置声明，闭包仍拿到 nil）。
 -- ================================================================
 local doLoadLevel
+local openSign, closeSign, advanceSign, renderSign
+local doUndo
 
 -- ================================================================
 -- ★ 创建一个透明容器父节点（定位于世界原点，子节点坐标即世界坐标）
@@ -97,6 +99,7 @@ end
 -- ================================================================
 local function tryMove(key)
     if not state.keysEnabled then return end
+    if state.signOpen then return end              -- 正在读牌子：先按空格翻页 / 关掉
     if state.pendingStart then return end          -- 黑幕还没散尽，先别动
     if state.won then return end                   -- 已通关，锁住输入
     if (state.actionLock or 0) > 0 then return end -- 动作冷却中
@@ -106,8 +109,21 @@ local function tryMove(key)
     --   否则按了左键人还是面朝下，会显得不受控。
     level.setPlayerFacing(key)
 
+    world.pushUndo()                               -- ★ 走之前压一份快照（Z 撤销用）
     local act = world.step(key)
     local kind = act.kind or "invalid"
+
+    -- ★ 读到木牌：弹面板。读到「终点牌」= 通关 —— MExp 的胜利条件就是**读它**，
+    --   不是走到某一格。所以这里要在「走 / 推」那套分支之前单独接住。
+    if act.interact then
+        openSign(act.signPages)
+        if world.isWin() then
+            state.won = true
+            level.updateHudDisplay()
+        end
+        state.actionLock = config.DEFAULT_ACTION_COOLDOWN or 0.1
+        return
+    end
 
     if act.ok then
         state.steps = (state.steps or 0) + 1
@@ -212,6 +228,79 @@ local function createHud()
         utils.hexToColor(palette.hint), config.DEFAULT_HUD_HINT_SIZE or 20,
         state.containerHud)
     utils.setVisible(state.hudHint, false)
+
+    -- ★ 木牌对话框（读到牌子时弹出）
+    --   MExp 的「通关」是**读牌子**，不是走到某一格 —— 没有这块面板，
+    --   玩家只会觉得自己撞在了一块牌子上。所以牌面必须能看清正文。
+    local pw, phh = cw * 0.66, ch * 0.46
+    state.signPanel = utils.createControl(
+        state.rectPrefabId, 0, ch * 0.03, pw, phh,
+        utils.hexToColorA(palette.hudBar, 246), state.containerHud)
+    state.signText = utils.createText(
+        0, ch * 0.03 + 12, pw - 72, phh - 78, "",
+        utils.hexToColor(palette.hint), config.DEFAULT_SIGN_FONT or 26,
+        state.containerHud)
+    state.signPageText = utils.createText(
+        0, ch * 0.03 - phh * 0.5 + 22, pw - 72, 30, "",
+        utils.hexToColor(palette.hud), config.DEFAULT_HUD_HINT_SIZE or 20,
+        state.containerHud)
+    utils.setVisible(state.signPanel, false)
+    utils.setVisible(state.signText, false)
+    utils.setVisible(state.signPageText, false)
+end
+
+-- ================================================================
+-- ★ 木牌对话框
+--   空格 = 翻页（最后一页再按一次就关）；任何换图 / 重开也会自动关掉。
+-- ================================================================
+renderSign = function()
+    if not state.signOpen then
+        utils.setVisible(state.signPanel, false)
+        utils.setVisible(state.signText, false)
+        utils.setVisible(state.signPageText, false)
+        return
+    end
+    local pages = state.signPages or {}
+    local i = state.signPage or 1
+    if i > #pages then i = #pages end
+    if i < 1 then i = 1 end
+    state.signPage = i
+    local palette = utils.resolvePalette(state.levelConfig)
+    utils.setVisible(state.signPanel, true)
+    utils.setVisible(state.signText, true)
+    utils.setVisible(state.signPageText, true)
+    utils.setText(state.signText, pages[i] or "")
+    utils.setTextColor(state.signText, palette.hint, 255)
+    utils.setTextColor(state.signPageText, palette.hud, 200)
+    utils.setText(state.signPageText,
+        (#pages > 1) and string.format("%d / %d　空格继续", i, #pages)
+                     or "空格关闭")
+end
+
+openSign = function(pages)
+    state.signPages = pages or { "（牌子上的字已经看不清了）" }
+    state.signPage = 1
+    state.signOpen = true
+    renderSign()
+end
+
+closeSign = function()
+    state.signOpen = false
+    state.signPages = nil
+    state.signPage = 1
+    renderSign()
+end
+
+-- 空格：翻到下一页；已经在最后一页就关掉
+advanceSign = function()
+    if not state.signOpen then return end
+    local n = #(state.signPages or {})
+    if (state.signPage or 1) < n then
+        state.signPage = (state.signPage or 1) + 1
+        renderSign()
+    else
+        closeSign()
+    end
 end
 
 -- ================================================================
@@ -320,6 +409,37 @@ local function bindKeys(root)
         state.hintsOn = not state.hintsOn
         level.updateHudDisplay()
     end)
+    -- 空格：木牌翻页 / 关闭（读到牌子时唯一能用的键）
+    bindGlobal(K.KeyboardJumpKeyDown, function()
+        advanceSign()
+    end)
+    -- Z：撤销一步（奇匠 12 = 物理键 Z）—— MExp 原版里就是 ALPHA 键
+    bindGlobal(K.KeyboardCraftspersonKey12Down, function()
+        doUndo()
+    end)
+end
+
+-- ================================================================
+-- ★ 关卡序号 → 关卡数据
+--   ★ 现在有两种来源，序号统一走「真实地图优先」：
+--     ① 有 mexp_maps  → 序号就是 M.ORDER 的下标（12 张真实地图）
+--     ② 没有 mexp_maps → 退回 config.LEVELS（3 张三关教程 / 编辑器自制关）
+--   两种都给 level.build 传 {data, mapKey}，渲染层不需要知道差别。
+-- ================================================================
+local function levelAt(idx)
+    local key = world.mapKeyAt(idx)
+    if key then
+        return { mapKey = key, name = world.mapName(key) }, key
+    end
+    local data = config.getLevelConfig(idx)
+    if not data then return nil end
+    return data, nil
+end
+
+local function levelTotal()
+    local n = world.mapCount()
+    if n > 0 then return n end
+    return config.getLevelCount()
 end
 
 -- ================================================================
@@ -328,13 +448,13 @@ end
 function loadLevel(levelIndex)
     local idx = math.floor(tonumber(levelIndex) or 0)
     if idx < 1 then return false end
-    local data = config.getLevelConfig(idx)
+    local data, mapKey = levelAt(idx)
     if not data then return false end
     if not ensureContainers() then return false end
 
     fadeScreen.start({
         onPeak = function()
-            doLoadLevel(idx, data)
+            doLoadLevel(idx, data, mapKey)
         end,
     })
     return true
@@ -343,9 +463,10 @@ end
 -- ================================================================
 -- ★ 实际关卡重建（黑幕渐显完成、渐隐开始前调用）
 -- ================================================================
-doLoadLevel = function(idx, data)
+doLoadLevel = function(idx, data, mapKey)
     state.levelIndex = idx
     state.levelConfig = data
+    closeSign()
 
     -- 输入与节奏复位
     state.keysEnabled = true
@@ -353,7 +474,7 @@ doLoadLevel = function(idx, data)
     state.actionLock = 0
     state.heldW, state.heldA, state.heldS, state.heldD = false, false, false, false
 
-    if not level.build(data) then
+    if not level.build(data, mapKey) then
         printerr("错误：关卡构建失败，index=" .. tostring(idx))
         return
     end
@@ -374,20 +495,44 @@ end
 
 function nextLevel()
     local n = (state.levelIndex or 1) + 1
-    if config.getLevelConfig(n) then
+    if levelAt(n) then
         signal.send("进入下一关")
         loadLevel(n)
     else
-        utils.setMessage("已经是最后一关啦")
+        utils.setMessage("已经是最后一张图啦（T 回不去，用 P 往前）")
     end
 end
 
 function prevLevel()
     local p = (state.levelIndex or 1) - 1
-    if config.getLevelConfig(p) then
+    if levelAt(p) then
         signal.send("进入上一关")
         loadLevel(p)
     end
+end
+
+-- ================================================================
+-- ★ 撤销一步（Z）
+--   ★ 快照栈在 world 里，本函数只负责「把表现层也一起退回去」：
+--     物体重画、小人吸附、HUD 步数、关掉可能开着的木牌面板。
+-- ================================================================
+doUndo = function()
+    if not state.keysEnabled then return end
+    if state.pendingStart then return end
+    if not world.canUndo() then
+        utils.setMessage("没有可撤销的步骤了")
+        return
+    end
+    -- 正在播的「倒 / 立」补间要丢掉：它画的是撤销之后不存在的形态
+    state.objAnimActive = false
+    state.objAnimFrom, state.objAnimTo = nil, nil
+    if not world.undo() then return end
+    closeSign()
+    level.rebuildObjects()
+    level.syncPlayerNow()
+    level.updateHudDisplay()
+    audio.playStep()
+    utils.setMessage("撤销了一步")
 end
 
 -- ================================================================
@@ -398,7 +543,7 @@ local function resolveWin()
     state.winHandled = true
     audio.playWin()
 
-    if (state.levelIndex or 1) >= config.getLevelCount() then
+    if (state.levelIndex or 1) >= levelTotal() then
         utils.setMessage("全部通关！按 R 重玩本关")
     else
         utils.setMessage("过关！按 T 进入下一关，按 R 重玩本关")
@@ -417,7 +562,7 @@ local function onEnterLevel(name, params)
     local idx = signal.getIntParam(params, 1)
     if not idx then return end
     local use = idx
-    if not config.getLevelConfig(use) and config.getLevelConfig(idx + 1) then
+    if not levelAt(use) and levelAt(idx + 1) then
         use = idx + 1
     end
     loadLevel(use)
@@ -632,7 +777,13 @@ function OnStart()
     end
 
     -- ★ 首关
-    loadLevel(1)
+    --   startMap 是给调试用的：填 N 就直接进第 N 张图（0 / 空 = 第 1 张）。
+    --   12 张真实地图跨度很大（lake 全是水、cliffs 高差上百层），
+    --   没有这个入口，验一张图就得连按 9 次「下一关」。
+    local sm = getParamNumber("startMap", 0)
+    if sm == nil or sm < 1 then sm = 1 end
+    if sm > levelTotal() then sm = levelTotal() end
+    loadLevel(sm)
 end
 
 -- ================================================================
