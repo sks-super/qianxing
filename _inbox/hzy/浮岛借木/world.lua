@@ -1053,6 +1053,52 @@ local function landTableFromMap(md)
     return land
 end
 
+-- ================================================================
+-- ★ 外海（第 24 批）：和地图四边**连通**的水格才算「海」
+--
+--   为什么要这个：岛的内部也有水缝（原版地图里岛中间会有一格水洼 / 一道
+--   缝隙）。旧代码的岛缘描边只判「邻格是不是水」—— 于是这些内部水缝四周的
+--   陆地各画一条沙滩描边，把水缝的**内轮廓**勾了出来，看着就像岛内部凭空
+--   多出一条条边框（用户第 24 批报的「内轮廓」）。
+--
+--   现在改成：只有临**外海**的那一侧才画描边 —— 描出来的是岛的**外轮廓**。
+--   判定用一次洪水填充（从地图四边所有水格出发、四邻扩散），地图最大的
+--   一张是 52×38 = 1976 格，一次性算完存表，运行期只查表。
+-- ================================================================
+local function outerWaterFromMap(md)
+    local W, H = md.width, md.height
+    local isWater = function(x, y)
+        return hasBit(md.omap[y * W + x + 1] or 0, 2)
+    end
+    local out = {}
+    local stack = {}
+    local function push(x, y)
+        if x < 0 or y < 0 or x >= W or y >= H then return end
+        if not isWater(x, y) then return end
+        local row = out[y]
+        if not row then row = {}; out[y] = row end
+        if row[x] then return end
+        row[x] = true
+        stack[#stack + 1] = (y * W + x)
+    end
+    for x = 0, W - 1 do push(x, 0); push(x, H - 1) end
+    for y = 0, H - 1 do push(0, y); push(W - 1, y) end
+    local i = 1
+    while i <= #stack do
+        local v = stack[i]; i = i + 1
+        local x, y = v % W, math.floor(v / W)
+        push(x - 1, y); push(x + 1, y); push(x, y - 1); push(x, y + 1)
+    end
+    -- 转成 1 起始的二维表，和 state.land 同一套下标
+    local res = {}
+    for y = 0, H - 1 do
+        local src, row = out[y], {}
+        if src then for x = 0, W - 1 do if src[x] then row[x + 1] = true end end end
+        res[y + 1] = row
+    end
+    return res
+end
+
 -- omap 的「不可通行」位 → 渲染层的石头表（石头是**静态地形属性**，不进内核）
 local function rocksFromMap(md)
     local rocks = {}
@@ -1089,6 +1135,9 @@ end
 
 local function beginSession(md, landTable, rocks, name, mapKey)
     state.land = landTable or {}
+    -- ★ 外海判定表（第 24 批）：岛缘描边只认外海，见 outerWaterFromMap
+    state.outerWater = outerWaterFromMap(md)
+    state.islandBoxCache = {}
     state.mapRows = md.height
     state.mapCols = md.width
     state.roots = {}          -- ★ 老版「预置树根」通道，新规则下恒为空
@@ -1206,6 +1255,58 @@ function M.landAt(c, r)
     if not M.inBounds(c, r) then return false end
     local row = state.land[r]
     return (row ~= nil) and (row[c] ~= nil)
+end
+
+-- 这一格是不是「外海」（和地图四边连通的水）—— 岛缘描边只画在临外海的一侧
+--   ★ 岛内部的封闭水缝不算：否则会勾出水缝的**内轮廓**（第 24 批修的就是这个）
+function M.isOuterWater(c, r)
+    if not M.inBounds(c, r) then return false end
+    local row = state.outerWater and state.outerWater[r]
+    return (row ~= nil) and (row[c] == true)
+end
+
+-- 玩家所在的岛号（0 = 站在水上 / 木筏上）
+function M.playerIsland()
+    if not w then return 0 end
+    local p = w.player
+    if not p then return 0 end
+    return w:islandAt(p.x, p.y) or 0
+end
+
+-- 某座岛的格子包围盒（返回 c0, r0, c1, r1；查不到返回 nil）
+--   ★ 岛屿归属看 imap 的值（resetIsland 用的也是同一套编号）。
+--     结果按岛号缓存 —— 地图载入后地形不再变，算一次就够。
+function M.islandBox(d)
+    local id = math.floor(tonumber(d) or 0)
+    if id < 1 then return nil end
+    local cache = state.islandBoxCache
+    if not cache then cache = {}; state.islandBoxCache = cache end
+    local hit = cache[id]
+    if hit ~= nil then
+        if hit == false then return nil end
+        return hit.c0, hit.r0, hit.c1, hit.r1
+    end
+    local c0, r0, c1, r1 = nil, nil, nil, nil
+    local md = M.maps and M.maps.MAPS and state.mapKey and M.maps.MAPS[state.mapKey]
+    local W, H = state.mapCols or 0, state.mapRows or 0
+    if md and W > 0 and H > 0 then
+        for y = 0, H - 1 do
+            for x = 0, W - 1 do
+                if (md.imap[y * W + x + 1] or 0) == id then
+                    if not c0 or x + 1 < c0 then c0 = x + 1 end
+                    if not c1 or x + 1 > c1 then c1 = x + 1 end
+                    if not r0 or y + 1 < r0 then r0 = y + 1 end
+                    if not r1 or y + 1 > r1 then r1 = y + 1 end
+                end
+            end
+        end
+    end
+    if not c0 then
+        cache[id] = false
+        return nil
+    end
+    cache[id] = { c0 = c0, r0 = r0, c1 = c1, r1 = r1 }
+    return c0, r0, c1, r1
 end
 
 -- 该格的地面高度（层）；水返回 nil
@@ -1501,7 +1602,9 @@ function M.clearUndo()
 end
 
 -- ================================================================
--- ★ 整张图复位：重新从地图数据开一局（真实地图没有「单岛复位」的必要）
+-- ★ 整张图复位：重新从地图数据开一局
+--   ★ 第 24 批之后玩家按 R 走的是 M.resetIsland（只重置脚下那座岛）；
+--     这个「整图重开」保留给需要彻底重来的场景（调试 / 换图）。
 -- ================================================================
 function M.resetWorld()
     if not w then return false end
@@ -1509,6 +1612,27 @@ function M.resetWorld()
     local ok = w:resetIsland(1)
     M.syncView()
     return ok
+end
+
+-- ================================================================
+-- ★ 单岛复位（第 24 批 · R 键）：只把**玩家脚下的那座岛**还原到开局状态
+--   语义与 MExp 原版 RSTI 一致（见 World:resetIsland）：
+--     该岛实体全部还原、玩家回到该岛的出生点、木筏「推动队列」清空。
+--   ★ 其它岛不动、全局步数不动 —— 所以「按 R」不等于「重开本关」。
+--   ★ 撤销栈必须清空：栈里的快照记的是复位前的布局，退回去会和现状打架。
+-- ================================================================
+function M.resetIsland(d)
+    if not w then return false end
+    local id = math.floor(tonumber(d) or 0)
+    if id <= 0 then return false end          -- 提示文案交给 game.lua（本文件不依赖 utils）
+    local ok = w:resetIsland(id)
+    if not ok then return false end
+    M.clearUndo()
+    state.wonSign = false
+    state.won = false
+    state.winHandled = false
+    M.syncView()
+    return true
 end
 
 -- ================================================================

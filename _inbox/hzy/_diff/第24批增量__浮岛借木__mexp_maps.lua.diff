@@ -1,0 +1,15 @@
+--- a/浮岛借木/mexp_maps.lua
++++ b/浮岛借木/mexp_maps.lua
+@@ -10,8 +10,11 @@
+ 
+ local M = {}
+ 
++-- ★ 关卡表（第 24 批）：**只开放第一大关「沙洲群岛」**，其余 11 张暂时下线。
++--   下面 M.MAPS 里那 11 张的数据**没有删**：恢复时把 key 依次加回这一行即可
++--   （关卡序号 = 本表下标，HUD 的「第 N / 共几关」也跟着这张表走）。
+ M.ORDER = {
+-    "islands", "log-maze", "raft-ejection", "foothills", "the-rescue", "obscured-mirror", "lake", "icy-lake", "caustic-bluff", "cliffs", "big-scalar", "whimsy-raft"
++    "islands"
+ }
+ 
+ M.MAPS = {}

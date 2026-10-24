@@ -1,0 +1,135 @@
+--- a/浮岛借木/game.lua
++++ b/浮岛借木/game.lua
+@@ -429,8 +429,8 @@
+     bindMove(K.KeyboardCraftspersonKey38Down, K.KeyboardCraftspersonKey38Up, "A", "heldA")
+     bindMove(K.KeyboardCraftspersonKey39Down, K.KeyboardCraftspersonKey39Up, "D", "heldD")
+ 
+-    -- R：重开本关
+-    bindGlobal(K.KeyboardCharacterSkill3KeyDown, function() reloadLevel() end)
++    -- R：只重置玩家脚下的这座岛（第 24 批；原来的「重开本关」已去掉）
++    bindGlobal(K.KeyboardCharacterSkill3KeyDown, function() resetCurrentIsland() end)
+     -- T：下一关
+     bindGlobal(K.KeyboardCharacterSkill4KeyDown, function() nextLevel() end)
+     -- P：上一关
+@@ -452,19 +452,27 @@
+ 
+ -- ================================================================
+ -- ★ 关卡序号 → 关卡数据
+---   ★ 现在有两种来源，序号统一走「真实地图优先」：
+---     ① 有 mexp_maps  → 序号就是 M.ORDER 的下标（12 张真实地图）
+---     ② 没有 mexp_maps → 退回 config.LEVELS（3 张三关教程 / 编辑器自制关）
+---   两种都给 level.build 传 {data, mapKey}，渲染层不需要知道差别。
++--   ★ 两种来源，序号统一走「真实地图优先」：
++--     ① 有 mexp_maps  → 序号就是 M.ORDER 的下标
++--     ② 没有 mexp_maps → 退回 config.LEVELS（编辑器自制关）
++--   ★ 第 24 批：`M.ORDER` 里只留了第一大关「沙洲群岛」。
++--     于是「序号越界」不再意味着「回退到教程关」—— 那样按 T 会掉进
++--     config.LEVELS 的旧教程关里。这里改成：**有真实地图就只在真实地图里循环**，
++--     序号超界一律回绕到第 1 关（这样 T / P / startMap 都不会跑出沙洲群岛）。
+ -- ================================================================
+ local function levelAt(idx)
+-    local key = world.mapKeyAt(idx)
+-    if key then
+-        return { mapKey = key, name = world.mapName(key) }, key
++    local i = math.floor(tonumber(idx) or 0)
++    local total = world.mapCount()
++    if total > 0 then
++        -- 回绕（1 起始）：i=0 → 最后一关，i=total+1 → 第 1 关
++        local k = (i - 1) % total + 1
++        local key = world.mapKeyAt(k)
++        if key then return { mapKey = key, name = world.mapName(key) }, key, k end
++        return nil
+     end
+-    local data = config.getLevelConfig(idx)
++    local data = config.getLevelConfig(i)
+     if not data then return nil end
+-    return data, nil
++    return data, nil, i
+ end
+ 
+ local function levelTotal()
+@@ -478,9 +486,9 @@
+ -- ================================================================
+ function loadLevel(levelIndex)
+     local idx = math.floor(tonumber(levelIndex) or 0)
+-    if idx < 1 then return false end
+-    local data, mapKey = levelAt(idx)
++    local data, mapKey, realIdx = levelAt(idx)
+     if not data then return false end
++    idx = realIdx or idx            -- ★ 越界已回绕，用实际落入的序号
+     if not ensureContainers() then return false end
+ 
+     fadeScreen.start({
+@@ -524,7 +532,43 @@
+     loadLevel(state.levelIndex)
+ end
+ 
++-- ================================================================
++-- ★ R：只重置**玩家脚下的这座岛**（第 24 批）
++--   语义 = MExp 原版的 RSTI（见 World:resetIsland）：
++--     该岛的树 / 木头 / 木筏全部还原，玩家回到该岛的出生点。
++--   ★ 和「重开本关」的区别：其它岛不动、全局步数不动、地图不重建
++--     —— 所以黑幕都不用拉，当场就复位了。
++--   ★ 撤销栈由 world.resetIsland 清空并重压基准快照：复位前的快照
++--     记的是旧布局，留着退回去会和现状打架。
++-- ================================================================
++function resetCurrentIsland()
++    if not state.keysEnabled then return end
++    if state.pendingStart then return end
++    local d = world.playerIsland()
++    if not d or d <= 0 then
++        utils.setMessage("脚下不是岛，没有可重置的东西")
++        return
++    end
++    closeSign()
++    state.objAnimActive = false
++    state.objAnimFrom, state.objAnimTo = nil, nil
++    if not world.resetIsland(d) then
++        utils.setMessage("这座岛已经是最初的样子了")
++        return
++    end
++    level.rebuildObjects()
++    level.syncPlayerNow()
++    level.updateHudDisplay()
++    audio.playStep()
++    utils.setMessage("已重置脚下的岛屿")
++end
++
+ function nextLevel()
++    -- ★ 第 24 批：只留了沙洲群岛一张图，T / P 没有意义，明确提示一下
++    if levelTotal() <= 1 then
++        utils.setMessage("现在只有「沙洲群岛」一张图")
++        return
++    end
+     local n = (state.levelIndex or 1) + 1
+     if levelAt(n) then
+         signal.send("进入下一关")
+@@ -535,6 +579,10 @@
+ end
+ 
+ function prevLevel()
++    if levelTotal() <= 1 then
++        utils.setMessage("现在只有「沙洲群岛」一张图")
++        return
++    end
+     local p = (state.levelIndex or 1) - 1
+     if levelAt(p) then
+         signal.send("进入上一关")
+@@ -574,10 +622,14 @@
+     state.winHandled = true
+     audio.playWin()
+ 
+-    if (state.levelIndex or 1) >= levelTotal() then
+-        utils.setMessage("全部通关！按 R 重玩本关")
++    -- ★ 第 24 批：R 已从「重开本关」改成「只重置脚下的岛屿」，这里的话术跟着改。
++    --   只有一张图时不再提 T（T 会提示「只有一张图」）。
++    if levelTotal() <= 1 then
++        utils.setMessage("全部通关！按 R 重置脚下的岛屿")
++    elseif (state.levelIndex or 1) >= levelTotal() then
++        utils.setMessage("全部通关！按 R 重置脚下的岛屿")
+     else
+-        utils.setMessage("过关！按 T 进入下一关，按 R 重玩本关")
++        utils.setMessage("过关！按 T 进入下一关，按 R 重置脚下的岛屿")
+     end
+ 
+     signal.send("到达终点")

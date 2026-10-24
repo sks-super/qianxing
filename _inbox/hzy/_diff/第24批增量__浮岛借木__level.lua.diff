@@ -1,0 +1,106 @@
+--- a/浮岛借木/level.lua
++++ b/浮岛借木/level.lua
+@@ -41,7 +41,7 @@
+ local utils = require("utils")
+ local world = require("world")
+ 
+-M.BUILD = "b23"   -- 版本戳：真机日志里能一眼看出用的是哪一版文件（b23 = 第 23 批图层顺序日志）
++M.BUILD = "b24"   -- 版本戳：真机日志里能一眼看出用的是哪一版文件（b24 = 第 24 批 单关 + 外轮廓 + 岛中心镜头）
+ 
+ -- ★ 小人「图元笔触」数据（第 16 批）：来自「图元拟合拼图」四视角脚本，
+ --   已按游戏内 68px 尺度裁掉看不见的椭圆。没有这个模块就自动退回像素画/立绘。
+@@ -467,10 +467,40 @@
+ --     只动 world 会让特效留在原地（小人脚下踩空）。
+ --   ★ bg（整屏海面）与 hud **不能动**：一个要铺满屏，一个要固定在界面层。
+ -- ================================================================
++-- ================================================================
++-- ★ 当前所在岛的「视觉中心」（世界坐标）
++--   第 24 批：镜头不再钉住小人，而是钉在**玩家脚下这座岛的中心** ——
++--   在岛内走动时画面纹丝不动（看的是一座岛，不是一个角色），
++--   只有换岛（走木筏 / 跨桥过去）才整体平移一次。
++--   ★ 岛号 = imap 的值（和 resetIsland 同一套编号），bbox 由 world.islandBox 缓存。
++--   ★ 站在水上 / 木筏上（岛号 0）返回 nil —— 调用方回退成「跟着小人」。
++-- ================================================================
++local function islandAnchor()
++    local d = world.playerIsland()
++    if not d or d <= 0 then return nil end
++    local c0, r0, c1, r1 = world.islandBox(d)
++    if not c0 then return nil end
++    local cc = (c0 + c1) / 2
++    local rr = (r0 + r1) / 2
++    local cell = state.cellSize or 1
++    -- ★ 这里只能用 world.cellH（不能用 drawH / zRise —— 它们定义在文件后面，
++    --   在这里调用会读到 nil 全局：不报错、静态全绿、跑起来才炸）。
++    --   所以层号→抬高的换算就地写一遍（和 zRise 同一公式）。
++    local h = world.cellH(math.floor(cc + 0.5), math.floor(rr + 0.5)) or 0
++    local zv = tonumber(config.DEFAULT_Z_VIS) or 0.15
++    local rise = ((h + 1) - 1 - (state.baseH or 0)) * zv
++    return cellCenterX(cc), cellFootY(rr) + rise * cell
++end
++
+ local function camTargetFor(px, py)
+     local cell = state.cellSize or 1
+     local centerY = state.viewCenterY or 0
+-    -- 让「小人身体的中心」落在可视区中心：脚底 py + 半格
++    local ix, iy = islandAnchor()
++    if ix then
++        -- 岛的**视觉重心**：地面中心再往上抬一点（岛上的树 / 小人比地面高）
++        return -ix, centerY - (iy + cell * 0.45)
++    end
++    -- 站在水上：退回「小人钉中央」（原逻辑）
+     return -px, centerY - (py + cell * 0.5)
+ end
+ 
+@@ -997,20 +1027,32 @@
+                 if wh > cliffMax then wh = cliffMax end
+                 di = paint(state.decoCtrls, di, parent, rect, cx, bottom - wh / 2,
+                            cell + rim * 2, wh, palette.soil, 255, depthKey(BAND_TILE, r, 0.1))
+-                -- ② 临水的沙滩描边：四条边各自一条窄带（外半圈露在格子外面）
+-                --   ★ 行号越大越靠**下**（屏幕 y 越小），所以南北两条边的 y 要用
+-                --     `cy - e[2] * cell / 2`；写成 + 会把描边画到对面那条边上去
+-                --     —— 于是岛屿**中间**凭空出现一条条边框（第 20 批修的就是这个）。
+-                --   ★ 长度必须保持 cell + rim*2：收缩会让拐角处拼不上，岛的轮廓变成锯齿。
++                -- ② 临外海的沙滩描边（第 24 批：从「内轮廓」改成「外轮廓」）
++                --
++                --   ★ 判定的邻格必须是**外海**（world.isOuterWater），不是「不是陆地」。
++                --     岛的内部也有水缝，旧写法把它们也算成海 → 水缝四周各画一条沙滩带，
++                --     把水缝的**内轮廓**勾了出来（用户看到的「岛内部凭空一条条边框」）。
++                --   ★ 整条带子**整体外移 rim**：带子完全落在格子外面（水面一侧），
++                --     一点都不压草地 —— 这才是「岛的外轮廓」。
++                --   ★ 长度给到 cell + rim*4（横向各外伸 2rim）：外移之后拐角要多盖一块，
++                --     否则岛的四个角会缺口。相邻格的同类带子本来就会重叠，多伸无害。
++                --   ★ 南侧（e[2] > 0）要贴到**崖面下沿之外**：南边是有厚度的崖面，
++                --     沙滩带压在崖面上半截会看不懂，挂到崖面下方才是「岛脚沙滩」。
+                 for _, e in ipairs({ { 0, -1 }, { 0, 1 }, { -1, 0 }, { 1, 0 } }) do
+-                    if not world.landAt(c + e[1], r + e[2]) then
++                    if world.isOuterWater(c + e[1], r + e[2]) then
+                         local bw, bh, bx, by
+                         if e[1] == 0 then
+-                            bw, bh = cell + rim * 2, rim * 2
+-                            bx, by = cx, cy - e[2] * cell / 2
++                            bw, bh = cell + rim * 4, rim * 2
++                            bx = cx
++                            if e[2] > 0 then
++                                by = bottom - wh - rim      -- 南：崖面下沿再往下一圈
++                            else
++                                by = cy + cell / 2 + rim    -- 北：顶面上沿再往上一圈
++                            end
+                         else
+-                            bw, bh = rim * 2, cell + rim * 2
+-                            bx, by = cx + e[1] * cell / 2, cy
++                            bw, bh = rim * 2, cell + rim * 4
++                            bx = cx + e[1] * (cell / 2 + rim)
++                            by = cy
+                         end
+                         ri = paint(state.rimCtrls, ri, parentRim, rect, bx, by,
+                                    bw, bh, palette.sand, 255, depthKey(BAND_TILE, r, 0.4))
+@@ -2370,7 +2412,8 @@
+         pcall(print, string.format(
+             "[浮岛借木] 镜头 zoom=%s cell=%d 地图=%dx%d 画布=%dx%d | %s",
+             tostring(state.viewZoom), math.floor(state.cellSize or 0), ww, wh, cw, chh,
+-            needFollow and "一屏装不下 → 镜头跟随（人物钉中央）" or "一屏装得下 → 镜头不动"))
++            needFollow and "一屏装不下 → 镜头钉在「玩家所在岛的中心」（岛内走动画面不动，换岛才平移）"
++                        or "一屏装得下 → 镜头不动"))
+     end
+     -- ★ 图层顺序日志：关卡构建完成时打一次完整层序（见 M.logLayerOrder）
+     M.logLayerOrder("关卡构建完成")
