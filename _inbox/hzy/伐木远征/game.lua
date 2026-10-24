@@ -56,36 +56,35 @@ end
 
 -- ================================================================
 -- ★ 透明容器父节点（定位于世界原点，子控件坐标即世界坐标）
+--   挂的是「容器节点」元件 1073741876：不绘制、不需图源，只用来分层。
 -- ================================================================
 local function createContainer()
     if not state.parent then return nil end
-    local cid = state.containerPrefabId or 0
-    if cid > 0 then
-        local ok, c = pcall(game.InstantiateClientUIControl, cid, state.parent)
-        if ok and c then
-            pcall(function()
-                c:SetAnchorMin(0.5, 0.5)
-                c:SetAnchorMax(0.5, 0.5)
-                c:SetPivot(0.5, 0.5)
-                c:SetAnchoredPosition(0, 0)
-                c:SetSizeDelta(1, 1)
-                c:SetActive(true)
-            end)
-            return c
-        end
+    local c = utils.instantiate("container", state.parent)
+    if c then
+        pcall(function()
+            c:SetAnchorMin(0.5, 0.5)
+            c:SetAnchorMax(0.5, 0.5)
+            c:SetPivot(0.5, 0.5)
+            c:SetAnchoredPosition(0, 0)
+            c:SetSizeDelta(1, 1)
+            c:SetActive(true)
+        end)
+        return c
     end
-    local c = utils.instantiateRect(state.parent)
-    if not c then return nil end
+    -- 兜底：真机若连容器节点都拿不到，退成「图片·矩形」元件（透明、1×1）
+    local r = utils.instantiateRect(state.parent)
+    if not r then return nil end
     pcall(function()
-        c:SetAnchorMin(0.5, 0.5)
-        c:SetAnchorMax(0.5, 0.5)
-        c:SetPivot(0.5, 0.5)
-        c:SetAnchoredPosition(0, 0)
-        c:SetSizeDelta(1, 1)
-        c.imageColor = Color.FromRGBA(255, 255, 255, 0)
-        c:SetActive(true)
+        r:SetAnchorMin(0.5, 0.5)
+        r:SetAnchorMax(0.5, 0.5)
+        r:SetPivot(0.5, 0.5)
+        r:SetAnchoredPosition(0, 0)
+        r:SetSizeDelta(1, 1)
+        r.imageColor = Color.FromRGBA(255, 255, 255, 0)
+        r:SetActive(true)
     end)
-    return c
+    return r
 end
 
 local function ensureContainers()
@@ -463,15 +462,14 @@ function OnStart()
     end
     state.parent = root
 
-    state.containerPrefabId = paramId("containerPrefabId", config.DEFAULT_PREFAB_CONTAINER)
-    state.rectPrefabId = paramId("rectPrefabId", config.DEFAULT_PREFAB_RECT)
-    if state.rectPrefabId <= 0 then state.rectPrefabId = config.DEFAULT_PREFAB_IMAGE end
-    if state.rectPrefabId <= 0 then
-        printerr("错误：请设置脚本参数 rectPrefabId（纯色块元件）")
-        return
-    end
-    state.imagePrefabId = paramId("imagePrefabId", config.DEFAULT_PREFAB_IMAGE)
-    state.textPrefabId = paramId("textPrefabId", config.DEFAULT_PREFAB_TEXT)
+    -- ★★ 元件索引一律取 config.PREFAB（官方固定值），**不读脚本参数** ★★
+    --   真机「面板没填的数字参数返回 0」会把元件整个换掉 —— 第 10 批「小人变橙色块」
+    --   就是这么来的。挂靠控件只认这 4 个索引，详见 utils.instantiate()。
+    state.containerPrefabId = config.PREFAB.container
+    state.rectPrefabId = config.PREFAB.rect
+    state.imagePrefabId = config.PREFAB.image
+    state.textPrefabId = config.PREFAB.text
+    -- 图源编号仍可由参数覆盖（只在矩形元件要求配图源的地方才用得到，默认 0 = 不设）
     state.rectImageId = getParamNumber("rectImageId", 0)
 
     local vz = getParamNumber("viewZoom", config.DEFAULT_VIEW_ZOOM)
@@ -503,16 +501,17 @@ function OnStart()
 
     if type(print) == "function" then
         pcall(print, string.format(
-            "[伐木远征] %s 参数 rect=%s text=%s container=%s zoom=%s tile=%s | 画布 %dx%d",
-            BUILD, tostring(state.rectPrefabId), tostring(state.textPrefabId),
-            tostring(state.containerPrefabId), tostring(state.viewZoom),
-            tostring(state.tilePx), state.canvasW, state.canvasH))
+            "[伐木远征] %s 元件 container=%s rect=%s image=%s text=%s | 图元 %s/%s | zoom=%s tile=%s | 画布 %dx%d",
+            BUILD, tostring(state.containerPrefabId), tostring(state.rectPrefabId),
+            tostring(state.imagePrefabId), tostring(state.textPrefabId),
+            tostring(config.PRIM.rect), tostring(config.PRIM.circle),
+            tostring(state.viewZoom), tostring(state.tilePx), state.canvasW, state.canvasH))
     end
 
     script:EnableUpdate(true)
 
     if not ensureContainers() then
-        printerr("错误：容器创建失败（检查 containerPrefabId / rectPrefabId）")
+        printerr("错误：容器创建失败（容器节点元件 " .. tostring(config.PREFAB.container) .. "）")
         return
     end
 

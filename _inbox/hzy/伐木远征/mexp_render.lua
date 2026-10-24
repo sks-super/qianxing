@@ -360,7 +360,7 @@ local function slot(b, k, dx, dy, w, h, colorHex, imageId, alpha)
     utils.setSize(c, w, h)
     utils.setPosition(c, dx, dy)
     -- ★ 必须每次都写图元：同一个槽上一帧是圆的，这一帧当矩形用时不能还是圆的
-    utils.applyImage(c, imageId or config.PRIM_RECT)
+    utils.applyImage(c, imageId or config.PRIM.rect)
     -- ★ 颜色缺省时退回阴影色：真机不写 imageColor 就是纯白，会顶出一块白斑
     --   （config.OBJ.shadow 漏定义时踩过，见 2026-10-23 记录）
     utils.setColor(c, utils.hexToColorA(colorHex or config.PALETTE.shadow, alpha or 255))
@@ -380,7 +380,7 @@ local function hideSlots(b, from)
 end
 
 local function disc(w, h)
-    return config.PRIM_CIRCLE
+    return config.PRIM.circle      -- 内置圆图元 100002
 end
 
 -- 画某个实体（相对脚点 (0,0)，y 向上）

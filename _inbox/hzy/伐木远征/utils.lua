@@ -111,31 +111,49 @@ function M.applyImage(ctrl, imageId)
 end
 
 -- ================================================================
+-- ★★ 挂靠控件：按「用途」取内置元件索引，全工程只此一处 ★★
+--   kind = "container" | "rect" | "image" | "text"（见 config.PREFAB）
+--   ★ 刻意**不读脚本参数**：真机没填的数字参数返回 0，靠参数挑元件
+--     正是第 10 批「小人变橙色块」的成因。索引一律取官方固定值。
+-- ================================================================
+function M.prefabId(kind)
+    local t = config.PREFAB
+    return (t and t[kind]) or 0
+end
+
+-- 按用途实例化一个控件；拿不到就返回 nil（调用方负责兜底）
+function M.instantiate(kind, parent)
+    local pid = M.prefabId(kind)
+    if pid <= 0 then
+        printerr("错误：未知的控件用途 '" .. tostring(kind) .. "'（见 config.PREFAB）")
+        return nil, 0
+    end
+    local ok, ctrl = pcall(game.InstantiateClientUIControl, pid, parent or state.parent)
+    if ok and ctrl then return ctrl, pid end
+    return nil, pid
+end
+
+-- ================================================================
 -- ★ 创建纯色块控件 —— 全部纯色图形的统一入口
---   首选「图片·矩形」元件（自带矩形图元，真机不需要配白图）；
---   拿不到时**当场回退**「图片」元件（官方内置，但默认没图源）。
+--   先挂「图片·矩形」元件 1073741894（自带矩形图元，真机不需要配白图）；
+--   万一存档里真没有这个模板，才退到「图片」元件 1073741870 并要求
+--   调用方立刻补图源（config.PRIM.rect），绝不留整片空白。
 --   ★ pcall 包住：真机遇到存档里不存在的元件索引会抛错（不是返回 nil）。
 -- ================================================================
 function M.instantiateRect(parent)
-    local host = parent or state.parent
-    local rectId = state.rectPrefabId or 0
-    local ok, ctrl = false, nil
-    if rectId > 0 then
-        ok, ctrl = pcall(game.InstantiateClientUIControl, rectId, host)
-        if ok and ctrl then return ctrl, rectId end
-    end
-    local imgId = state.imagePrefabId or 0
-    if imgId > 0 and imgId ~= rectId then
-        ok, ctrl = pcall(game.InstantiateClientUIControl, imgId, host)
-        if ok and ctrl then return ctrl, imgId end
-    end
+    local ctrl = M.instantiate("rect", parent)
+    if ctrl then return ctrl, M.prefabId("rect") end
+    printerr("警告：矩形元件 " .. M.prefabId("rect") ..
+        " 拿不到，回退图片元件 " .. M.prefabId("image"))
+    ctrl = M.instantiate("image", parent)
+    if ctrl then return ctrl, M.prefabId("image") end
     return nil, 0
 end
 
 -- ================================================================
--- ★ 创建一个控件
---   imageId 传 config.PRIM_CIRCLE 就画圆（SetImage 内置圆图元），
---   传 nil / config.PRIM_RECT 就画矩形。
+-- ★ 创建一个控件（纯色块 / 圆）
+--   imageId 传 config.PRIM.circle 就画圆（SetImage 内置圆图元），
+--   传 nil 就用 config.PRIM.rect（矩形元件自带的图元）。
 -- ================================================================
 function M.createControl(x, y, w, h, color, parent, imageId)
     local ctrl, usedId = M.instantiateRect(parent)
@@ -149,15 +167,13 @@ function M.createControl(x, y, w, h, color, parent, imageId)
     end)
     -- 图源先于染色：SetImage 有可能清掉 tint
     local img = imageId
-    if img == nil then
-        if usedId == state.rectPrefabId then
-            img = config.PRIM_RECT
-        end
+    if img == nil and usedId == M.prefabId("rect") then
+        img = config.PRIM.rect          -- 矩形元件：显式写明图元编号
     end
-    if img and img ~= config.PRIM_RECT then
+    if img and img ~= config.PRIM.rect then
         M.applyImage(ctrl, img)
-    elseif usedId ~= state.rectPrefabId then
-        M.applyImage(ctrl, state.rectImageId)
+    elseif usedId ~= M.prefabId("rect") then
+        M.applyImage(ctrl, state.rectImageId)   -- 回退到「图片」元件：必须补图源
     end
     if color then pcall(function() ctrl.imageColor = color end) end
     pcall(function() ctrl:SetActive(true) end)
@@ -166,19 +182,20 @@ end
 
 -- 圆形：宽=高=直径
 function M.createDisc(x, y, d, color, parent)
-    local c = M.createControl(x, y, d, d, color, parent, config.PRIM_CIRCLE)
+    local c = M.createControl(x, y, d, d, color, parent, config.PRIM.circle)
     if not c then c = M.createControl(x, y, d, d, color, parent, nil) end
     return c
 end
 
 -- ================================================================
--- ★ 创建文本控件
+-- ★ 创建文本控件（「文本框」元件 1073741868）
 -- ================================================================
 function M.createText(x, y, w, h, text, colorHex, fontSize, parent)
-    local pid = state.textPrefabId or 0
-    if pid <= 0 then return nil end
-    local ok, ctrl = pcall(game.InstantiateClientUIControl, pid, parent or state.parent)
-    if not ok or not ctrl then return nil end
+    local ctrl = M.instantiate("text", parent)
+    if not ctrl then
+        printerr("警告：文本框元件 " .. M.prefabId("text") .. " 拿不到，文字将不显示")
+        return nil
+    end
     pcall(function()
         ctrl:SetAnchorMin(0.5, 0.5)
         ctrl:SetAnchorMax(0.5, 0.5)
