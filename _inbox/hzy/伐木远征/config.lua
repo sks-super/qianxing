@@ -1,34 +1,67 @@
 -- ================================================================
 -- 伐木远征 · 配置真源
 --   ★ 本文件的 DEFAULT_* 是唯一真源：state / render / ui 只读不写死。
---   ★ 千星元件索引（官方内置模板，任何存档都有）→ 统一放在 M.PREFAB 里按用途索引：
---       1073741876  容器节点（不绘制、不需图源，用来分层）
---       1073741894  图片 · 矩形（自带矩形图元 → 所有纯色块的构建基础）
---       1073741870  图片（无图源时真机会画彩色「?」，只作回退 / 立绘直出）
---       1073741868  文本框（字色字段是 fontColor）
+--
+--   ★★ 元件索引：官方内置模板的编号**随客户端版本不同**，本工程同时认两代 ★★
+--
+--     用途              新编号（当前客户端实测）  旧编号（早期存档 / 本地模拟器模板）
+--     SoloTurnPoolHost     1073741846             —（旧版把「宿主」和「容器节点」合成 1073741876）
+--     容器节点             1073741860             1073741876
+--     矩形图片             1073741859             1073741894（矩形）/ 1073741870（图片）
+--     文本框               1073741857             1073741868
+--     文本视窗             1073741858             1073741869
+--     网格视窗             1073741855             —
+--
+--   M.PREFAB[用途] = **有序候选**（新编号在前、旧编号在后）。
+--   utils.instantiate(kind) 逐个试，第一个真能造出控件的胜出并缓存；
+--   之后同类控件直接复用它。→ 客户端是哪一代编号都挂得上，换版本不用改代码。
+--
 --   ★ 图元（SetImage 的 StaticReference 编号）→ M.PRIM：
 --       100001 矩形 / 100002 圆 / 100003 三角 …
+--   ⚠️ 图元编号模拟器认、**真机未必认**（模拟器只代理 100001–100006）。
+--     所以只有「图片元件」那一级才补图源；「矩形图片」自带矩形图元，不碰 SetImage。
 -- ================================================================
 
 ---@diagnostic disable: undefined-global
 
 local M = {}
 
--- ---------------- 元件索引（官方内置模板，任何存档都有） ----------------
+-- ---------------- 元件索引：新编号（当前客户端实测） ----------------
+M.PREFAB_SOLO_HOST = 1073741846      -- SoloTurnPoolHost：客户端控件容器的宿主节点（挂脚本的那个）
+M.PREFAB_CONTAINER = 1073741860      -- 容器节点：只分层，不绘制、不需图源
+M.PREFAB_RECT = 1073741859           -- 矩形图片：自带矩形图元 → 全部纯色块的构建基础
+M.PREFAB_TEXT = 1073741857           -- 文本框：字色字段是 fontColor
+M.PREFAB_TEXT_VIEW = 1073741858      -- 文本视窗（可滚动长文本，本工程未用，登记备用）
+M.PREFAB_GRID = 1073741855           -- 网格视窗（本工程未用，登记备用）
+
+-- ---------------- 元件索引：旧编号（早期存档 / 本地模拟器登记的模板） ----------------
+--   ★ 保留是**有意的**：① 老存档里只有这一代；② 本地模拟器登记的模板 guid 就是这一组
+--     （_tools/_sim_common.mjs 的 SIM_TEMPLATE_GUIDS），
+--     `_check_refs.py` 第 7 节核对的也是这一组「三处同源」。
 M.DEFAULT_PREFAB_CONTAINER = 1073741876
 M.DEFAULT_PREFAB_RECT = 1073741894
 M.DEFAULT_PREFAB_IMAGE = 1073741870
 M.DEFAULT_PREFAB_TEXT = 1073741868
 
 -- ★★ 「挂靠控件」的唯一入口 ★★
--- 脚本里每造一个控件都按**用途**来这里取索引（utils.instantiate(kind)），
--- **不读脚本参数、不做「拿不到就换一个」的猜测** —— 真机没填的数字参数返回 0，
--- 靠参数挑元件正是第 10 批「小人变橙色块」的成因。
+-- 每个用途给出**有序候选**：新编号在前，旧编号在后。utils.instantiate(kind) 逐个试，
+-- 第一个拿到控件的胜出并缓存；全部失败才返回 nil（调用方兜底）。
+-- ★ 刻意**不读脚本参数**：真机没填的数字参数返回 0，靠参数挑元件正是
+--   第 10 批「小人变橙色块」的成因。
 M.PREFAB = {
-    container = M.DEFAULT_PREFAB_CONTAINER,   -- 容器节点：只分层，不绘制、不需图源
-    rect      = M.DEFAULT_PREFAB_RECT,        -- 图片·矩形：纯色块的基础（自带矩形图元）
-    image     = M.DEFAULT_PREFAB_IMAGE,       -- 图片：立绘直出 / 矩形元件拿不到时的兜底
-    text      = M.DEFAULT_PREFAB_TEXT,        -- 文本框：字色字段是 fontColor
+    host      = { M.PREFAB_SOLO_HOST },
+    container = { M.PREFAB_CONTAINER, M.DEFAULT_PREFAB_CONTAINER },
+    rect      = { M.PREFAB_RECT, M.DEFAULT_PREFAB_RECT, M.DEFAULT_PREFAB_IMAGE },
+    image     = { M.PREFAB_RECT, M.DEFAULT_PREFAB_IMAGE, M.DEFAULT_PREFAB_RECT },
+    text      = { M.PREFAB_TEXT, M.DEFAULT_PREFAB_TEXT },
+    textView  = { M.PREFAB_TEXT_VIEW },
+    grid      = { M.PREFAB_GRID },
+}
+
+-- 哪些索引「自带矩形图元」→ 用它们造纯色块时**不补图源**（补了反而可能变彩色 ?）
+M.PREFAB_CARRIES_RECT = {
+    [M.PREFAB_RECT] = true,          -- 1073741859 矩形图片
+    [M.DEFAULT_PREFAB_RECT] = true,  -- 1073741894 矩形
 }
 
 -- ---------------- 图元编号（SetImage 的 StaticReference） ----------------

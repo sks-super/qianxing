@@ -39,9 +39,22 @@ tryRequire("mexp_maps",   function() return require("mexp_maps") end)
 tryRequire("mexp_render", function() return require("mexp_render") end)
 tryRequire("mexp_ui",     function() return require("mexp_ui") end)
 
-local BUILD = "mexp-02"
+local BUILD = "mexp-03"
 
 -- 缺模块时的兜底画面：只用官方内置元件，不依赖任何业务模块
+--   ⚠️ 这里**不能**读 config（config 本身可能就是缺的那个），所以索引写成字面量；
+--     但已把两代编号都列上 —— 兜底画面本来就是为了「什么都不知道时也能看见字」。
+local BOOT_RECT_IDS = { 1073741859, 1073741894 }   -- 矩形图片 / 矩形
+local BOOT_TEXT_IDS = { 1073741857, 1073741868 }   -- 文本框（新 / 旧）
+
+local function bootMake(ids, parent)
+    for i = 1, #ids do
+        local ok, c = pcall(game.InstantiateClientUIControl, ids[i], parent)
+        if ok and c then return c end
+    end
+    return nil
+end
+
 local function bootDiag(missing)
     printerr("[伐木远征] " .. BUILD .. " 启动失败：缺少脚本模块 " ..
         table.concat(missing, ", ") .. "（请为这些 .lua 建立脚本映射并挂到同一个客户端控件容器）")
@@ -56,8 +69,8 @@ local function bootDiag(missing)
         if type(cw) == "number" and cw > 0 then w = cw end
         if type(chh) == "number" and chh > 0 then h = chh end
     end)
-    local okBg, bg = pcall(game.InstantiateClientUIControl, 1073741894, root)
-    if okBg and bg then
+    local bg = bootMake(BOOT_RECT_IDS, root)
+    if bg then
         pcall(function()
             bg:SetAnchorMin(0.5, 0.5); bg:SetAnchorMax(0.5, 0.5); bg:SetPivot(0.5, 0.5)
             bg:SetSizeDelta(w * 0.86, 260)
@@ -66,8 +79,8 @@ local function bootDiag(missing)
             bg:SetAsLastSibling(); bg:SetActive(true)
         end)
     end
-    local okT, t = pcall(game.InstantiateClientUIControl, 1073741868, root)
-    if okT and t then
+    local t = bootMake(BOOT_TEXT_IDS, root)
+    if t then
         pcall(function()
             t:SetAnchorMin(0.5, 0.5); t:SetAnchorMax(0.5, 0.5); t:SetPivot(0.5, 0.5)
             t:SetSizeDelta(w * 0.86 - 48, 210)
@@ -129,7 +142,7 @@ end
 
 -- ================================================================
 -- ★ 透明容器父节点（定位于世界原点，子控件坐标即世界坐标）
---   挂的是「容器节点」元件 1073741876：不绘制、不需图源，只用来分层。
+--   挂的是「容器节点」元件（新 1073741860 / 旧 1073741876）：不绘制、不需图源，只用来分层。
 -- ================================================================
 local function createContainer()
     if not state.parent then return nil end
@@ -536,14 +549,10 @@ function OnStart()
     end
     state.parent = root
 
-    -- ★★ 元件索引一律取 config.PREFAB（官方固定值），**不读脚本参数** ★★
+    -- ★★ 元件索引一律取 config.PREFAB（官方两代编号的有序候选），**不读脚本参数** ★★
     --   真机「面板没填的数字参数返回 0」会把元件整个换掉 —— 第 10 批「小人变橙色块」
-    --   就是这么来的。挂靠控件只认这 4 个索引，详见 utils.instantiate()。
-    state.containerPrefabId = config.PREFAB.container
-    state.rectPrefabId = config.PREFAB.rect
-    state.imagePrefabId = config.PREFAB.image
-    state.textPrefabId = config.PREFAB.text
-    -- 图源编号仍可由参数覆盖（只在矩形元件要求配图源的地方才用得到，默认 0 = 不设）
+    --   就是这么来的。实际用的是哪个候选，由 utils.instantiate() 现场探测，见文末日志。
+    -- 图源编号仍可由参数覆盖（只在退到「图片」元件时才用得到，默认 0 = 不设）
     state.rectImageId = getParamNumber("rectImageId", 0)
 
     local vz = getParamNumber("viewZoom", config.DEFAULT_VIEW_ZOOM)
@@ -573,14 +582,13 @@ function OnStart()
         NAME_OF[d.key] = d.cn
     end
 
-    -- ★ 版本戳 + 元件表：真机「改了没生效」时，先看这一行对不对。
+    -- ★ 版本戳 + 画布：真机「改了没生效」时，先看这一行对不对。
     --   同时走 print（普通日志）与 printerr（错误日志）—— 有些客户端只默认展开后者。
     local bootLine = string.format(
-        "[伐木远征] %s 元件 container=%s rect=%s image=%s text=%s | 图元 %s/%s | zoom=%s tile=%s | 画布 %dx%d",
-        BUILD, tostring(state.containerPrefabId), tostring(state.rectPrefabId),
-        tostring(state.imagePrefabId), tostring(state.textPrefabId),
-        tostring(config.PRIM.rect), tostring(config.PRIM.circle),
-        tostring(state.viewZoom), tostring(state.tilePx), state.canvasW, state.canvasH)
+        "[伐木远征] %s 启动 | 画布 %dx%d | zoom=%s tile=%s | 图元 %s/%s",
+        BUILD, state.canvasW, state.canvasH,
+        tostring(state.viewZoom), tostring(state.tilePx),
+        tostring(config.PRIM.rect), tostring(config.PRIM.circle))
     if type(print) == "function" then pcall(print, bootLine) end
     printerr(bootLine)
 
@@ -628,7 +636,9 @@ function OnStart()
     script:EnableUpdate(true)
 
     if not ensureContainers() then
-        printerr("错误：容器创建失败（容器节点元件 " .. tostring(config.PREFAB.container) .. "）")
+        printerr("错误：容器创建失败 —— 容器节点候选 " ..
+            table.concat(config.PREFAB.container, " / ") ..
+            " 没有一个能造出控件（这个客户端的容器节点索引可能又变了）")
         return
     end
 
@@ -646,6 +656,22 @@ function OnStart()
 
     bindKeys(root)
     toTitle()
+
+    -- ★ 挂靠结果：**实际用到的**索引（探测之后的真值，不是候选表里的第一个）。
+    --   没试过的用途打 "-" —— 别让「候选首选」冒充命中。
+    --   真机「画面出来了但很怪」时，先确认这几行与编辑器里看到的一致。
+    local function idText(kind)
+        local v = utils.prefabResolved(kind)
+        return v and tostring(v) or "-"
+    end
+    state.containerPrefabId = utils.prefabResolved("container") or 0
+    state.rectPrefabId = utils.prefabResolved("rect") or 0
+    state.imagePrefabId = utils.prefabResolved("image") or 0
+    state.textPrefabId = utils.prefabResolved("text") or 0
+    printerr("[伐木远征] 控件挂靠 container=" .. idText("container") ..
+        " rect=" .. idText("rect") ..
+        " image=" .. idText("image") ..
+        " text=" .. idText("text"))
 
     printerr("[伐木远征] " .. BUILD .. " 就绪：4 层容器已建、标题页已显示（画布 " ..
         tostring(state.canvasW) .. "x" .. tostring(state.canvasH) .. "）")

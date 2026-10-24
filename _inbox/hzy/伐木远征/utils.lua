@@ -112,48 +112,90 @@ end
 
 -- ================================================================
 -- ★★ 挂靠控件：按「用途」取内置元件索引，全工程只此一处 ★★
---   kind = "container" | "rect" | "image" | "text"（见 config.PREFAB）
+--   kind = "host" | "container" | "rect" | "image" | "text" | "textView" | "grid"
+--   config.PREFAB[kind] 是**有序候选**（新编号在前、旧编号在后）——
+--   官方内置模板编号随客户端版本变，逐个试才不会「换个版本整屏空白」。
 --   ★ 刻意**不读脚本参数**：真机没填的数字参数返回 0，靠参数挑元件
---     正是第 10 批「小人变橙色块」的成因。索引一律取官方固定值。
+--     正是第 10 批「小人变橙色块」的成因。
+--   ★ 第一次调用会**实测**哪个候选真能造出控件，然后记住它；同类控件以后直接复用
+--     （每帧都在造控件，试错只该发生一次）。换关 / 换存档不改这套缓存。
 -- ================================================================
-function M.prefabId(kind)
+local resolved, logged = {}, {}
+
+local function candidates(kind)
     local t = config.PREFAB
-    return (t and t[kind]) or 0
+    local v = t and t[kind]
+    if type(v) == "number" then return { v } end   -- 允许退化成单个数字
+    return v
 end
 
--- 按用途实例化一个控件；拿不到就返回 nil（调用方负责兜底）
+-- 已经实测通过的那个索引；还没试过时返回候选里的第一个（= 首选）
+function M.prefabId(kind)
+    if resolved[kind] then return resolved[kind] end
+    local list = candidates(kind)
+    return (list and list[1]) or 0
+end
+
+-- **实测命中**的索引；还没造过这类控件时返回 nil。
+-- 打日志用：别把「候选里的第一个」当成真值，那会把没试过的用途也打成命中。
+function M.prefabResolved(kind)
+    return resolved[kind]
+end
+
+-- 逐个试候选，第一个造出控件的胜出并缓存；全失败返回 nil（不抛错）
 function M.instantiate(kind, parent)
-    local pid = M.prefabId(kind)
-    if pid <= 0 then
-        printerr("错误：未知的控件用途 '" .. tostring(kind) .. "'（见 config.PREFAB）")
+    local host = parent or state.parent
+    local list = candidates(kind)
+    if not host or not list or #list == 0 then
+        if not logged[kind] then
+            logged[kind] = true
+            printerr("错误：未知的控件用途 '" .. tostring(kind) .. "'（见 config.PREFAB）")
+        end
         return nil, 0
     end
-    local ok, ctrl = pcall(game.InstantiateClientUIControl, pid, parent or state.parent)
-    if ok and ctrl then return ctrl, pid end
-    return nil, pid
+    -- 先试上次成功的那个：命中就 O(1) 返回，不必再走候选表
+    local cached = resolved[kind]
+    if cached then
+        local ok, ctrl = pcall(game.InstantiateClientUIControl, cached, host)
+        if ok and ctrl then return ctrl, cached end
+        resolved[kind] = nil        -- 缓存的索引突然不行了 → 重新探一遍
+    end
+    for i = 1, #list do
+        local pid = list[i]
+        if type(pid) == "number" and pid > 0 then
+            local ok, ctrl = pcall(game.InstantiateClientUIControl, pid, host)
+            if ok and ctrl then
+                resolved[kind] = pid
+                if not logged[kind] then
+                    logged[kind] = true
+                    printerr(string.format("[伐木远征] 控件挂靠 %s → %d（候选 %d/%d）",
+                        kind, pid, i, #list))
+                end
+                return ctrl, pid
+            end
+        end
+    end
+    if not logged[kind] then
+        logged[kind] = true
+        printerr("[伐木远征] ⚠️ 控件挂靠失败：" .. tostring(kind) .. " 的 " .. #list ..
+            " 个候选索引都造不出控件（config.PREFAB." .. tostring(kind) .. "）")
+    end
+    return nil, 0
 end
 
 -- ================================================================
 -- ★ 创建纯色块控件 —— 全部纯色图形的统一入口
---   先挂「图片·矩形」元件 1073741894（自带矩形图元，真机不需要配白图）；
---   万一存档里真没有这个模板，才退到「图片」元件 1073741870 并要求
---   调用方立刻补图源（config.PRIM.rect），绝不留整片空白。
---   ★ pcall 包住：真机遇到存档里不存在的元件索引会抛错（不是返回 nil）。
+--   config.PREFAB.rect 的候选已经把「矩形图片 → 矩形 → 图片」排好，
+--   所以这里只需按用途要一个控件；返回 (控件, 实际用到的索引)。
 -- ================================================================
 function M.instantiateRect(parent)
-    local ctrl = M.instantiate("rect", parent)
-    if ctrl then return ctrl, M.prefabId("rect") end
-    printerr("警告：矩形元件 " .. M.prefabId("rect") ..
-        " 拿不到，回退图片元件 " .. M.prefabId("image"))
-    ctrl = M.instantiate("image", parent)
-    if ctrl then return ctrl, M.prefabId("image") end
-    return nil, 0
+    return M.instantiate("rect", parent)
 end
 
 -- ================================================================
 -- ★ 创建一个控件（纯色块 / 圆）
 --   imageId 传 config.PRIM.circle 就画圆（SetImage 内置圆图元），
---   传 nil 就用 config.PRIM.rect（矩形元件自带的图元）。
+--   传 nil 就让「矩形图片」元件用它自带的矩形图元。
 -- ================================================================
 function M.createControl(x, y, w, h, color, parent, imageId)
     local ctrl, usedId = M.instantiateRect(parent)
@@ -166,14 +208,11 @@ function M.createControl(x, y, w, h, color, parent, imageId)
         ctrl:SetAnchoredPosition(x, y)
     end)
     -- 图源先于染色：SetImage 有可能清掉 tint
-    local img = imageId
-    if img == nil and usedId == M.prefabId("rect") then
-        img = config.PRIM.rect          -- 矩形元件：显式写明图元编号
-    end
-    if img and img ~= config.PRIM.rect then
-        M.applyImage(ctrl, img)
-    elseif usedId ~= M.prefabId("rect") then
-        M.applyImage(ctrl, state.rectImageId)   -- 回退到「图片」元件：必须补图源
+    if imageId and imageId > 0 then
+        M.applyImage(ctrl, imageId)
+    elseif not (config.PREFAB_CARRIES_RECT[usedId]) then
+        -- 退到了「图片」元件：它默认不带图源，不补就是真机上的彩色 ?
+        M.applyImage(ctrl, state.rectImageId)
     end
     if color then pcall(function() ctrl.imageColor = color end) end
     pcall(function() ctrl:SetActive(true) end)
@@ -188,7 +227,7 @@ function M.createDisc(x, y, d, color, parent)
 end
 
 -- ================================================================
--- ★ 创建文本控件（「文本框」元件 1073741868）
+-- ★ 创建文本控件（「文本框」元件：新 1073741857 / 旧 1073741868）
 -- ================================================================
 function M.createText(x, y, w, h, text, colorHex, fontSize, parent)
     local ctrl = M.instantiate("text", parent)

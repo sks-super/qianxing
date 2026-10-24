@@ -18,7 +18,8 @@ M.RIGHT = 640
 M.TOP = 360
 M.BOTTOM = -360
 
--- 元件索引（OnStart 里从脚本参数读，缺省用 config 里的官方内置模板）
+-- 元件索引：**只用来打日志核对**，实际挂靠由 utils.instantiate() 现场探测
+-- （config.PREFAB 是「新编号 → 旧编号」的有序候选，见 config.lua 顶部对照表）
 M.containerPrefabId = 0
 M.rectPrefabId = 0
 M.imagePrefabId = 0
