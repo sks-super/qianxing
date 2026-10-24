@@ -1,0 +1,401 @@
+--- a/浮岛借木/level.lua
++++ b/浮岛借木/level.lua
+@@ -41,7 +41,7 @@
+ local utils = require("utils")
+ local world = require("world")
+ 
+-M.BUILD = "b20"   -- 版本戳：真机日志里能一眼看出用的是哪一版文件
++M.BUILD = "b22"   -- 版本戳：真机日志里能一眼看出用的是哪一版文件（b22 = 第 22 批固定图层）
+ 
+ -- ★ 小人「图元笔触」数据（第 16 批）：来自「图元拟合拼图」四视角脚本，
+ --   已按游戏内 68px 尺度裁掉看不见的椭圆。没有这个模块就自动退回像素画/立绘。
+@@ -534,7 +534,8 @@
+ local SUB_TREE   = 5
+ local SUB_SIGN   = 6
+ local SUB_GOAL   = 6.5
+-local SUB_PLAYER = 7
++-- 7 空着：老版本这里是「小人」的层内次序 —— 第 22 批起小人有独立的角色层容器，
++--    不再参与 restackWorld 的深度排序，这个次序键随之退役（保留编号防回填撞车）。
+ 
+ -- 小人纯色回退的身高常量 PLAYER_BODY_RATIO / PLAYER_HEAD_RATIO 声明在文件顶部
+ -- （playerFootOffset 就要用，见那里的说明）。
+@@ -609,6 +610,26 @@
+     return { prefab = state.rectPrefabId, art = false }
+ end
+ 
++-- ================================================================
++-- ★ 四个固定图层的父节点（第 22 批）
++--   地面（含树桩）→ 石头 → 树木 → 角色，由 game.ensureContainers 按这个顺序建容器。
++--   这里只负责「取父节点」，取不到就退回世界总层（老存档 / 容器创建失败时不至于 nil）。
++--   ★ 每种物体**只能**往自己那一层画：池里的控件建在哪一层就永远在哪一层，
++--     所以石头池 / 木头池 / 地面物体池是三个独立的池（见 state.lua）。
++-- ================================================================
++local function layerGround()
++    return state.containerStump or state.containerGround or state.containerWorld
++end
++local function layerRock()
++    return state.containerRock or state.containerWorld
++end
++local function layerTree()
++    return state.containerTree or state.containerWorld
++end
++local function layerPlayer()
++    return state.containerPlayer or state.containerWorld
++end
++
+ -- 接触阴影槽位：优先「图片」元件 + 引擎内置椭圆图元（100002）
+ --   ★ 为什么不用矩形：矩形阴影在真机上就是脚底一个**方框**（染色没生效时还是白框）。
+ --     椭圆和人格的图元笔触用的是同一条路（见 heroPrims），模拟器与真机都认。
+@@ -672,8 +693,10 @@
+     { "decoCtrls",     "decoUsed" },
+     { "rimCtrls",      "rimUsed" },     -- 岛缘描边（第 21 批从 decoCtrls 拆出来，单独一层容器）
+     { "terrainCtrls",  "terrainUsed" },
+-    { "shadowCtrls",   "shadowUsed" },   -- 接触阴影（椭圆）—— 永远压在物体下面
+-    { "objectCtrls",   "objectUsed" },
++    { "shadowCtrls",   "shadowUsed" },   -- 接触阴影（默认关闭）—— 地面子层
++    { "objectCtrls",   "objectUsed" },   -- 树桩 / 老树根（地面子层）
++    { "rockCtrls",     "rockUsed" },     -- ★ 石头层（第 22 批独立容器）
++    { "logCtrls",      "logUsed" },      -- ★ 木头（倒木 / 木筏 / 立木）—— 树木层
+     { "treeCtrls",     "treeUsed" },
+     { "goalCtrls",     "goalUsed" },
+     -- ★ 木头倒 / 立的过渡代理：它也站在世界里（要参与「近处压远处」），
+@@ -695,23 +718,9 @@
+         end
+     end
+ 
+-    -- 小人（身体 / 头 / 脚下阴影）不在池里，按它**当前所在行**插进物体之间，
+-    -- 这样「前面的树挡住后面的小人」才会成立。
+-    local function pushPlayer(ctrl, sub)
+-        if not ctrl then return end
+-        seq = seq + 1
+-        list[#list + 1] = {
+-            c = ctrl,
+-            k = objKey(state.player and state.player.r, sub),
+-            s = seq,
+-        }
+-    end
+-    pushPlayer(state.playerShadowCtrl, SUB_SHADOW)
+-    pushPlayer(state.playerCtrl, SUB_PLAYER)
+-    pushPlayer(state.heroArtBox, SUB_PLAYER)   -- 像素画整幅（一块容器）当作小人本体
+-    pushPlayer(state.heroPrBox, SUB_PLAYER)    -- 图元笔触整幅（一块容器）同理
+-    pushPlayer(state.playerHeadCtrl, SUB_PLAYER + 0.1)
+-
++    -- ★ 第 22 批：小人**不再参与**这里的排序。
++    --   角色有独立的、固定最上的 containerPlayer，排序对它没有任何意义
++    --   （排序只在同一父容器内生效），反而会把身体 / 头 / 像素画容器的先后搅乱。
+     table.sort(list, function(a, b)
+         if a.k ~= b.k then return a.k < b.k end
+         return a.s < b.s
+@@ -795,9 +804,11 @@
+ end
+ 
+ -- ================================================================
+--- ★ 地形三层子容器（第 21 批）
+---   侧面(崖面) / 岛缘描边 / 草地顶面 各挂一个子容器，**创建顺序即层级**：
+---     containerSide → containerRim → containerTile
++-- ★ 地形子容器（第 21 批三层，第 22 批加「树桩」第四层）
++--   侧面(崖面) / 岛缘描边 / 草地顶面 / 树桩 各挂一个子容器，**创建顺序即层级**：
++--     containerSide → containerRim → containerTile → containerStump
++--   树桩也属于「地面图层」：它必须压在草地顶面之上（否则被草地埋掉），
++--   但又必须在石头 / 树木 / 角色之下 —— 放在地面层的最末一个子层正好。
+ --   ★ 为什么不用同级排序：真机上 SetAsLastSibling 并不可靠（池扩容时新建控件
+ --     默认排在同级最末 = 压在最上层）。地形和物体混在一个容器里时，这会让
+ --     「草地盖住小人和树」「岛内部冒出边框」。拆层之后这两件事都变成结构性保证，
+@@ -821,6 +832,7 @@
+     state.containerSide = state.containerSide or mk()
+     state.containerRim  = state.containerRim  or mk()
+     state.containerTile = state.containerTile or mk()
++    state.containerStump = state.containerStump or mk()   -- 树桩 / 老树根 / 阴影（第 22 批）
+     return (state.containerSide and state.containerRim and state.containerTile) ~= nil
+ end
+ 
+@@ -1152,8 +1164,14 @@
+ function M.rebuildObjects()
+     local data = state.levelConfig or {}
+     local palette = utils.resolvePalette(data)
+-    local pool = state.objectCtrls
+-    local parent = state.containerWorld
++    -- ★ 第 22 批：四个固定图层各画各的，池子也按层分开（混池会把控件画到别的层去）。
++    local pool = state.objectCtrls                 -- 地面层：树桩 / 老树根
++    local rockPool = state.rockCtrls               -- 石头层
++    local logPool = state.logCtrls                 -- 树木层：倒木 / 木筏 / 被推立的树干
++    local parent = layerGround()                   -- 树桩与接触阴影的父节点
++    local parentRock = layerRock()
++    local parentTree = layerTree()
++    local ri, li = 1, 1                            -- 石头池 / 木头池各自的游标
+     local rect = rectSlot()
+     local treeSlot = makeSlot(state.treePrefabId)
+     local cell = state.cellSize
+@@ -1233,8 +1251,8 @@
+             local sp = lyingShape(lg.c, lg.r, lg.dir, lg.z)
+             shadow(sp.cx, entBaseY(lg.c, lg.r, lg.z), cell * 0.80, lg.r,
+                    stackOf(lg.c, lg.r, lg.z))
+-            i = paintLyingLog(pool, i, parent, rect, sp, palette,
+-                              keyOf(lg.r, SUB_LOG, stackOf(lg.c, lg.r, lg.z)))
++            li = paintLyingLog(logPool, li, parentTree, rect, sp, palette,
++                               keyOf(lg.r, SUB_LOG, stackOf(lg.c, lg.r, lg.z)))
+         end
+     end
+ 
+@@ -1245,23 +1263,23 @@
+         local sp = lyingShape(rf.c, rf.r, rf.dir, rf.z)
+         local stack = stackOf(rf.c, rf.r, rf.z)
+         shadow(sp.cx, entBaseY(rf.c, rf.r, rf.z), cell * 0.86, rf.r, stack)
+-        i = paintLyingLog(pool, i, parent, rect, sp, palette, keyOf(rf.r, SUB_RAFT, stack))
++        li = paintLyingLog(logPool, li, parentTree, rect, sp, palette, keyOf(rf.r, SUB_RAFT, stack))
+         local crossH = cell * LOG_THICK * 0.82
+         local crossW = cell * 0.94
+         if sp.alongX == 1 then
+-            i = paint(pool, i, parent, rect, sp.cx, sp.cy + cell * 0.10,
+-                      crossH, crossW, palette.logStandSide, 255,
+-                      keyOf(rf.r, SUB_RAFT + 0.2, stack))
+-            i = paint(pool, i, parent, rect, sp.cx, sp.cy + cell * 0.10 + crossW * 0.36,
+-                      crossH, crossH * 0.30, palette.logStandEdge, 255,
+-                      keyOf(rf.r, SUB_RAFT + 0.3, stack))
++            li = paint(logPool, li, parentTree, rect, sp.cx, sp.cy + cell * 0.10,
++                       crossH, crossW, palette.logStandSide, 255,
++                       keyOf(rf.r, SUB_RAFT + 0.2, stack))
++            li = paint(logPool, li, parentTree, rect, sp.cx, sp.cy + cell * 0.10 + crossW * 0.36,
++                       crossH, crossH * 0.30, palette.logStandEdge, 255,
++                       keyOf(rf.r, SUB_RAFT + 0.3, stack))
+         else
+-            i = paint(pool, i, parent, rect, sp.cx, sp.cy + cell * 0.10,
+-                      crossW, crossH, palette.logStandSide, 255,
+-                      keyOf(rf.r, SUB_RAFT + 0.2, stack))
+-            i = paint(pool, i, parent, rect, sp.cx - crossW * 0.36, sp.cy + cell * 0.10,
+-                      crossH * 0.30, crossH, palette.logStandEdge, 255,
+-                      keyOf(rf.r, SUB_RAFT + 0.3, stack))
++            li = paint(logPool, li, parentTree, rect, sp.cx, sp.cy + cell * 0.10,
++                       crossW, crossH, palette.logStandSide, 255,
++                       keyOf(rf.r, SUB_RAFT + 0.2, stack))
++            li = paint(logPool, li, parentTree, rect, sp.cx - crossW * 0.36, sp.cy + cell * 0.10,
++                       crossH * 0.30, crossH, palette.logStandEdge, 255,
++                       keyOf(rf.r, SUB_RAFT + 0.3, stack))
+         end
+     end
+ 
+@@ -1272,16 +1290,16 @@
+         local base = groundY(rk.c, rk.r)
+         local hex = (hh >= config.DEFAULT_H_ROCK2 - 0.01) and palette.rock2Top or palette.rock1Top
+         shadow(x, base, cell * 0.8, rk.r, 0)
+-        i = paint(pool, i, parent, rect, x, base + hh * cell / 2, cell * 0.84, hh * cell,
+-                  palette.rockSide, 255, keyOf(rk.r, SUB_ROCK))
+-        i = paint(pool, i, parent, rect, x, base + hh * cell - cell * 0.055,
+-                  cell * 0.68, cell * 0.11, hex, 255, keyOf(rk.r, SUB_ROCK + 0.1))
++        ri = paint(rockPool, ri, parentRock, rect, x, base + hh * cell / 2, cell * 0.84, hh * cell,
++                   palette.rockSide, 255, keyOf(rk.r, SUB_ROCK))
++        ri = paint(rockPool, ri, parentRock, rect, x, base + hh * cell - cell * 0.055,
++                   cell * 0.68, cell * 0.11, hex, 255, keyOf(rk.r, SUB_ROCK + 0.1))
+     end
+ 
+     -- ⑤ 树木（真树 1 格高 / 无叶树干 1 格高）
+     --    ★ 被推立起来的树干（tr.bare）**没有树冠**：它就是倒下的那根木头竖起来了，
+     --      造型和 ② 的倒木同源，所以永远走**纯色池**（套素材会变回一棵假树）。
+-    local treeArt = slotUsesArt(state.treeCtrls, parent, treeSlot)
++    local treeArt = slotUsesArt(state.treeCtrls, parentTree, treeSlot)
+     local ti = 1
+     for _, tr in ipairs(state.trees) do
+         local x = cellCenterX(tr.c)
+@@ -1290,20 +1308,20 @@
+         shadow(x, base, cell * 0.72, tr.r, stack)
+         if tr.bare then
+             if not hideAnimAt(tr.c, tr.r) then
+-                i = paintStandingTrunk(pool, i, parent, rect, standingShape(tr.c, tr.r, tr.z),
+-                                       palette, keyOf(tr.r, SUB_TREE, stack))
++                li = paintStandingTrunk(logPool, li, parentTree, rect, standingShape(tr.c, tr.r, tr.z),
++                                        palette, keyOf(tr.r, SUB_TREE, stack))
+             end
+         elseif treeArt then
+             local fit = (config.DEFAULT_ART_FIT or {}).tree or { w = 1.82, h = 1.82, dy = 0.5 }
+-            ti = paint(state.treeCtrls, ti, parent, treeSlot,
++            ti = paint(state.treeCtrls, ti, parentTree, treeSlot,
+                        x, base + (fit.dy or 0) * cell,
+                        cell * (fit.w or 1), cell * (fit.h or 1), nil, nil,
+                        keyOf(tr.r, SUB_TREE, stack))
+         else
+-            ti = paint(state.treeCtrls, ti, parent, treeSlot, x, base + cell * 0.31,
++            ti = paint(state.treeCtrls, ti, parentTree, treeSlot, x, base + cell * 0.31,
+                        cell * 0.22, cell * 0.62, palette.treeTrunk, 255,
+                        keyOf(tr.r, SUB_TREE, stack))
+-            ti = paint(state.treeCtrls, ti, parent, treeSlot, x, base + cell * 0.72,
++            ti = paint(state.treeCtrls, ti, parentTree, treeSlot, x, base + cell * 0.72,
+                        cell * 0.78, cell * 0.56, palette.treeCanopy, 255,
+                        keyOf(tr.r, SUB_TREE + 0.1, stack))
+         end
+@@ -1322,20 +1340,20 @@
+         local sh = cell * (config.DEFAULT_SIGN_H or 0.72)
+         local board = (sg.goal and palette.goalFlag) or palette.sand
+         shadow(x, base, cell * 0.42, sg.r, stack)
+-        gi = paint(state.goalCtrls, gi, parent, rect, x, base + sh * 0.5,
++        gi = paint(state.goalCtrls, gi, parentTree, rect, x, base + sh * 0.5,
+                    cell * 0.11, sh, palette.goalPole, 255,
+                    keyOf(sg.r, SUB_SIGN, stack))                       -- 柱子
+-        gi = paint(state.goalCtrls, gi, parent, rect, x + cell * 0.04, base + sh * 0.78,
++        gi = paint(state.goalCtrls, gi, parentTree, rect, x + cell * 0.04, base + sh * 0.78,
+                    cell * 0.46, cell * 0.30, board, 255,
+                    keyOf(sg.r, SUB_SIGN + 0.1, stack))                 -- 牌子
+-        gi = paint(state.goalCtrls, gi, parent, rect, x + cell * 0.04, base + sh * 0.78,
++        gi = paint(state.goalCtrls, gi, parentTree, rect, x + cell * 0.04, base + sh * 0.78,
+                    cell * 0.34, cell * 0.05, palette.goalPole, 210,
+                    keyOf(sg.r, SUB_SIGN + 0.2, stack))                 -- 板上的两道「字迹」
+-        gi = paint(state.goalCtrls, gi, parent, rect, x + cell * 0.04, base + sh * 0.64,
++        gi = paint(state.goalCtrls, gi, parentTree, rect, x + cell * 0.04, base + sh * 0.64,
+                    cell * 0.30, cell * 0.05, palette.goalPole, 210,
+                    keyOf(sg.r, SUB_SIGN + 0.2, stack))
+         if sg.goal then
+-            gi = paint(state.goalCtrls, gi, parent, rect, x - cell * 0.16, base + sh * 1.06,
++            gi = paint(state.goalCtrls, gi, parentTree, rect, x - cell * 0.16, base + sh * 1.06,
+                        cell * 0.30, cell * 0.19, palette.goalFlag, 255,
+                        keyOf(sg.r, SUB_GOAL, stack))
+         end
+@@ -1345,12 +1363,12 @@
+     if state.goal and #(state.signs or {}) == 0 then
+         local gx = cellCenterX(state.goal.c)
+         local gfoot = groundY(state.goal.c, state.goal.r)
+-        gi = paint(state.goalCtrls, gi, parent, rect, gx, gfoot + cell * 0.07,
++        gi = paint(state.goalCtrls, gi, parentTree, rect, gx, gfoot + cell * 0.07,
+                    cell * 0.92, cell * 0.14, palette.goalFlag, 90, keyOf(state.goal.r, SUB_GOAL))
+-        gi = paint(state.goalCtrls, gi, parent, rect, gx - cell * 0.20, gfoot + cell * 0.62,
++        gi = paint(state.goalCtrls, gi, parentTree, rect, gx - cell * 0.20, gfoot + cell * 0.62,
+                    cell * 0.08, cell * 1.24, palette.goalPole, 255,
+                    keyOf(state.goal.r, SUB_GOAL + 0.1))
+-        gi = paint(state.goalCtrls, gi, parent, rect, gx + cell * 0.08, gfoot + cell * 1.02,
++        gi = paint(state.goalCtrls, gi, parentTree, rect, gx + cell * 0.08, gfoot + cell * 1.02,
+                    cell * 0.50, cell * 0.32, palette.goalFlag, 255,
+                    keyOf(state.goal.r, SUB_GOAL + 0.2))
+     end
+@@ -1359,6 +1377,10 @@
+ 
+     poolTrim(pool, i - 1)
+     state.objectUsed = i - 1
++    poolTrim(rockPool, ri - 1)              -- ★ 三个物体池各自收尾（第 22 批）
++    state.rockUsed = ri - 1
++    poolTrim(logPool, li - 1)
++    state.logUsed = li - 1
+     poolTrim(state.shadowCtrls, si - 1)
+     state.shadowUsed = si - 1
+ 
+@@ -1456,7 +1478,7 @@
+ 
+     local data = state.levelConfig or {}
+     local palette = utils.resolvePalette(data)
+-    local parent = state.containerWorld
++    local parent = layerTree()        -- ★ 过渡的是木头 → 固定在树木层（第 22 批）
+     local rect = rectSlot()
+     local cell = state.cellSize or 1
+     local stand = utils.clamp(sp.stand, 0, 1)
+@@ -1533,16 +1555,17 @@
+ --      像素画却「因为要容器所以不画」→ 小人静默变立绘，最难查的一类问题。
+ local function ensureHeroBox()
+     if state.heroArtBox then return true end
+-    if not state.containerWorld then return false end
++    local host = layerPlayer()        -- ★ 角色层（第 22 批）：像素画整幅挂在角色容器里
++    if not host then return false end
+ 
+     local c = nil
+     local cid = state.containerPrefabId or 0
+     if cid > 0 then
+-        local ok, r = pcall(game.InstantiateClientUIControl, cid, state.containerWorld)
++        local ok, r = pcall(game.InstantiateClientUIControl, cid, host)
+         if ok then c = r end
+     end
+     if not c then
+-        c = utils.instantiateRect(state.containerWorld)
++        c = utils.instantiateRect(host)
+         if not c then return false end
+         utils.applyImage(c, state.rectImageId)
+         pcall(function() c.imageColor = Color.FromRGBA(255, 255, 255, 0) end)
+@@ -1640,16 +1663,17 @@
+ -- ================================================================
+ local function ensureHeroPrBox()
+     if state.heroPrBox then return true end
+-    if not state.containerWorld then return false end
++    local host = layerPlayer()        -- ★ 角色层（第 22 批）
++    if not host then return false end
+ 
+     local c = nil
+     local cid = state.containerPrefabId or 0
+     if cid > 0 then
+-        local ok, r = pcall(game.InstantiateClientUIControl, cid, state.containerWorld)
++        local ok, r = pcall(game.InstantiateClientUIControl, cid, host)
+         if ok then c = r end
+     end
+     if not c then
+-        c = utils.instantiateRect(state.containerWorld)
++        c = utils.instantiateRect(host)
+         if not c then return false end
+         utils.applyImage(c, state.rectImageId)
+         pcall(function() c.imageColor = Color.FromRGBA(255, 255, 255, 0) end)
+@@ -1936,6 +1960,9 @@
+ local function buildPlayer(palette)
+     local cell = state.cellSize
+     local slot = makeSlot(state.playerPrefabId)
++    -- ★ 第 22 批：小人的所有控件（立绘 / 身体 / 头 / 像素画容器 / 图元容器 / 阴影）
++    --   一律挂**角色层** containerPlayer —— 固定在最上，不再被地形或树木盖住。
++    local host = layerPlayer()
+ 
+     -- ★ 图元笔触路径（第 16 批）：优先级最高 —— 用户要的就是「用这套图元脚本当主角」。
+     --   四道门全过才启用：开关开着 + 数据在 + 容器拿得到 + 真的画出来了。
+@@ -1974,7 +2001,7 @@
+         if heroImgOn then
+             local ctrl = utils.createControl(
+                 state.heroImagePrefabId or config.DEFAULT_PREFAB_IMAGE,
+-                0, 0, 1, 1, nil, state.containerWorld)
++                0, 0, 1, 1, nil, host)
+             if ctrl then
+                 state.playerCtrlImg = true
+                 state.playerCtrlArt = true      -- 自带图源 → 不染色
+@@ -1982,10 +2009,10 @@
+             end
+         end
+         if not state.playerCtrl then
+-            local ctrl = utils.createControl(slot.prefab, 0, 0, 1, 1, nil, state.containerWorld)
++            local ctrl = utils.createControl(slot.prefab, 0, 0, 1, 1, nil, host)
+             state.playerCtrlArt = (ctrl ~= nil) and slot.art
+             if not ctrl then
+-                ctrl = utils.createControl(state.rectPrefabId, 0, 0, 1, 1, nil, state.containerWorld)
++                ctrl = utils.createControl(state.rectPrefabId, 0, 0, 1, 1, nil, host)
+                 state.playerCtrlArt = false
+             end
+             state.playerCtrl = ctrl
+@@ -2009,11 +2036,11 @@
+             local eId = tonumber(config.DEFAULT_HERO_PRIMS_IMAGE) or 0
+             local pId = tonumber(state.heroPrPrefabId) or 0
+             if pId > 0 and pId ~= state.rectPrefabId and eId > 0 then
+-                ctrl = utils.createControl(pId, 0, 0, sw, sh, nil, state.containerWorld, eId)
++                ctrl = utils.createControl(pId, 0, 0, sw, sh, nil, host, eId)
+             end
+             state.playerShadowArt = (ctrl ~= nil)
+             if not ctrl then
+-                ctrl = utils.createControl(state.rectPrefabId, 0, 0, sw, sh, nil, state.containerWorld)
++                ctrl = utils.createControl(state.rectPrefabId, 0, 0, sw, sh, nil, host)
+             end
+             state.playerShadowCtrl = ctrl
+         end
+@@ -2113,7 +2140,7 @@
+         utils.setVisible(state.heroArtBox, false)
+         if not state.playerHeadCtrl then
+             state.playerHeadCtrl = utils.createControl(
+-                state.rectPrefabId, 0, 0, cell * 0.34, cell * PLAYER_HEAD_RATIO, nil, state.containerWorld)
++                state.rectPrefabId, 0, 0, cell * 0.34, cell * PLAYER_HEAD_RATIO, nil, host)
+         end
+         utils.setSize(state.playerHeadCtrl, cell * 0.34, cell * PLAYER_HEAD_RATIO)
+         utils.setAlpha(state.playerHeadCtrl, palette.playerHead, 255)
+@@ -2192,6 +2219,8 @@
+     poolTrim(state.rimCtrls, 0)
+     poolTrim(state.shadowCtrls, 0)
+     poolTrim(state.objectCtrls, 0)
++    poolTrim(state.rockCtrls, 0)     -- ★ 第 22 批：石头 / 木头两个新池一并清空
++    poolTrim(state.logCtrls, 0)
+     poolTrim(state.treeCtrls, 0)
+     poolTrim(state.goalCtrls, 0)
+     poolTrim(state.objProxyCtrls, 0)
+@@ -2223,6 +2252,8 @@
+     state.decoUsed = 0
+     state.terrainWinKey = ""      -- 换关 / 重开：地形窗口必须重铺
+     state.objectUsed = 0
++    state.rockUsed = 0
++    state.logUsed = 0
+     state.treeUsed = 0
+     state.goalUsed = 0
+     state.objProxyUsed = 0

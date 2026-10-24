@@ -36,13 +36,14 @@ local doUndo
 --   ★ 容器节点模板缺失时（老存档 / 没在编辑器里登记）回退用矩形元件，
 --     保证任何情况下都能跑起来。
 -- ================================================================
-local function createContainer()
-    if not state.parent then return nil end
+local function createContainer(host)
+    host = host or state.parent       -- ★ 第 22 批：允许指定父容器（世界层里再分层）
+    if not host then return nil end
 
     -- ① 首选：容器节点元件
     local cid = state.containerPrefabId or 0
     if cid > 0 then
-        local ok, c = pcall(game.InstantiateClientUIControl, cid, state.parent)
+        local ok, c = pcall(game.InstantiateClientUIControl, cid, host)
         if ok and c then
             pcall(function()
                 c:SetAnchorMin(0.5, 0.5)
@@ -58,7 +59,7 @@ local function createContainer()
 
     -- ② 回退：矩形元件（染成全透明，视觉上等价于容器）
     --    也走两级回退（矩形 → 图片），别裸调 InstantiateClientUIControl
-    local c = utils.instantiateRect(state.parent)
+    local c = utils.instantiateRect(host)
     if not c then return nil end
     utils.applyImage(c, state.rectImageId)
     pcall(function()
@@ -74,16 +75,24 @@ local function createContainer()
 end
 
 -- ================================================================
--- ★ 检查 6 个层级容器，缺失的补建（创建顺序即显示层级，从下到上）
---   ★ 第 21 批把「地形」单独拆成 containerGround：真机上同级 SetAsLastSibling
---     排序不可靠，地形偶尔压到小人身上（走路时被地图盖住）。两个容器的先后
---     由**创建顺序**决定，这一层关系不依赖任何运行时 API。
+-- ★ 固定图层（第 22 批，按用户要求改成纯控件容器分层）
+--   从下到上：**地面 → 石头 → 树木 → 角色**，再往上是特效 / HUD / 黑幕。
+--     containerBg       海面整屏底
+--     containerGround   地面层（内部再分 侧面 / 描边 / 顶面 / 树桩 四个子层）
+--     containerWorld    世界总层（不画东西，只是下面三层的父节点 + 镜头平移对象）
+--       containerRock   石头层
+--       containerTree   树木层（立树 / 倒木 / 木筏 / 木牌 / 过渡代理）
+--       containerPlayer 角色层（固定最上）
+--     containerFx / containerHud / containerFade
+--   ★ 层级 = **容器创建顺序**，一次建好后不再变；不靠 SetAsLastSibling，
+--     所以对象池扩容、窗口重铺都不会把角色埋进地图里。
+--   ★ 层与层之间不再做深度穿插（角色永远完整可见）；层**内部**仍按深度键排序。
 -- ================================================================
 local function ensureContainers()
     local order = {
         "containerBg",        -- ① 海面（整屏底）
-        "containerGround",    -- ② 地形：水面网格 / 地块侧面 / 岛缘描边 / 草地顶面
-        "containerWorld",     -- ③ 世界：物体 + 小人（容器内按深度排序）
+        "containerGround",    -- ② 地面层：水面网格 / 地块侧面 / 岛缘描边 / 草地顶面 / 树桩
+        "containerWorld",     -- ③ 世界总层（下面三个固定物体层的父节点）
         "containerFx",        -- ④ 特效（涟漪）
         "containerHud",       -- ⑤ HUD（关卡名 / 步数 / 消息 / 提示）
         "containerFade",      -- ⑥ 黑幕过渡（最顶）
@@ -92,6 +101,14 @@ local function ensureContainers()
     for _, key in ipairs(order) do
         if not state[key] then
             state[key] = createContainer()
+            if not state[key] then okAll = false end
+        end
+    end
+    -- ★ 三个固定物体层：**必须按 石头 → 树木 → 角色 的顺序建**（这就是层序）。
+    --   挂在世界总层下面，镜头只平移世界总层，三层一起跟着走。
+    for _, key in ipairs({ "containerRock", "containerTree", "containerPlayer" }) do
+        if not state[key] then
+            state[key] = createContainer(state.containerWorld)
             if not state[key] then okAll = false end
         end
     end
