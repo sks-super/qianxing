@@ -1,0 +1,286 @@
+--- a/浮岛借木/level.lua
++++ b/浮岛借木/level.lua
+@@ -41,7 +41,7 @@
+ local utils = require("utils")
+ local world = require("world")
+ 
+-M.BUILD = "b17"   -- 版本戳：真机日志里能一眼看出用的是哪一版文件
++M.BUILD = "b20"   -- 版本戳：真机日志里能一眼看出用的是哪一版文件
+ 
+ -- ★ 小人「图元笔触」数据（第 16 批）：来自「图元拟合拼图」四视角脚本，
+ --   已按游戏内 68px 尺度裁掉看不见的椭圆。没有这个模块就自动退回像素画/立绘。
+@@ -340,11 +340,6 @@
+     return (state.boardCy or 0) - (r - (rows + 1) / 2) * (state.cellSize or 1)
+ end
+ 
+--- 格子的下边缘：草地顶面的前沿，地块的侧面从这里往下挂
+-local function cellBottomY(r)
+-    return cellCenterY(r) - (state.cellSize or 1) / 2
+-end
+-
+ -- ★ 物体的「脚线」：站立物（树 / 树干 / 石头 / 小人）踩在顶面**靠前**的位置，
+ --   而不是格子正中心 —— 这一点偏移就是「站在方块上面」的错觉来源。
+ local function cellFootY(r)
+@@ -571,10 +566,25 @@
+ M.zRise = zRise
+ 
+ -- 某一格顶面（站人的那条线）的屏幕 y
+-local function groundY(c, r)
++--
++--   ★ 树桩位（MExp 的 omap bit 4）要特殊处理，见 drawH 的说明。
++local function drawH(c, r)
+     local h = world.cellH(c, r)
+-    if h == nil then h = 0 end        -- 水：水面与基准齐平
+-    return cellFootY(r) + zRise(h + 1) * (state.cellSize or 1)
++    if h == nil then return 0 end     -- 水：水面与基准齐平
++    if world.hasStump and world.hasStump(c, r) then
++        h = h - 1                     -- ★ 那一层是**桩子**，不是土：土要画低一层
++    end
++    return h
++end
++
++-- 一格「画出来的地表」顶面的屏幕 y
++--   ★ 树桩格比逻辑高度低一层：hmap 里的值**已经含了桩子那一层**（原版
++--     render.js 也是 `ghat(x,y) - (stump?1:0)` 之后再画地的）。桩子由
++--     rebuildObjects 单独画，正好把这一层补回来 ——
++--     于是「树站着」时桩子被树干挡住、「树被推倒」后原地立刻露出一截桩子，
++--     而小人站上去的脚线仍然是逻辑顶面（z 是绝对层号，不随画法变）。
++local function groundY(c, r)
++    return cellFootY(r) + zRise(drawH(c, r) + 1) * (state.cellSize or 1)
+ end
+ M.groundY = groundY
+ 
+@@ -597,6 +607,19 @@
+     return { prefab = state.rectPrefabId, art = false }
+ end
+ 
++-- 接触阴影槽位：优先「图片」元件 + 引擎内置椭圆图元（100002）
++--   ★ 为什么不用矩形：矩形阴影在真机上就是脚底一个**方框**（染色没生效时还是白框）。
++--     椭圆和人格的图元笔触用的是同一条路（见 heroPrims），模拟器与真机都认。
++--   ★ art = false 是刻意的：它必须像纯色块一样被染色，而不是当素材立绘。
++local function shadowSlot()
++    local pId = tonumber(state.heroPrPrefabId) or 0
++    local eId = tonumber(config.DEFAULT_HERO_PRIMS_IMAGE) or 0
++    if pId > 0 and pId ~= state.rectPrefabId and eId > 0 then
++        return { prefab = pId, art = false, image = eId }
++    end
++    return { prefab = state.rectPrefabId, art = false }
++end
++
+ -- ================================================================
+ -- ★ 对象池：从池里取第 i 个控件，不够就新建
+ --   池里每一项是 { c = 控件, art = 是否素材元件 }。
+@@ -607,7 +630,9 @@
+     local item = pool[i]
+     if item then return item end
+ 
+-    local ctrl = utils.createControl(slot.prefab, 0, 0, 1, 1, nil, parent)
++    -- slot.image：建的同时就把图源打上（阴影要「图片」元件 + 椭圆图元，
++    -- 纯矩形在真机上是个方框；art=false 表示「这个控件照常染色」）
++    local ctrl = utils.createControl(slot.prefab, 0, 0, 1, 1, nil, parent, slot.image)
+     local art = (slot.art == true) and (ctrl ~= nil)
+     if not ctrl then
+         -- 素材元件不可用（老存档里没有这几种元件）→ 回退通用矩形元件，并恢复染色
+@@ -644,6 +669,7 @@
+ local RESTACK_POOLS = {
+     { "decoCtrls",     "decoUsed" },
+     { "terrainCtrls",  "terrainUsed" },
++    { "shadowCtrls",   "shadowUsed" },   -- 接触阴影（椭圆）—— 永远压在物体下面
+     { "objectCtrls",   "objectUsed" },
+     { "treeCtrls",     "treeUsed" },
+     { "goalCtrls",     "goalUsed" },
+@@ -739,10 +765,9 @@
+ local WIN_CHUNK = 4
+ local WIN_MARGIN = 2
+ 
+--- 可视层高（水 / 界外一律当 0）
+-local function vh(c, r)
+-    return world.cellH(c, r) or 0
+-end
++-- ★ 地表层高不要在这里另起一个函数了：一律走 drawH（它会减掉树桩那一层）。
++--   曾经这里有一个 vh(c,r) = world.cellH or 0，后来每条画地的路径都要减树桩层，
++--   留着两个入口必有一条被漏改 —— 所以第 20 批把它删了，只留 drawH。
+ 
+ local function terrainWindow()
+     local cell = state.cellSize or 1
+@@ -832,22 +857,25 @@
+         for c = win.c0, win.c1 do
+             if world.landAt(c, r) then
+                 local cx = cellCenterX(c)
+-                local dy = zRise(vh(c, r) + 1) * cell
++                local dy = zRise(drawH(c, r) + 1) * cell
+                 local cy = cellCenterY(r) + dy
+                 local bottom = cy - cell / 2          -- 顶面的下沿
+                 -- ① 侧面 / 崖面：与南邻的高差
+-                local dh = vh(c, r) - vh(c, r + 1)
++                local dh = drawH(c, r) - drawH(c, r + 1)
+                 local wh = sideH + math.max(0, dh) * zc
+                 if wh > cliffMax then wh = cliffMax end
+                 di = paint(state.decoCtrls, di, parent, rect, cx, bottom - wh / 2,
+                            cell + rim * 2, wh, palette.soil, 255, depthKey(BAND_TILE, r, 0.1))
+                 -- ② 临水的沙滩描边：四条边各自一条窄带（外半圈露在格子外面）
++                --   ★ 行号越大越靠**下**（屏幕 y 越小），所以南北两条边的 y 要用
++                --     `cy - e[2] * cell / 2`；写成 + 会把描边画到对面那条边上去
++                --     —— 于是岛屿**中间**凭空出现一条条边框（第 20 批修的就是这个）。
+                 for _, e in ipairs({ { 0, -1 }, { 0, 1 }, { -1, 0 }, { 1, 0 } }) do
+                     if not world.landAt(c + e[1], r + e[2]) then
+                         local bw, bh, bx, by
+                         if e[1] == 0 then
+                             bw, bh = cell + rim * 2, rim * 2
+-                            bx, by = cx, cy + e[2] * cell / 2
++                            bx, by = cx, cy - e[2] * cell / 2
+                         else
+                             bw, bh = rim * 2, cell + rim * 2
+                             bx, by = cx + e[1] * cell / 2, cy
+@@ -877,6 +905,12 @@
+     state.decoUsed = di - 1
+     poolTrim(state.terrainCtrls, ti - 1)
+     state.terrainUsed = ti - 1
++
++    -- ★ 重铺完地形**必须**立即重排层级（见 M.restackWorld）。
++    --   不加这一步的后果就是「走路时地图图层会变」：窗口一换，池里新造的控件默认
++    --   排在同级最后 → 整片草地盖住小人和树；复用到的旧控件则带着上一窗的顺序。
++    --   只在换窗口的那一帧跑一次（restackWorld 内部就是一次排序 + N 次提升）。
++    M.restackWorld()
+     return true
+ end
+ 
+@@ -909,13 +943,13 @@
+ --   内核的 z 是绝对层号，地块顶面 = 抬高层数 + 1，两者之差就是「它压着几层东西」。
+ local function entBaseY(c, r, z)
+     local cell = state.cellSize or 1
+-    local gz = vh(c, r) + 1
++    local gz = drawH(c, r) + 1
+     return groundY(c, r) + ((tonumber(z) or gz) - gz) * zVis() * cell
+ end
+ 
+ -- 它压在同格地面上方几层（0 = 贴着地面）—— 只用于深度排序（见 objKey）
+ local function stackOf(c, r, z)
+-    local gz = vh(c, r) + 1
++    local gz = drawH(c, r) + 1
+     return (tonumber(z) or gz) - gz
+ end
+ 
+@@ -1063,15 +1097,20 @@
+     local treeSlot = makeSlot(state.treePrefabId)
+     local cell = state.cellSize
+     local shadowAlpha = config.DEFAULT_OBJ_SHADOW_ALPHA or 0
++    local shadowHex = palette.shadowLand or "33421F"    -- ★ nil 会被 hexToColorA 当成纯白
++    local shSlot = shadowSlot()                        -- 椭圆（拿不到就退回矩形）
++    local si = 1
+     local i = 1
+ 
+     local function keyOf(r, sub, stack) return objKey(r, sub, stack) end
+ 
+     -- 脚下的接触阴影：让物体真的「贴」在地上，而不是浮着
++    --   ★ 单独一个池（state.shadowCtrls）：椭圆的图源在建控件时就要打上，
++    --     和物体池的纯色矩形不是同一种控件，混在一个池里迟早画串。
+     local function shadow(cx, baseY, w, r, stack)
+         if shadowAlpha <= 0 then return end
+-        i = paint(pool, i, parent, rect, cx, baseY - cell * 0.005,
+-                  w, cell * 0.12, palette.shadowLand, shadowAlpha, keyOf(r, SUB_SHADOW, stack))
++        si = paint(state.shadowCtrls, si, parent, shSlot, cx, baseY - cell * 0.005,
++                   w, cell * 0.16, shadowHex, shadowAlpha, keyOf(r, SUB_SHADOW, stack))
+     end
+ 
+     -- ★ 「倒 / 立」过渡期间，**终点格**上的那根真实木头这一帧不画：
+@@ -1082,7 +1121,42 @@
+         return animTo ~= nil and animTo.c == c and animTo.r == r
+     end
+ 
+-    -- ① 树根（★ 新规则下恒为空，保留这段只为兼容老存档里的预置树根）
++    -- ① 树桩（MExp 语义：桩子是**地块属性**，树推倒后原地露出来）
++    --   ★ 判定：这一格是树桩位，且**没有立着的木头**（type 1/2）压在上面。
++    --     树站着时树干正好挡住桩子 —— 原版 _hasWood() 也是这么判的。
++    --   ★ 高度恒 1 层：地表已经被 drawH 减掉这一层，桩子补回来正好顶到逻辑顶面，
++    --     所以小人踩上去脚不会陷进去，也不会浮空。
++    --   ★ 只画可视窗附近的（整图最多 41 个桩位，隔一屏画一次，控件数可控）。
++    local win = state.terrainWin or terrainWindow()
++    local stumpMargin = 3
++    local stumpH = zVis() * cell                       -- 树桩恒 1 层（= DEFAULT_Z_VIS）
++    local stumpW = cell * (config.DEFAULT_STUMP_W or 0.34)
++    local stumpTop = cell * (config.DEFAULT_STUMP_TOP or 0.05)
++    local woodAt = {}
++    for _, tr in ipairs(state.trees or {}) do
++        woodAt[tr.c .. ":" .. tr.r] = true
++    end
++    for _, st in ipairs(state.stumps or {}) do
++        local near = st.c >= (win.c0 - stumpMargin) and st.c <= (win.c1 + stumpMargin)
++                 and st.r >= (win.r0 - stumpMargin) and st.r <= (win.r1 + stumpMargin)
++        if near and not woodAt[st.c .. ":" .. st.r] then
++            local bx = cellCenterX(st.c)
++            local base = groundY(st.c, st.r)          -- 桩子根部 = 画出来的地表
++            i = paint(pool, i, parent, rect, bx, base + stumpH * 0.5,
++                      stumpW, stumpH, palette.rootRing, 255,
++                      keyOf(st.r, SUB_ROOT))
++            -- 受光的那条窄边（光从左上来），圆柱感
++            i = paint(pool, i, parent, rect, bx - stumpW * 0.22, base + stumpH * 0.5,
++                      stumpW * 0.28, stumpH * 0.92, palette.rootTop, 190,
++                      keyOf(st.r, SUB_ROOT + 0.1))
++            -- 锯断的切面：一圈浅色（只占顶部一点，别盖住整根）
++            i = paint(pool, i, parent, rect, bx, base + stumpH - stumpTop * 0.5,
++                      stumpW, stumpTop, palette.rootTop, 255,
++                      keyOf(st.r, SUB_ROOT + 0.2))
++        end
++    end
++
++    -- ①-b 老版「预置树根」：只有编辑器自制关的老存档才会有（真实地图恒空）
+     for _, rt in ipairs(state.roots) do
+         local bx, base = cellCenterX(rt.c), groundY(rt.c, rt.r)
+         i = paint(pool, i, parent, rect, bx, base + cell * 0.035,
+@@ -1224,6 +1298,8 @@
+ 
+     poolTrim(pool, i - 1)
+     state.objectUsed = i - 1
++    poolTrim(state.shadowCtrls, si - 1)
++    state.shadowUsed = si - 1
+ 
+     -- ⑧ 「倒 / 立」的过渡代理（不在动画期间就自动清空自己）
+     M.paintObjProxy()
+@@ -1857,15 +1933,33 @@
+     end
+     if not state.playerCtrl and not prReady then return end
+ 
+-    -- 脚下滑影（只是个很淡的深色块，紧贴脚线）
++    -- 脚下滑影
++    --   ★ 第 20 批修「人物脚底有白框」：原来是**一块纯色矩形**，四四方方糊在脚下，
++    --     真机上染色一旦没生效（imageColor 缺省 = 纯白）就正好是个白框。
++    --     现在改用「图片」元件 + 引擎内置椭圆图元（100002，和人格图元笔触同一个），
++    --     画出来是**圆的**；拿不到就退回矩形（至少染色是对的），绝不整片白。
+     if not state.playerShadowCtrl then
+-        state.playerShadowCtrl = utils.createControl(
+-            state.rectPrefabId, 0, 0, cell * 0.70, cell * 0.13, nil, state.containerWorld)
++        local sw = cell * (config.DEFAULT_SHADOW_W or 0.62)
++        local sh = cell * (config.DEFAULT_SHADOW_H or 0.20)
++        local ctrl = nil
++        local eId = tonumber(config.DEFAULT_HERO_PRIMS_IMAGE) or 0
++        local pId = tonumber(state.heroPrPrefabId) or 0
++        if pId > 0 and pId ~= state.rectPrefabId and eId > 0 then
++            ctrl = utils.createControl(pId, 0, 0, sw, sh, nil, state.containerWorld, eId)
++        end
++        state.playerShadowArt = (ctrl ~= nil)
++        if not ctrl then
++            ctrl = utils.createControl(state.rectPrefabId, 0, 0, sw, sh, nil, state.containerWorld)
++        end
++        state.playerShadowCtrl = ctrl
+     end
+     local shadowAlpha = config.DEFAULT_OBJ_SHADOW_ALPHA or 0
+-    utils.setSize(state.playerShadowCtrl, cell * 0.62, cell * 0.11)
++    local shadowHex = palette.shadowLand or "33421F"     -- ★ 绝不能是 nil（nil → 纯白）
++    utils.setSize(state.playerShadowCtrl,
++                  cell * (config.DEFAULT_SHADOW_W or 0.62),
++                  cell * (config.DEFAULT_SHADOW_H or 0.20))
+     if shadowAlpha > 0 then
+-        utils.setAlpha(state.playerShadowCtrl, palette.shadowLand, shadowAlpha)
++        utils.setAlpha(state.playerShadowCtrl, shadowHex, shadowAlpha)
+         utils.setVisible(state.playerShadowCtrl, true)
+     else
+         utils.setVisible(state.playerShadowCtrl, false)
+@@ -2033,6 +2127,7 @@
+ function M.clear()
+     poolTrim(state.terrainCtrls, 0)
+     poolTrim(state.decoCtrls, 0)
++    poolTrim(state.shadowCtrls, 0)
+     poolTrim(state.objectCtrls, 0)
+     poolTrim(state.treeCtrls, 0)
+     poolTrim(state.goalCtrls, 0)

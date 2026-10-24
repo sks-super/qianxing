@@ -1,0 +1,52 @@
+--- a/浮岛借木/world.lua
++++ b/浮岛借木/world.lua
+@@ -1067,11 +1067,34 @@
+     return rocks
+ end
+ 
++-- omap 的「树桩」位 → 渲染层的树桩表
++--   ★ 原版语义：**树桩位是地块属性，不是实体**。hmap 里那一格的高度**已经含了桩子
++--     那一层**（render.js: `ghat(x,y) - (stump?1:0)`），树站着时桩子被树干挡住不画；
++--     树被推倒以后本体挪走，桩子就露出来了 —— 所以砍完树原地一定有一截树桩。
++--   ★ 我们这边同理：树的位置不记在树桩表里，树桩表只在**载入时**从 omap 取一次，
++--     运行时不变；「这一格还有没有立着的树」由渲染层查 state.trees 判断。
++local function stumpsFromMap(md)
++    local out, at = {}, {}
++    for y = 0, md.height - 1 do
++        for x = 0, md.width - 1 do
++            local v = md.omap[y * md.width + x + 1] or 0
++            if hasBit(v, 4) and not hasBit(v, 2) then      -- 有桩位、且不是水
++                out[#out + 1] = { c = x + 1, r = y + 1 }
++                at[(x + 1) .. ":" .. (y + 1)] = true
++            end
++        end
++    end
++    return out, at
++end
++
+ local function beginSession(md, landTable, rocks, name, mapKey)
+     state.land = landTable or {}
+     state.mapRows = md.height
+     state.mapCols = md.width
+-    state.roots = {}          -- ★ 新规则下不再留树根（树只倒、不生根）
++    state.roots = {}          -- ★ 老版「预置树根」通道，新规则下恒为空
++    -- ★ 树桩（地块属性，见 stumpsFromMap 的说明）：列表给渲染层逐块画，
++    --   哈希表给「这一格地表要不要减一层」这种逐格查询用（地形每格都问一次）。
++    state.stumps, state.stumpAt = stumpsFromMap(md)
+ 
+     -- ★ 整张图最低的那一层：渲染层拿它当「脚线基准」，
+     --   否则高台地图（cliffs 最高 100 层）会整片飘到屏幕外面去。
+@@ -1192,6 +1215,13 @@
+     return row and row[c] or nil
+ end
+ 
++-- 这一格是不是「树桩位」（地表要画出一截树桩 / 画地表时高度要减一层）
++function M.hasStump(c, r)
++    local at = state.stumpAt
++    if not at then return false end
++    return at[c .. ":" .. r] == true
++end
++
+ -- 某一格的最顶面 z（没东西就是地面）
+ function M.topZ(c, r)
+     if not w or not M.inBounds(c, r) then return 1 end
