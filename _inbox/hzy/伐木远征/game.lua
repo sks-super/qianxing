@@ -13,15 +13,88 @@
 
 ---@diagnostic disable: undefined-global
 
-local config = require("config")
-local state = require("state")
-local utils = require("utils")
-local eng = require("mexp_engine")
-local maps = require("mexp_maps")
-local render = require("mexp_render")
-local ui = require("mexp_ui")
+-- ================================================================
+-- ★★ 模块自检（真机白屏的第一号成因）★★
+--   千星的规则是：**只有在「客户端脚本资源管理器」里建立了脚本映射的 .lua 才会被
+--   打包上传**。少导一个文件，加载阶段的那句 require 就抛错 —— 整份脚本中止，
+--   `OnStart` 一行都不会执行，画面上什么都不出现，日志里也只有一条
+--   `module 'xxx' not found`。这种「静默空白」最难查，所以这里逐个数 pcall：
+--   缺哪个就把名字写在屏幕上，让人不用去翻日志。
+--   ⚠️ 每个 require 都写成字面量（不是查表），静态校验器要按字面量抓依赖关系。
+-- ================================================================
+local MOD, MISSING = {}, {}
+local function tryRequire(name, loader)
+    local ok, m = pcall(loader)
+    if ok and type(m) == "table" then
+        MOD[name] = m
+    else
+        MISSING[#MISSING + 1] = name
+    end
+end
+tryRequire("config",      function() return require("config") end)
+tryRequire("state",       function() return require("state") end)
+tryRequire("utils",       function() return require("utils") end)
+tryRequire("mexp_engine", function() return require("mexp_engine") end)
+tryRequire("mexp_maps",   function() return require("mexp_maps") end)
+tryRequire("mexp_render", function() return require("mexp_render") end)
+tryRequire("mexp_ui",     function() return require("mexp_ui") end)
 
-local BUILD = "mexp-01"
+local BUILD = "mexp-02"
+
+-- 缺模块时的兜底画面：只用官方内置元件，不依赖任何业务模块
+local function bootDiag(missing)
+    printerr("[伐木远征] " .. BUILD .. " 启动失败：缺少脚本模块 " ..
+        table.concat(missing, ", ") .. "（请为这些 .lua 建立脚本映射并挂到同一个客户端控件容器）")
+    local root = script.object
+    if not root then
+        printerr("[伐木远征] script.object 为 nil：脚本没有挂在【客户端控件容器】的容器节点上")
+        return
+    end
+    local w, h = 1280, 720
+    pcall(function()
+        local cw, chh = game.GetUICanvasSize()
+        if type(cw) == "number" and cw > 0 then w = cw end
+        if type(chh) == "number" and chh > 0 then h = chh end
+    end)
+    local okBg, bg = pcall(game.InstantiateClientUIControl, 1073741894, root)
+    if okBg and bg then
+        pcall(function()
+            bg:SetAnchorMin(0.5, 0.5); bg:SetAnchorMax(0.5, 0.5); bg:SetPivot(0.5, 0.5)
+            bg:SetSizeDelta(w * 0.86, 260)
+            bg:SetAnchoredPosition(0, 0)
+            bg.imageColor = Color.FromRGBA(26, 12, 12, 240)
+            bg:SetAsLastSibling(); bg:SetActive(true)
+        end)
+    end
+    local okT, t = pcall(game.InstantiateClientUIControl, 1073741868, root)
+    if okT and t then
+        pcall(function()
+            t:SetAnchorMin(0.5, 0.5); t:SetAnchorMax(0.5, 0.5); t:SetPivot(0.5, 0.5)
+            t:SetSizeDelta(w * 0.86 - 48, 210)
+            t:SetAnchoredPosition(0, 0)
+            t.text = "【伐木远征】启动失败\n\n缺少脚本模块：" ..
+                table.concat(missing, "、") ..
+                "\n\n请到「客户端脚本资源管理器」为这些 .lua 建立脚本映射，\n并把它们全部挂到同一个客户端控件容器上。"
+            t.fontSize = 22
+            t.fontColor = Color.FromRGBA(255, 208, 120, 255)
+            t:SetAsLastSibling(); t:SetActive(true)
+        end)
+    end
+end
+
+if #MISSING > 0 then
+    function OnStart() bootDiag(MISSING) end
+    function OnUpdate(dt) end
+    return
+end
+
+local config = MOD["config"]
+local state = MOD["state"]
+local utils = MOD["utils"]
+local eng = MOD["mexp_engine"]
+local maps = MOD["mexp_maps"]
+local render = MOD["mexp_render"]
+local ui = MOD["mexp_ui"]
 
 -- ★ 前置声明：下面这些函数互相调用，必须先声明 local 再赋值实现
 local startMap, finishMove, tryMove, toMenu, toTitle, openSign
@@ -455,6 +528,7 @@ end
 -- ★ 生命周期
 -- ================================================================
 function OnStart()
+    printerr("[伐木远征] " .. BUILD .. " OnStart 开始")
     local root = script.object
     if not root then
         printerr("错误：script.object 为 nil，请把本脚本挂在【客户端控件容器】的容器节点上")
@@ -499,13 +573,56 @@ function OnStart()
         NAME_OF[d.key] = d.cn
     end
 
-    if type(print) == "function" then
-        pcall(print, string.format(
-            "[伐木远征] %s 元件 container=%s rect=%s image=%s text=%s | 图元 %s/%s | zoom=%s tile=%s | 画布 %dx%d",
-            BUILD, tostring(state.containerPrefabId), tostring(state.rectPrefabId),
-            tostring(state.imagePrefabId), tostring(state.textPrefabId),
-            tostring(config.PRIM.rect), tostring(config.PRIM.circle),
-            tostring(state.viewZoom), tostring(state.tilePx), state.canvasW, state.canvasH))
+    -- ★ 版本戳 + 元件表：真机「改了没生效」时，先看这一行对不对。
+    --   同时走 print（普通日志）与 printerr（错误日志）—— 有些客户端只默认展开后者。
+    local bootLine = string.format(
+        "[伐木远征] %s 元件 container=%s rect=%s image=%s text=%s | 图元 %s/%s | zoom=%s tile=%s | 画布 %dx%d",
+        BUILD, tostring(state.containerPrefabId), tostring(state.rectPrefabId),
+        tostring(state.imagePrefabId), tostring(state.textPrefabId),
+        tostring(config.PRIM.rect), tostring(config.PRIM.circle),
+        tostring(state.viewZoom), tostring(state.tilePx), state.canvasW, state.canvasH)
+    if type(print) == "function" then pcall(print, bootLine) end
+    printerr(bootLine)
+
+    -- ★ 宿主节点体检：本工程所有坐标都以宿主中心为原点，它必须铺满屏幕且居中。
+    --   缩在角落 / 只有一小块 → 整幅画面偏移。这一行是「画面歪了 / 只看见一角」的定位依据。
+    --   ⚠️ 每个取值单独 pcall：少一个接口只丢那一项，不能整行都打不出来。
+    do
+        local parts = {}
+        local function grab(label, fn)
+            local ok, a, b = pcall(fn)
+            if ok and type(a) == "number" then
+                parts[#parts + 1] = string.format("%s=(%.1f,%.1f)", label, a,
+                    (type(b) == "number") and b or 0)
+            else
+                parts[#parts + 1] = label .. "=?"
+            end
+        end
+        grab("锚点min", function() return root:GetAnchorMin() end)
+        grab("锚点max", function() return root:GetAnchorMax() end)
+        grab("位置", function() return root:GetAnchoredPosition() end)
+        grab("尺寸", function() return root:GetSizeDelta() end)
+        printerr("[伐木远征] 宿主节点 " .. table.concat(parts, " "))
+
+        -- ⚠️ 判据要分两种：锚点 (0,0)-(1,1) 的「拉伸铺满」型节点 sizeDelta 恒为 (0,0)，
+        --    那是正常的，不能当「比画布小」报 —— 否则真机上会跳一条假警。
+        local okA, aminx, aminy = pcall(function() return root:GetAnchorMin() end)
+        local okB, amaxx, amaxy = pcall(function() return root:GetAnchorMax() end)
+        local stretched = okA and okB and type(aminx) == "number" and type(amaxx) == "number"
+            and (amaxx - aminx) > 0.9 and (amaxy - (aminy or 0)) > 0.9
+        local okP, px, py = pcall(function() return root:GetAnchoredPosition() end)
+        if okP and type(px) == "number" and (math.abs(px) > 2 or math.abs(py or 0) > 2) then
+            printerr("[伐木远征] ⚠️ 宿主节点位置不是 (0,0) → 画面会整体偏移")
+        end
+        if not stretched then
+            local okS, sw, sh = pcall(function() return root:GetSizeDelta() end)
+            if okS and type(sw) == "number" and
+                (sw < state.canvasW * 0.9 or (sh or 0) < state.canvasH * 0.9) then
+                printerr("[伐木远征] ⚠️ 宿主节点没铺满画布 " .. tostring(state.canvasW) .. "x" ..
+                    tostring(state.canvasH) .. "（尺寸 " .. tostring(sw) .. "x" .. tostring(sh) ..
+                    "）→ 建议锚点设成左上 (0,0) / 右下 (1,1) 拉伸铺满屏幕")
+            end
+        end
     end
 
     script:EnableUpdate(true)
@@ -529,6 +646,9 @@ function OnStart()
 
     bindKeys(root)
     toTitle()
+
+    printerr("[伐木远征] " .. BUILD .. " 就绪：4 层容器已建、标题页已显示（画布 " ..
+        tostring(state.canvasW) .. "x" .. tostring(state.canvasH) .. "）")
 end
 
 function OnUpdate(dt)
