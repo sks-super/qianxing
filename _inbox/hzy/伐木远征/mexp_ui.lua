@@ -54,15 +54,17 @@ function M.init(opts)
     local ch = state.canvasH or 720
 
     -- ---------------- HUD ----------------
+    -- ★ 底衬要足够不透明：一格只有 64px，210 会让北边那几行地砖「透」上来 ——
+    --   隔着半透明条看得见砖缝，像条子画坏了。240 基本看不出来。
     state.hudBar = utils.createControl(0, ch / 2 - 28, cw + 80, 56,
-        utils.hexToColorA(P.hudBar, 210), state.containerHud)
+        utils.hexToColorA(P.hudBar, 240), state.containerHud)
     state.hudRegion = utils.createText(-cw * 0.30, ch / 2 - 28, cw * 0.42, 40, "",
         P.hud, config.DEFAULT_HUD_TITLE_SIZE, state.containerHud)
     state.hudMoves = utils.createText(cw * 0.32, ch / 2 - 28, cw * 0.30, 40, "",
         P.hud, config.DEFAULT_HUD_INFO_SIZE, state.containerHud)
 
     state.hudBarBottom = utils.createControl(0, -ch / 2 + 32, cw + 80, 64,
-        utils.hexToColorA(P.hudBar, 190), state.containerHud)
+        utils.hexToColorA(P.hudBar, 234), state.containerHud)
     state.hudMsg = utils.createText(-cw * 0.18, -ch / 2 + 32, cw * 0.52, 40, "",
         P.hud, config.DEFAULT_HUD_INFO_SIZE, state.containerHud)
     state.hudKey = utils.createText(cw * 0.30, -ch / 2 + 32, cw * 0.34, 40,
