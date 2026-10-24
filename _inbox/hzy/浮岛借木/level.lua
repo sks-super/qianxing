@@ -41,7 +41,7 @@ local config = require("config")
 local utils = require("utils")
 local world = require("world")
 
-M.BUILD = "b22"   -- 版本戳：真机日志里能一眼看出用的是哪一版文件（b22 = 第 22 批固定图层）
+M.BUILD = "b23"   -- 版本戳：真机日志里能一眼看出用的是哪一版文件（b23 = 第 23 批图层顺序日志）
 
 -- ★ 小人「图元笔触」数据（第 16 批）：来自「图元拟合拼图」四视角脚本，
 --   已按游戏内 68px 尺度裁掉看不见的椭圆。没有这个模块就自动退回像素画/立绘。
@@ -704,6 +704,58 @@ local RESTACK_POOLS = {
     { "objProxyCtrls", "objProxyUsed" },
 }
 
+-- ================================================================
+-- ★ 图层顺序日志（第 22 批追加）：图层**变更**时把层级顺序打进日志
+--   两类触发：
+--     ① game.ensureContainers 建完容器（OnStart / 补建）→ 打完整层序；
+--     ② level.build 构建完关卡 → 打完整层序（此刻地面四个子层也已建齐）；
+--     ③ M.restackWorld 层内排序结果与上次**不同**（某层控件数 / 首尾深度键
+--        变了）→ 打排序摘要。签名没变就闭嘴 —— 走一步会触发好几次重排，
+--        不做变更检测的话日志每帧都在刷。
+--   层序是**创建顺序**（自下而上），括号里是各层本帧的控件占用数。
+--   通道 printerr：模拟器收进挂载日志，真机日志同样能看到。
+-- ================================================================
+local LAYER_LOG_SPEC = {
+    -- 自下而上 = 显示层序（与 ensureContainers / ensureGroundLayers 的创建顺序一致）
+    { "containerBg",     "①海面底",      nil },
+    { "containerSide",   "②地面·侧面",  { { "decoCtrls",    "decoUsed" } } },
+    { "containerRim",    "③地面·描边",  { { "rimCtrls",     "rimUsed" } } },
+    { "containerTile",   "④地面·顶面",  { { "terrainCtrls", "terrainUsed" } } },
+    { "containerStump",  "⑤地面·树桩",  { { "objectCtrls",  "objectUsed" },
+                                            { "shadowCtrls",  "shadowUsed" } } },
+    { "containerRock",   "⑥石头",       { { "rockCtrls",    "rockUsed" } } },
+    { "containerTree",   "⑦树木",       { { "logCtrls",     "logUsed" },
+                                            { "treeCtrls",    "treeUsed" },
+                                            { "goalCtrls",    "goalUsed" },
+                                            { "objProxyCtrls", "objProxyUsed" } } },
+    { "containerPlayer", "⑧角色(最上)", nil },
+    { "containerFx",     "⑨特效",       nil },
+    { "containerHud",    "⑩HUD",        nil },
+    { "containerFade",   "⑪黑幕(顶)",   nil },
+}
+
+function M.logLayerOrder(tag)
+    local parts = {}
+    for _, ent in ipairs(LAYER_LOG_SPEC) do
+        local piece = ent[2]
+        if state[ent[1]] then
+            if ent[3] then
+                local n = 0
+                for _, pr in ipairs(ent[3]) do n = n + (state[pr[2]] or 0) end
+                piece = piece .. "(" .. tostring(n) .. ")"
+            end
+        else
+            piece = piece .. "(未建)"
+        end
+        parts[#parts + 1] = piece
+    end
+    pcall(printerr, "[图层] " .. tostring(tag or "") .. " 自下而上: "
+        .. table.concat(parts, " → "))
+end
+
+-- restackWorld 的变更签名：层内排序变了才打日志（见上方说明 ③）
+local lastRestackSig = nil
+
 function M.restackWorld()
     local list, seq = {}, 0
     for _, pair in ipairs(RESTACK_POOLS) do
@@ -727,6 +779,25 @@ function M.restackWorld()
     end)
     for _, it in ipairs(list) do
         pcall(function() it.c:SetAsLastSibling() end)
+    end
+
+    -- ★ 图层变更检测：签名 = 各池 used + 排序后首/尾深度键。
+    --   走一步会触发好几次 restackWorld（重铺地形 / 重画物体 / 开始移动…），
+    --   但层内顺序通常没变 —— 签名一致就闭嘴，只在真正**变了**的那次打印。
+    local sig = {}
+    for _, pair in ipairs(RESTACK_POOLS) do
+        sig[#sig + 1] = tostring(state[pair[2]] or 0)
+    end
+    if #list > 0 then
+        sig[#sig + 1] = tostring(list[1].k)
+        sig[#sig + 1] = tostring(list[#list].k)
+    end
+    local sigStr = table.concat(sig, ",")
+    if sigStr ~= lastRestackSig then
+        lastRestackSig = sigStr
+        M.logLayerOrder(string.format("层内重排变更(参与排序控件 %d 个, 深度键 %s → %s)",
+            #list, #list > 0 and tostring(list[1].k) or "-",
+            #list > 0 and tostring(list[#list].k) or "-"))
     end
 end
 
@@ -2214,6 +2285,7 @@ end
 --   海面底（bgCtrl）跨关卡复用，不在这里处理。
 -- ================================================================
 function M.clear()
+    lastRestackSig = nil          -- ★ 换关后第一次 restackWorld 必定要打一次层序日志
     poolTrim(state.terrainCtrls, 0)
     poolTrim(state.decoCtrls, 0)
     poolTrim(state.rimCtrls, 0)
@@ -2300,6 +2372,8 @@ function M.build(data, mapKey)
             tostring(state.viewZoom), math.floor(state.cellSize or 0), ww, wh, cw, chh,
             needFollow and "一屏装不下 → 镜头跟随（人物钉中央）" or "一屏装得下 → 镜头不动"))
     end
+    -- ★ 图层顺序日志：关卡构建完成时打一次完整层序（见 M.logLayerOrder）
+    M.logLayerOrder("关卡构建完成")
     return (state.playerCtrl ~= nil)
         or (state.heroPr and state.heroPrBox ~= nil)
         or (state.heroPixel and state.heroArtBox ~= nil)

@@ -98,9 +98,11 @@ local function ensureContainers()
         "containerFade",      -- ⑥ 黑幕过渡（最顶）
     }
     local okAll = true
+    local changed = false
     for _, key in ipairs(order) do
         if not state[key] then
             state[key] = createContainer()
+            changed = true
             if not state[key] then okAll = false end
         end
     end
@@ -109,8 +111,16 @@ local function ensureContainers()
     for _, key in ipairs({ "containerRock", "containerTree", "containerPlayer" }) do
         if not state[key] then
             state[key] = createContainer(state.containerWorld)
+            changed = true
             if not state[key] then okAll = false end
         end
+    end
+    -- ★ 图层顺序日志（第 22 批追加）：容器**新建 / 补建**才是「图层变更」——
+    --   ensureContainers 会被多个入口反复调，层级没变就不打（否则一屏重复六次）。
+    --   此刻地面四个子层尚未建，会如实标「未建」；它们在 level.build →
+    --   ensureGroundLayers 里补齐后由「关卡构建完成」再打一次。
+    if okAll and changed then
+        pcall(function() level.logLayerOrder("容器创建/补建") end)
     end
     return okAll
 end
