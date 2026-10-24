@@ -1,0 +1,77 @@
+--- a/浮岛借木/level.lua
++++ b/浮岛借木/level.lua
+@@ -41,7 +41,7 @@
+ local utils = require("utils")
+ local world = require("world")
+ 
+-M.BUILD = "b24"   -- 版本戳：真机日志里能一眼看出用的是哪一版文件（b24 = 第 24 批 单关 + 外轮廓 + 岛中心镜头）
++M.BUILD = "b25"   -- 版本戳：真机日志里能一眼看出用的是哪一版文件（b25 = 第 25 批 岛缘描边骑格线）
+ 
+ -- ★ 小人「图元笔触」数据（第 16 批）：来自「图元拟合拼图」四视角脚本，
+ --   已按游戏内 68px 尺度裁掉看不见的椭圆。没有这个模块就自动退回像素画/立绘。
+@@ -931,8 +931,11 @@
+         return ctrl
+     end
+     state.containerSide = state.containerSide or mk()
+-    state.containerRim  = state.containerRim  or mk()
++    -- ★ 第 25 批：描边改成**骑在格线上**（不再是整条外移到水面），
++    --   它会压住草地边缘的 rim/2，所以必须画在顶面**之上**，否则会被整格草地盖掉。
++    --   层级顺序 = 侧面 → 顶面 → 描边 → 树桩（创建顺序即层级，见 ensureContainers 的说明）。
+     state.containerTile = state.containerTile or mk()
++    state.containerRim  = state.containerRim  or mk()
+     state.containerStump = state.containerStump or mk()   -- 树桩 / 老树根 / 阴影（第 22 批）
+     return (state.containerSide and state.containerRim and state.containerTile) ~= nil
+ end
+@@ -1027,31 +1030,35 @@
+                 if wh > cliffMax then wh = cliffMax end
+                 di = paint(state.decoCtrls, di, parent, rect, cx, bottom - wh / 2,
+                            cell + rim * 2, wh, palette.soil, 255, depthKey(BAND_TILE, r, 0.1))
+-                -- ② 临外海的沙滩描边（第 24 批：从「内轮廓」改成「外轮廓」）
++                -- ② 临外海的沙滩描边（第 25 批：**骑在格线上**，中心线 = 格线，宽 rim）
+                 --
+                 --   ★ 判定的邻格必须是**外海**（world.isOuterWater），不是「不是陆地」。
+-                --     岛的内部也有水缝，旧写法把它们也算成海 → 水缝四周各画一条沙滩带，
+-                --     把水缝的**内轮廓**勾了出来（用户看到的「岛内部凭空一条条边框」）。
+-                --   ★ 整条带子**整体外移 rim**：带子完全落在格子外面（水面一侧），
+-                --     一点都不压草地 —— 这才是「岛的外轮廓」。
+-                --   ★ 长度给到 cell + rim*4（横向各外伸 2rim）：外移之后拐角要多盖一块，
+-                --     否则岛的四个角会缺口。相邻格的同类带子本来就会重叠，多伸无害。
+-                --   ★ 南侧（e[2] > 0）要贴到**崖面下沿之外**：南边是有厚度的崖面，
+-                --     沙滩带压在崖面上半截会看不懂，挂到崖面下方才是「岛脚沙滩」。
++                --     岛内部也有水缝，旧写法把它们也算成海 → 水缝四周各画一条沙滩带，
++                --     把水缝的**内轮廓**勾了出来（第 24 批修的就是这个）。
++                --   ★ 为什么从「整体外移 rim」（第 24 批）改成骑线：
++                --     外移之后岛的实际占地比一格大，相邻两岛之间那条一格宽的水道被两侧
++                --     各啃掉 rim → 看着像「岛之间没有间隔」，海面网格线也被压在描边底下。
++                --   ★ 骑线之后：
++                --       · 中心线正好压在海面网格线上 → 岛的轮廓与网格线对齐；
++                --       · 只往水面蹭出 rim/2（约 5~6 px），岛之间那一格水道基本完整；
++                --       · 只往草地蹭 rim/2 → 看起来是「草地的沙滩包边」，不是内框。
++                --     为什么不做成「完全在格内」：那样黄边整条落在草地上，看着像给草地
++                --     套了个内框（这轮要的是「边框对齐格线」，不是内框）。
++                --     为什么不做成「完全在水面侧」：整条带子外移，岛的实际占地比一格大，
++                --     相邻两岛之间那一格水会被两侧各啃掉一大截。
++                --   ★ 长度给 cell + rim：四条带骑线后，拐角各缺 rim/2 见方的一小块，
++                --     往两头各补 rim/2 正好补齐（这点外伸和带宽一样，本来就在水面侧）。
+                 for _, e in ipairs({ { 0, -1 }, { 0, 1 }, { -1, 0 }, { 1, 0 } }) do
+                     if world.isOuterWater(c + e[1], r + e[2]) then
+                         local bw, bh, bx, by
+                         if e[1] == 0 then
+-                            bw, bh = cell + rim * 4, rim * 2
++                            bw, bh = cell + rim, rim
+                             bx = cx
+-                            if e[2] > 0 then
+-                                by = bottom - wh - rim      -- 南：崖面下沿再往下一圈
+-                            else
+-                                by = cy + cell / 2 + rim    -- 北：顶面上沿再往上一圈
+-                            end
++                            -- ★ 行号越大越靠下（屏幕 y 越小）：e[2] = -1 是北（y 更大）
++                            by = cy - e[2] * cell / 2
+                         else
+-                            bw, bh = rim * 2, cell + rim * 4
+-                            bx = cx + e[1] * (cell / 2 + rim)
++                            bw, bh = rim, cell + rim
++                            bx = cx + e[1] * cell / 2
+                             by = cy
+                         end
+                         ri = paint(state.rimCtrls, ri, parentRim, rect, bx, by,
