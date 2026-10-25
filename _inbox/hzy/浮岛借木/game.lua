@@ -672,7 +672,8 @@ end
 --      在真机上全被判成 false：画面退回纯色块（小人 = F2A03C 橙色身体矩形）。
 --      ★ 这就是「导入脚本后像素小人不见了、只剩一个橙色块」的真正原因。
 --   约定（改这里就要改 README 参数表）：
---     · 开关：**-1 = 明确关闭**；0 / 空 = 没配 = 用 config 默认（默认都是开）
+--     · 开关：**-1 = 明确关闭**；0 / 空 = 没配 = 用 config 默认
+--       （多数默认开；`waterGridLines` 第 32 批起默认**关**）
 --     · 索引：0 / 空 = 无效 = 用 config 默认（0 从来不是合法元件索引）
 -- ================================================================
 local function paramSwitch(name, dflt)
@@ -775,9 +776,9 @@ function OnStart()
     --   填 -1 关掉，小人退回「整体滑行」。
     state.heroWalkOn = paramSwitch("heroWalkOn", config.DEFAULT_HERO_WALK_ON)
 
-    -- ★ 2.5D 视角（可选）：地块厚度 + 岛缘投影 + 水面细网格线
+    -- ★ 2.5D 视角（可选）：地块厚度 + 岛缘投影
     --   view25d = 0 → 退回改动前的平面正交画法（沙边改用 DEFAULT_COAST_PAD 像素）
-    --   waterGridLines = 0 → 水面只留旧的水下深色棋盘（不画细网格线）
+    --   waterGridLines = 0 → 水面**不画格子线**（★ 第 32 批改为默认；填 1 可恢复）
     state.view25d = paramSwitch("view25d", config.DEFAULT_VIEW_25D)
     state.waterGridLines = paramSwitch("waterGridLines", config.DEFAULT_WATER_GRID_LINES)
 

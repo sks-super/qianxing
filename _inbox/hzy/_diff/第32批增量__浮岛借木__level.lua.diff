@@ -1,0 +1,60 @@
+--- a/浮岛借木/level.lua
++++ b/浮岛借木/level.lua
+@@ -41,7 +41,7 @@
+ local utils = require("utils")
+ local world = require("world")
+ 
+-M.BUILD = "b31"   -- 版本戳：真机日志里能一眼看出用的是哪一版文件（b31 = 第 31 批 岛矩形严格等于一格）
++M.BUILD = "b32"   -- 版本戳：真机日志里能一眼看出用的是哪一版文件（b32 = 第 32 批 去掉水面格子线）
+ 
+ -- ★ 小人「图元笔触」数据（第 16 批）：来自「图元拟合拼图」四视角脚本，
+ --   已按游戏内 68px 尺度裁掉看不见的椭圆。没有这个模块就自动退回像素画/立绘。
+@@ -963,24 +963,31 @@
+         utils.setAlpha(state.bgCtrl, palette.water, 255)   -- 回退：通用矩形 + 调色板
+     end
+ 
+-    -- ② 水面细网格：屏幕水平 / 垂直，铺满**可见水面**（不只棋盘范围，
+-    --    否则移镜头时会看见「一片有网格、一片没网格」的硬边界）
++    -- ② 水面细网格 —— ★ 第 32 批：用户要求「去掉地图上的格子线」，默认整段不画。
++    --    开关两处同源：真机参数 `waterGridLines`（`state.waterGridLines`，0/-1 = 关）
++    --    ← 默认 `config.DEFAULT_WATER_GRID_LINES`。关掉时**不建任何控件**，
++    --    所以不会留下 N 个 alpha=0 的空矩形白占池子。
++    --    ⚠️ 旧逻辑「关 = 画深色棋盘」已经废弃：关掉就是干净海面，不是换一种网格。
+     local di = 1
+-    local lw = math.max(1, math.floor(cell * 0.035))
+-    local alpha = config.DEFAULT_WATER_LINE_ALPHA or 70
+-    local over = math.ceil((state.canvasW or config.DEFAULT_VIEW_WIDTH) / (2 * cell)) + 2
+-    local overY = math.ceil((state.canvasH or config.DEFAULT_VIEW_HEIGHT) / (2 * cell)) + 2
+-    local left = cellCenterX(1) - cell / 2 - over * cell
+-    local top = cellCenterY(1) + cell / 2 + overY * cell
+-    local spanX = (cols + over * 2) * cell
+-    local spanY = (rows + overY * 2) * cell
+-    for c = 0, (cols + over * 2) do
+-        di = paint(state.decoCtrls, di, parent, rect, left + c * cell, top - spanY / 2,
+-                   lw, spanY, palette.waterLine, alpha, depthKey(BAND_GRID, 0, 0.1))
+-    end
+-    for r = 0, (rows + overY * 2) do
+-        di = paint(state.decoCtrls, di, parent, rect, left + spanX / 2, top - r * cell,
+-                   spanX, lw, palette.waterLine, alpha, depthKey(BAND_GRID, 0, 0.2))
++    local gridOn = state.waterGridLines
++    if gridOn == nil then gridOn = (tonumber(config.DEFAULT_WATER_GRID_LINES) or 0) ~= 0 end
++    local alpha = tonumber(config.DEFAULT_WATER_LINE_ALPHA) or 0
++    if gridOn and alpha > 0 then
++        local lw = math.max(1, math.floor(cell * 0.035))
++        local over = math.ceil((state.canvasW or config.DEFAULT_VIEW_WIDTH) / (2 * cell)) + 2
++        local overY = math.ceil((state.canvasH or config.DEFAULT_VIEW_HEIGHT) / (2 * cell)) + 2
++        local left = cellCenterX(1) - cell / 2 - over * cell
++        local top = cellCenterY(1) + cell / 2 + overY * cell
++        local spanX = (cols + over * 2) * cell
++        local spanY = (rows + overY * 2) * cell
++        for c = 0, (cols + over * 2) do
++            di = paint(state.decoCtrls, di, parent, rect, left + c * cell, top - spanY / 2,
++                       lw, spanY, palette.waterLine, alpha, depthKey(BAND_GRID, 0, 0.1))
++        end
++        for r = 0, (rows + overY * 2) do
++            di = paint(state.decoCtrls, di, parent, rect, left + spanX / 2, top - r * cell,
++                       spanX, lw, palette.waterLine, alpha, depthKey(BAND_GRID, 0, 0.2))
++        end
+     end
+     return di
+ end

@@ -1,0 +1,38 @@
+--- a/浮岛借木/编辑器.html
++++ b/浮岛借木/编辑器.html
+@@ -155,7 +155,7 @@
+     tile_shadow_alpha: 54,
+     tile_foot_ratio: 0.18,
+     obj_shadow_alpha: 0,
+-    water_grid_lines: 1,
++    water_grid_lines: 0,
+     water_line_alpha: 70,
+     hint_wrap: 26,
+     hud_title_size: 30,
+@@ -468,9 +468,10 @@
+     const SHADOW = V25 ? DEFAULTS.tile_shadow_alpha / 255 : 0;
+     const OBJ_SHADOW = DEFAULTS.obj_shadow_alpha;
+ 
+-    // ② 水面网格
++    // ② 水面网格 —— ★ 第 32 批：默认 `water_grid_lines = 0` 完全不画（纯海面）。
++    //    旧逻辑的 else 分支（水下深色棋盘）已删除：关掉就是干净海面，不是换一种网格。
+     if (V25 && DEFAULTS.water_grid_lines > 0) {
+-        // 细网格线（参考图那种屏幕水平/垂直的线），铺满整块画布
++        // 细网格线（屏幕水平/垂直），铺满整块画布
+         const lw = Math.max(1, Math.floor(CELL * 0.035));
+         const a = DEFAULTS.water_line_alpha / 255;
+         const gx0 = cx(1) - CELL / 2, gy0 = cy(1) - CELL / 2;
+@@ -478,13 +479,6 @@
+             rect(gx0 + c * CELL - lw / 2, 0, lw, canvas.height, PALETTE.waterLine, a);
+         for (let r = -2; r <= rowsOf(lv) + 2; r++)
+             rect(0, gy0 + r * CELL - lw / 2, canvas.width, lw, PALETTE.waterLine, a);
+-    } else {
+-        // 旧的水下深色棋盘
+-        for (let r = 1; r <= rowsOf(lv); r++)
+-            for (let c = 1; c <= colsOf(lv); c++)
+-                if (c % 2 === 1 && r % 2 === 1 && !isLand(lv, c, r))
+-                    rect(cx(c) - CELL / 2 + 1, cy(r) - CELL / 2 + 1, CELL - 2, CELL - 2,
+-                         PALETTE.waterDeep, DEFAULTS.water_grid_alpha / 255);
+     }
+     // ③ 地块装饰趟：岛缘投影 → 侧面厚度 → 沙滩描边
+     //    （必须整趟画完再画顶面，否则岛内相邻格之间会露出描边，像带缝的地砖）
