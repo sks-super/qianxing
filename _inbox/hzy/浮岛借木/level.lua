@@ -41,7 +41,7 @@ local config = require("config")
 local utils = require("utils")
 local world = require("world")
 
-M.BUILD = "b26"   -- 版本戳：真机日志里能一眼看出用的是哪一版文件（b26 = 第 26 批 换新立绘图元）
+M.BUILD = "b27"   -- 版本戳：真机日志里能一眼看出用的是哪一版文件（b27 = 第 27 批 换透明素材四视角）
 
 -- ★ 小人「图元笔触」数据（第 16 批）：来自「图元拟合拼图」四视角脚本，
 --   已按游戏内 68px 尺度裁掉看不见的椭圆。没有这个模块就自动退回像素画/立绘。
