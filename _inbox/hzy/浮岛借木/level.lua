@@ -2220,11 +2220,13 @@ local function buildPlayer(palette)
                     tostring(state.heroImagePrefabId or 0))
             end
             pcall(print, string.format(
-                "[浮岛借木] 小人=%s | 像素块=%d | 数据源=%s | 原因=%s",
+                "[浮岛借木] 小人=%s | 像素块=%d | 数据源=%s | 原因=%s | 图元: %s (建出 %d 笔)",
                 mode,
                 state.heroBlockUsed or 0,
                 (heroDataFrom ~= "" and heroDataFrom) or "无",
-                (why ~= "" and why) or "无"))
+                (why ~= "" and why) or "无",
+                (state.heroPrWhy ~= "" and state.heroPrWhy) or "OK",
+                state.heroPrUsed or 0))
         end
     end
 
