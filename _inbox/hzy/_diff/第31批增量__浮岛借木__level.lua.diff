@@ -1,0 +1,166 @@
+--- a/浮岛借木/level.lua
++++ b/浮岛借木/level.lua
+@@ -41,7 +41,7 @@
+ local utils = require("utils")
+ local world = require("world")
+ 
+-M.BUILD = "b30"   -- 版本戳：真机日志里能一眼看出用的是哪一版文件（b30 = 第 30 批 岛缘描边贴草地外沿）
++M.BUILD = "b31"   -- 版本戳：真机日志里能一眼看出用的是哪一版文件（b31 = 第 31 批 岛矩形严格等于一格）
+ 
+ -- ★ 小人「图元笔触」数据（第 16 批）：来自「图元拟合拼图」四视角脚本，
+ --   已按游戏内 68px 尺度裁掉看不见的椭圆。没有这个模块就自动退回像素画/立绘。
+@@ -722,6 +722,7 @@
+ local RESTACK_POOLS = {
+     { "decoCtrls",     "decoUsed" },
+     { "rimCtrls",      "rimUsed" },     -- 岛缘描边（第 21 批从 decoCtrls 拆出来，单独一层容器）
++    { "landBaseCtrls", "landBaseUsed" },-- ★ 顶面底色（第 31 批）：在 containerTile 里、草地素材之下
+     { "terrainCtrls",  "terrainUsed" },
+     { "shadowCtrls",   "shadowUsed" },   -- 接触阴影（默认关闭）—— 地面子层
+     { "objectCtrls",   "objectUsed" },   -- 树桩 / 老树根（地面子层）
+@@ -750,7 +751,8 @@
+     { "containerBg",     "①海面底",      nil },
+     { "containerSide",   "②地面·侧面",  { { "decoCtrls",    "decoUsed" } } },
+     { "containerRim",    "③地面·描边",  { { "rimCtrls",     "rimUsed" } } },
+-    { "containerTile",   "④地面·顶面",  { { "terrainCtrls", "terrainUsed" } } },
++    { "containerTile",   "④地面·顶面",  { { "landBaseCtrls", "landBaseUsed" },
++                                            { "terrainCtrls", "terrainUsed" } } },
+     { "containerStump",  "⑤地面·树桩",  { { "objectCtrls",  "objectUsed" },
+                                             { "shadowCtrls",  "shadowUsed" } } },
+     { "containerRock",   "⑥石头",       { { "rockCtrls",    "rockUsed" } } },
+@@ -1004,19 +1006,20 @@
+     local landSlot = makeSlot(state.landPrefabId)
+     local landArt = slotUsesArt(state.terrainCtrls, parentTile, landSlot)
+     local fit = (config.DEFAULT_ART_FIT or {}).land or { w = 1, h = 1, dy = 0 }
+-    -- ★ 第 30 批：草地素材比格子大出来的那一点
+-    --   `ART_FIT.land.w = 1.138` → 控件 1.138 格、内容铺满画布，所以草地的**实际边缘**
+-    --   比格线还外 0.069 格（cell=66 时约 4.5px）。侧面 / 沙滩按「格线」画就会露出一圈
+-    --   绿边（用户报的「边框和地块边缘不重合」就是这个）。用它把两者都补到草地外沿。
+-    --   纯色棋盘（没有素材）时内容正好一格，不补。
+-    local edgeOver = 0
+-    if landArt then
+-        edgeOver = math.max(0, ((fit.w or 1) - 1) * 0.5) * cell
+-    end
++    -- ★ 第 31 批：**沙滩带 / 侧面 / 顶面一律收在格子里面，外沿正好压在格线上**。
++    --   用户连报三轮「岛的边缘要和格子线（黑线）对齐、边框不能超过黑线」，
++    --   到这一版才把三个越线源全部堵住：
++    --     ① 第 30 批「贴草地外沿」→ 沙滩外移 edgeOver(≈4.5px)，本身就越线了；
++    --     ② 草地素材控件 1.138 格（内容正好一格、四周是透明留白）—— 真机看不出，
++    --        但按控件矩形取色的呈现会在沙滩外面露一圈绿边；
++    --     ③ `state.baseH` 取整图最低层（水面），最矮的岛被抬 0.15 格 ≈10px，
++    --        整个岛的顶面浮在格子线**上面**（这一条在真机上一样看得见）。
++    --   现在：底色/沙滩/侧面/顶面全部 = 一整格，且 baseH 改成陆地最低层 → 抬升 0。
+ 
+     local di = buildSea(palette)
+     local ri = 1
+     local ti = 1
++    local bi = 1
+ 
+     -- ★ 地形分**两遍**铺（第 21 批）：① 全部侧面 + 岛缘描边 → ② 全部草地顶面。
+     --
+@@ -1033,41 +1036,40 @@
+                 local cy = cellCenterY(r) + zRise(drawH(c, r) + 1) * cell
+                 local bottom = cy - cell / 2          -- 顶面的下沿
+                 -- ① 侧面 / 崖面：与南邻的高差
+-                --   ★ 第 30 批：横向从 `cell + rim*2` 收到**草地素材的实际边缘**。
+-                --     草地素材是 1.138 格（`ART_FIT.land`），内容比格子宽出 edgeOver ≈ 4.5px，
+-                --     侧面原来按 cell 画就会比草地窄一截；按 cell + rim*2 画又会伸进水道。
+-                --     现在按「草地边缘 + 1px 补缝」来，和草地严丝合缝。
++                --   ★ 第 31 批：横向**正好一格**（`cell`），左右边缘与格子线重合。
++                --     上一版草稿还是 `cell + 1`（左右各 0.5px），虽然子像素级，
++                --     但用户要求「一个像素都不许越线」，所以直接去掉那 1px。
++                --     相邻两格各画自己那一格，边缘严丝合缝，不会露缝。
+                 local dh = drawH(c, r) - drawH(c, r + 1)
+                 local wh = sideH + math.max(0, dh) * zc
+                 if wh > cliffMax then wh = cliffMax end
+                 di = paint(state.decoCtrls, di, parent, rect, cx, bottom - wh / 2,
+-                           cell + edgeOver * 2 + 1, wh, palette.soil, 255, depthKey(BAND_TILE, r, 0.1))
+-                -- ② 临外海的沙滩描边（第 30 批：外沿 = **草地素材的外沿**，与地块边缘重合）
++                           cell, wh, palette.soil, 255, depthKey(BAND_TILE, r, 0.1))
++                -- ② 临外海的沙滩描边（第 31 批：**整条落在格子里面**，外沿 = 格线）
+                 --
+                 --   ★ 判定的邻格必须是**外海**（world.isOuterWater），不是「不是陆地」。
+                 --     岛内部也有水缝，旧写法把它们也算成海 → 水缝四周各画一条沙滩带，
+                 --     把水缝的**内轮廓**勾了出来（第 24 批修的就是这个）。
+-                --   ★ 位置演进（三版，别再改回去）：
+-                --     第 24 批「整体外移 rim」→ 岛比一格大，水道被啃掉一大截；
+-                --     第 25 批「骑线」（中心线 = 格线）→ 沙滩一半悬在水上，用户报「左半边
+-                --       应该跟地块的左半边重合」；
+-                --     **第 30 批「贴草地外沿」**（本版）：沙滩的外沿 = 草地素材的外沿
+-                --     （`cell/2 + edgeOver`），把草地素材溢出格线的那一圈 green 边盖住。
+-                --     这样视觉上「岛的外轮廓 = 沙滩的外轮廓」，与地块矩形严丝合缝 ——
+-                --     只往水面溢出 edgeOver（≈4.5px，比原来的 rim 11px 小一半多），
+-                --     岛与岛之间那一格水道基本完整、网格线不被压住。
+-                --   ★ 长度给 cell + edgeOver*2：正好到草地左右边缘，拐角由相邻两条带重叠覆盖。
++                --   ★ 位置演进（四版，**第 31 批这版才是用户要的**，别再改回去）：
++                --     第 24 批「整体外移 rim」    → 岛比一格大，水道被啃掉一大截；
++                --     第 25 批「骑线」（中心线=格线）→ 沙滩一半悬在水上；
++                --     第 30 批「贴草地外沿」     → 仍外扩 4.5px，用户报「边框超过黑线」；
++                --     **第 31 批「整条在格内」**  → 外沿 = `cx ± cell/2` / `cy ± cell/2`，
++                --     正好压在格线上：岛的外轮廓 == 格子矩形，一个像素都不越界；
++                --     水道完整保留一格、水面网格线完全不被压住。
++                --   ★ 长度 = cell：四条带各自盖满自己那一条边，拐角由相邻两条重叠覆盖，
++                --     既没有缺口，也不会伸出格子。
+                 for _, e in ipairs({ { 0, -1 }, { 0, 1 }, { -1, 0 }, { 1, 0 } }) do
+                     if world.isOuterWater(c + e[1], r + e[2]) then
+                         local bw, bh, bx, by
+                         if e[1] == 0 then
+-                            bw, bh = cell + edgeOver * 2, rim
++                            bw, bh = cell, rim
+                             bx = cx
+                             -- ★ 行号越大越靠下（屏幕 y 越小）：e[2] = -1 是北（y 更大）
+-                            by = cy - e[2] * (cell / 2 + edgeOver - rim / 2)
++                            by = cy - e[2] * (cell / 2 - rim / 2)
+                         else
+-                            bw, bh = rim, cell + edgeOver * 2
+-                            bx = cx + e[1] * (cell / 2 + edgeOver - rim / 2)
++                            bw, bh = rim, cell
++                            bx = cx + e[1] * (cell / 2 - rim / 2)
+                             by = cy
+                         end
+                         ri = paint(state.rimCtrls, ri, parentRim, rect, bx, by,
+@@ -1079,12 +1081,20 @@
+     end
+ 
+     -- ② 第二遍：草地顶面（压在上面这一整片之上）
++    --
++    --   ★ 第 31 批：素材路径下先铺一层**整格纯色**（landBaseCtrls），再压草地素材。
++    --     草地素材的内容只占画布的 87.9%，控件缩到正好一格之后内容只剩 0.879 格
++    --     → 格与格之间会露出 8px 的缝。这一层同色底把缝兜住，看起来仍是整片草地；
++    --     而岛的**外轮廓**仍然是严格的格子矩形（不再被素材控件撑出去）。
+     for r = win.r0, win.r1 do
+         for c = win.c0, win.c1 do
+             if world.landAt(c, r) then
+                 local cx = cellCenterX(c)
+                 local cy = cellCenterY(r) + zRise(drawH(c, r) + 1) * cell
+                 if landArt then
++                    bi = paint(state.landBaseCtrls, bi, parentTile, rect,
++                               cx, cy, cell, cell, palette.land, 255,
++                               depthKey(BAND_TILE, r, 0.55))
+                     ti = paint(state.terrainCtrls, ti, parentTile, landSlot,
+                                cx, cy + (fit.dy or 0) * cell,
+                                cell * (fit.w or 1), cell * (fit.h or 1), nil, nil,
+@@ -1104,6 +1114,8 @@
+     state.decoUsed = di - 1
+     poolTrim(state.rimCtrls, ri - 1)
+     state.rimUsed = ri - 1
++    poolTrim(state.landBaseCtrls, bi - 1)
++    state.landBaseUsed = bi - 1
+     poolTrim(state.terrainCtrls, ti - 1)
+     state.terrainUsed = ti - 1
+ 
+@@ -2347,6 +2359,7 @@
+ function M.clear()
+     lastRestackSig = nil          -- ★ 换关后第一次 restackWorld 必定要打一次层序日志
+     poolTrim(state.terrainCtrls, 0)
++    poolTrim(state.landBaseCtrls, 0)   -- ★ 第 31 批：顶面底色池
+     poolTrim(state.decoCtrls, 0)
+     poolTrim(state.rimCtrls, 0)
+     poolTrim(state.shadowCtrls, 0)
+@@ -2381,6 +2394,7 @@
+     utils.setVisible(state.rippleCtrl, false)
+     utils.setVisible(state.dustCtrl, false)
+     state.terrainUsed = 0
++    state.landBaseUsed = 0
+     state.decoUsed = 0
+     state.terrainWinKey = ""      -- 换关 / 重开：地形窗口必须重铺
+     state.objectUsed = 0

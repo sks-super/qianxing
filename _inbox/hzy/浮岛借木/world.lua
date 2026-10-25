@@ -1145,14 +1145,32 @@ local function beginSession(md, landTable, rocks, name, mapKey)
     --   哈希表给「这一格地表要不要减一层」这种逐格查询用（地形每格都问一次）。
     state.stumps, state.stumpAt = stumpsFromMap(md)
 
-    -- ★ 整张图最低的那一层：渲染层拿它当「脚线基准」，
-    --   否则高台地图（cliffs 最高 100 层）会整片飘到屏幕外面去。
+    -- ★ 渲染基准层（脚线）：取**陆地最低那一层**，不是整张图的最低层。
+    --
+    --   第 31 批改的：以前取整张图最低层（= 水面 0），于是最矮的岛（hmap=1）
+    --   也被抬高 (1-0)×0.15 = 0.15 格 ≈ 10px —— 岛顶面整体浮在格子线上面，
+    --   和用户连报三轮的「岛屿边缘要和黑线对齐、边框不能超过黑线」直接冲突。
+    --   改成以陆地最低层为基准后，最矮那一层岛的地块矩形正好压在格子线上；
+    --   更高的台地照旧按 0.15 格/层往上抬（2.5D 的层次感不受影响）。
+    --   水面网格线本来就画在平铺位置（不参与 z 抬升），所以两边从此对齐。
     local lo = nil
     for i = 1, md.width * md.height do
         local h = md.hmap[i] or 0
         if not lo or h < lo then lo = h end
     end
-    state.baseH = lo or 0
+    local loLand = nil
+    if landTable then
+        for r = 1, md.height do
+            local row = landTable[r]
+            if row then
+                for c = 1, md.width do
+                    local h = row[c]
+                    if h ~= nil and (not loLand or h < loLand) then loLand = h end
+                end
+            end
+        end
+    end
+    state.baseH = loLand or lo or 0
 
     -- 石头是**静态**的（不进内核，写在地图的「不可通行」属性位里），
     -- 但渲染层还在按 state.rocks 逐块画它，所以这里单独拷一份。
