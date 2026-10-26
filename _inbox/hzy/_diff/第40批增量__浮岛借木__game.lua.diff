@@ -1,0 +1,18 @@
+diff --git "a/_inbox/hzy/\346\265\256\345\262\233\345\200\237\346\234\250/game.lua" "b/_inbox/hzy/\346\265\256\345\262\233\345\200\237\346\234\250/game.lua"
+index fc920b8..da4c6d5 100644
+--- "a/_inbox/hzy/\346\265\256\345\262\233\345\200\237\346\234\250/game.lua"
++++ "b/_inbox/hzy/\346\265\256\345\262\233\345\200\237\346\234\250/game.lua"
+@@ -796,6 +796,13 @@ function OnStart()
+     state.view25d = paramSwitch("view25d", config.DEFAULT_VIEW_25D)
+     state.waterGridLines = paramSwitch("waterGridLines", config.DEFAULT_WATER_GRID_LINES)
+ 
++    -- ★ 石头 → 图腾柱（第 40 批）
++    --   rockPillar = -1 → 回到「两块纯色矩形」的旧石块（0 / 空 = 按 config 默认，即柱子）。
++    --   pillarGlow = -1 / 0 → 只画核心层（少 45% 控件，柱子会闷一点）。
++    --   ⚠️ 只是画法：石头照样不可通行、推不动，规则层一行没动。
++    state.rockPillar = paramSwitch("rockPillar", config.DEFAULT_ROCK_PILLAR)
++    state.rockPillarGlow = paramSwitch("pillarGlow", config.DEFAULT_PILLAR_GLOW)
++
+     -- ★ 地图主题（第 34 批加入，第 35 批默认回退到海面）
+     --   skyIsland = 1 → 空中岛屿；0 / 空 / -1 → 原来的海面主题（★ 现在默认这一支）。
+     --   ⚠️ 写 "sky"/"sea" 字符串而不是布尔：下游要按主题分支（背景 / 岛底 / 顶面画法），

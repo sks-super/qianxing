@@ -137,10 +137,13 @@ const DEFAULTS = {
     h_root: 0.25,
     h_log_land: 0.5,
     h_log_float: 0.25,
-    h_rock1: 0.55,      // 与 config.DEFAULT_H_ROCK1 一致（石块只是「压在格子上的石头」）
+    h_rock1: 0.55,      // 与 config.DEFAULT_H_ROCK1 一致（★ 第 40 批起只在 rock_pillar = -1 时用）
     h_rock2: 0.85,      // 与 config.DEFAULT_H_ROCK2 一致
+    rock_pillar: 1,     // ★ 第 40 批：1 = 石头画成图腾柱（默认）；-1 = 旧的「两块纯色矩形」
+    pillar_h: 1.90,     // 柱子总高（格）；宽 = 高 × 0.3599 ≈ 0.68 格
+    pillar_glow: 1,     // 1 = 连辉光层一起画（100 笔/根）；0 = 只画核心层（55 笔/根，省 45% 控件）
     h_tree: 1.0,
-    step_anim_time: 0.26,   // 第 24 批 0.10 → 0.16（看得见平移），第 37 批 0.16 → 0.26（走得更稳、摆动展开）
+    step_anim_time: 0.22,   // 第 24 批 0.10 → 0.16；第 37 批 0.16 → 0.26；第 39 批 0.26 → 0.22（略快）
     action_anim_time: 0.16,
     action_cooldown: 0.10,
     ripple_time: 0.45,

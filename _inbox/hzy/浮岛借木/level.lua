@@ -41,8 +41,24 @@ local config = require("config")
 local utils = require("utils")
 local world = require("world")
 
-M.BUILD = "b39"   -- 版本戳：真机日志里能一眼看出用的是哪一版文件
+M.BUILD = "b40"   -- 版本戳：真机日志里能一眼看出用的是哪一版文件
                   --   b39 = 第 39 批：侧视远臂钉在躯干上（撤掉第 38 批的飘带判定）+ 步时/转身略快
+                  --   b40 = 第 40 批：石头换成「图腾柱」（rockPrims.lua 的图元逐笔画）
+
+-- ★ 石头用的「图腾柱」图元数据（第 40 批）
+--   用户导出的「超限素材组」脚本 1043 个旋转图元 → 归一到「高 = 1」+ 覆盖率贪心精简。
+--   ★ 没有这个模块就自动退回旧石块（两块纯色矩形），**不会白屏**；
+--     真机若看到石头还是老样子，先看自检日志里的「石头=」那一段。
+--   ⚠️ 新加的 .lua 必须先在「客户端脚本资源管理器」里建好映射才会被打包 ——
+--     没建映射时 require 会失败，画面就退回旧石块（这也是本条用 pcall 的原因）。
+local rockPrims = nil
+do
+    local ok, mod = pcall(require, "rockPrims")
+    if ok and type(mod) == "table" and type(mod.BASE) == "table" and type(mod.GLOW) == "table" then
+        rockPrims = mod
+    end
+end
+M.ROCK_PRIMS_LOADED = (rockPrims ~= nil)
 
 -- ★ 小人「图元笔触」数据（第 16 批）：来自「图元拟合拼图」四视角脚本，
 --   已按游戏内 68px 尺度裁掉看不见的椭圆。没有这个模块就自动退回像素画/立绘。
@@ -1438,7 +1454,20 @@ end
 -- 判定只是一次字符串比较，代价可以忽略。
 function M.ensureTerrain(palette)
     if not state.cellSize then return false end
-    return buildTerrain(palette or utils.resolvePalette(state.levelConfig), false)
+    local pal = palette or utils.resolvePalette(state.levelConfig)
+    local changed = buildTerrain(pal, false)
+
+    -- ★ 第 40 批：石头（图腾柱）和地形一样**按可视窗裁剪**。
+    --   石头是「不可通行格」—— 柱子没画出来就等于一堵看不见的墙，
+    --   所以窗口一变就得跟着重铺，否则走出旧窗口的石头会变成隐形的。
+    --   ★ 只在换窗那一帧跑（buildTerrain 内部已经做了字符串比较），
+    --     和地形重铺同一帧完成，不会出现「地动了柱子没动」的错位。
+    if changed then
+        -- ★ 只有**池子扩容**时才重排：柱子全是复用旧控件的话，
+        --   它们的先后顺序在上一轮就排好了，再排一遍纯属白发几千次调用。
+        if M.repaintRockPillars(pal) then M.restackWorld() end
+    end
+    return changed
 end
 
 -- ================================================================
@@ -1599,6 +1628,111 @@ local function paintStandingTrunk(pool, i, parent, rect, sp, palette, baseKey)
 end
 
 -- ================================================================
+-- ★ 石头 → 图腾柱（第 40 批）
+--   用户给了一根「图腾柱」的图元拟合导出（1043 个旋转图元），要求用它替代石头。
+--   画法与小人同一套：图元 = 纯色矩形 + 染色 + 绕自身中心转 Z，全部从池子里取。
+--
+--   ★ 三件必须知道的事：
+--     ① **笔数**：1043 笔 × 72 块石头 = 7 万多个控件，真机必崩。所以数据在导出时
+--        就用覆盖率贪心砍到 72 笔（核心层）+ 58 笔（辉光层），见 rockPrims.lua。
+--     ② **按可视窗裁剪**：柱子和地形一样只画看得见的那一窗（多留 2 格）。
+--        石头是**不可通行格** —— 柱子没画出来就等于一堵看不见的墙，所以窗口一变
+--        必须重铺（由 M.ensureTerrain 在换窗那一帧调 M.repaintRockPillars）。
+--     ③ **只改画法**：判定还是「一格不可通行」，柱子画多高都不影响规则。
+--
+--   ★ 深度：每根柱子的所有笔共用一个深度键（行号），同一根内按笔画顺序排 ——
+--     这样近处的柱子整根压在远处的柱子上面，不会出现「半根在后面半根在前面」。
+-- ================================================================
+local ROCK_WIN_MARGIN = 2          -- 柱子比石块高，窗口外多留一格防止「脚下那根没画」
+
+local function rockPillarOn()
+    if not rockPrims then return false end
+    local v = state.rockPillar
+    if v == nil then return (tonumber(config.DEFAULT_ROCK_PILLAR) or 1) > 0 end
+    if v == true then return true end
+    if v == false then return false end
+    return (tonumber(v) or 0) > 0
+end
+
+-- 一根柱子：把一组图元笔（7 个字段/笔）铺到池子里
+--   单位全部是「柱高」—— nx/ny 是中心点偏移（ny 从柱脚往上），nw/nh 是尺寸
+local function paintPillarStrokes(pool, ri, parent, rect, cx, baseY, hpx, key, arr)
+    local k, n = 1, #arr
+    while k + 6 <= n do
+        local item = poolGet(pool, ri, parent, rect)
+        if not item then return ri end
+        local c = item.c
+        item.key = key                     -- 供 restackWorld 按行号排层
+        utils.setVisible(c, true)
+        utils.setSize(c, arr[k + 2] * hpx, arr[k + 3] * hpx)
+        utils.setPosition(c, cx + arr[k] * hpx, baseY + arr[k + 1] * hpx)
+        utils.setRotation(c, arr[k + 4])
+        utils.setAlpha(c, string.format("%06X", math.floor(arr[k + 5] or 0)), arr[k + 6] or 255)
+        ri = ri + 1
+        k = k + 7
+    end
+    return ri
+end
+
+-- 重铺整个石头层（自成一个函数：rebuildObjects 与「换可视窗」两处都要调）
+local function paintRockPillars(palette)
+    local pool = state.rockCtrls
+    if not pool then return false end
+    local poolBefore = #pool
+    local parent = layerRock()
+    local rect = rectSlot()
+    local cell = state.cellSize or 1
+    local rocks = state.rocks or {}
+    local ri = 1
+    local drawn = 0                    -- 本帧真的画了几根（日志用）
+
+    if rockPillarOn() then
+        local hpx = cell * (tonumber(config.DEFAULT_PILLAR_H) or 1.9)
+        local glowOn = state.rockPillarGlow
+        if glowOn == nil then glowOn = (tonumber(config.DEFAULT_PILLAR_GLOW) or 1) > 0 end
+        local base, glow = rockPrims.BASE, rockPrims.GLOW
+        local win = state.terrainWin or terrainWindow()
+        local c0, c1 = win.c0 - ROCK_WIN_MARGIN, win.c1 + ROCK_WIN_MARGIN
+        local r0, r1 = win.r0 - ROCK_WIN_MARGIN, win.r1 + ROCK_WIN_MARGIN
+        for _, rk in ipairs(rocks) do
+            if rk.c >= c0 and rk.c <= c1 and rk.r >= r0 and rk.r <= r1 then
+                local cx = cellCenterX(rk.c)
+                local foot = groundY(rk.c, rk.r)
+                local key = objKey(rk.r, SUB_ROCK)
+                ri = paintPillarStrokes(pool, ri, parent, rect, cx, foot, hpx, key, base)
+                if glowOn then
+                    ri = paintPillarStrokes(pool, ri, parent, rect, cx, foot, hpx, key, glow)
+                end
+                drawn = drawn + 1
+            end
+        end
+    else
+        -- 旧画法（rockPillar = -1 或 rockPrims 没加载）：两块纯色矩形
+        for _, rk in ipairs(rocks) do
+            local hh = tonumber(rk.h) or config.DEFAULT_H_ROCK1
+            local x = cellCenterX(rk.c)
+            local base = groundY(rk.c, rk.r)
+            local hex = (hh >= config.DEFAULT_H_ROCK2 - 0.01) and palette.rock2Top or palette.rock1Top
+            ri = paint(pool, ri, parent, rect, x, base + hh * cell / 2, cell * 0.84, hh * cell,
+                       palette.rockSide, 255, objKey(rk.r, SUB_ROCK))
+            ri = paint(pool, ri, parent, rect, x, base + hh * cell - cell * 0.055,
+                       cell * 0.68, cell * 0.11, hex, 255, objKey(rk.r, SUB_ROCK + 0.1))
+        end
+    end
+
+    poolTrim(pool, ri - 1)
+    state.rockUsed = ri - 1
+    state.rockDrawn = drawn
+    return #pool > poolBefore          -- 池子扩容了 → 调用方要重排一次层级
+end
+
+-- 换可视窗时重铺柱子（M.ensureTerrain 调；见上面 ②）
+function M.repaintRockPillars(palette)
+    if not state.cellSize then return false end
+    return paintRockPillars(palette or utils.resolvePalette(state.levelConfig))
+end
+
+-- ================================================================
 -- ★ 物体层：树根 → 倒下的树 → 石头 → 树木 → 终点旗
 --   world 每次发生结构变化后重建（对象池复用，控件不销毁）。
 --   2.5D 下所有物体都站在「脚线」（cellFootY）上，并且每个都带一格深度键 ——
@@ -1613,12 +1747,10 @@ function M.rebuildObjects()
     local palette = utils.resolvePalette(data)
     -- ★ 第 22 批：四个固定图层各画各的，池子也按层分开（混池会把控件画到别的层去）。
     local pool = state.objectCtrls                 -- 地面层：树桩 / 老树根
-    local rockPool = state.rockCtrls               -- 石头层
     local logPool = state.logCtrls                 -- 树木层：倒木 / 木筏 / 被推立的树干
     local parent = layerGround()                   -- 树桩与接触阴影的父节点
-    local parentRock = layerRock()
     local parentTree = layerTree()
-    local ri, li = 1, 1                            -- 石头池 / 木头池各自的游标
+    local li = 1                                   -- 木头池游标（石头池已独立，见 paintRockPillars）
     local rect = rectSlot()
     local treeSlot = makeSlot(state.treePrefabId)
     local cell = state.cellSize
@@ -1730,18 +1862,12 @@ function M.rebuildObjects()
         end
     end
 
-    -- ④ 石头（不可通行格）：一块压在格子上的石块
+    -- ④ 石头（不可通行格）：第 40 批起画成**图腾柱**（见上方 paintRockPillars）
+    --   ★ 接触阴影仍然按「一格」画在脚下 —— 柱子再高，踩地的还是那一格。
     for _, rk in ipairs(state.rocks) do
-        local hh = tonumber(rk.h) or config.DEFAULT_H_ROCK1
-        local x = cellCenterX(rk.c)
-        local base = groundY(rk.c, rk.r)
-        local hex = (hh >= config.DEFAULT_H_ROCK2 - 0.01) and palette.rock2Top or palette.rock1Top
-        shadow(x, base, cell * 0.8, rk.r, 0)
-        ri = paint(rockPool, ri, parentRock, rect, x, base + hh * cell / 2, cell * 0.84, hh * cell,
-                   palette.rockSide, 255, keyOf(rk.r, SUB_ROCK))
-        ri = paint(rockPool, ri, parentRock, rect, x, base + hh * cell - cell * 0.055,
-                   cell * 0.68, cell * 0.11, hex, 255, keyOf(rk.r, SUB_ROCK + 0.1))
+        shadow(cellCenterX(rk.c), groundY(rk.c, rk.r), cell * 0.8, rk.r, 0)
     end
+    paintRockPillars(palette)
 
     -- ⑤ 树木（真树 1 格高 / 无叶树干 1 格高）
     --    ★ 被推立起来的树干（tr.bare）**没有树冠**：它就是倒下的那根木头竖起来了，
@@ -1824,8 +1950,7 @@ function M.rebuildObjects()
 
     poolTrim(pool, i - 1)
     state.objectUsed = i - 1
-    poolTrim(rockPool, ri - 1)              -- ★ 三个物体池各自收尾（第 22 批）
-    state.rockUsed = ri - 1
+    -- ★ 第 40 批：石头池的收尾在 paintRockPillars 里（它两处都会被调：重建物体 / 换可视窗）
     poolTrim(logPool, li - 1)
     state.logUsed = li - 1
     poolTrim(state.shadowCtrls, si - 1)
@@ -3127,6 +3252,19 @@ function M.build(data, mapKey)
             farArm * 100,
             tonumber(config.DEFAULT_HERO_LEG_SHADE) or 1,
             heroViewWidthOf("S"), heroViewWidthOf("A"), heroViewWidthOf("D"), heroViewWidthOf("W")))
+        -- ★ 第 40 批：石头到底是柱子还是老石块 —— 真机报「没变化」先看这一行。
+        --   rockPrims.lua 没在「客户端脚本资源管理器」里建映射 → 这里会是「旧石块」。
+        local pillarOn = rockPillarOn()
+        local glowOn = state.rockPillarGlow
+        if glowOn == nil then glowOn = (tonumber(config.DEFAULT_PILLAR_GLOW) or 1) > 0 end
+        pcall(print, string.format(
+            "[浮岛借木] 石头=%s 柱子高=%.2f格 宽=%.2f格 辉光=%s 笔/根=%d 可视窗内=%d/%d 根",
+            pillarOn and "图腾柱(图元笔触)" or (rockPrims and "旧石块(rockPillar=-1)" or "旧石块(rockPrims 未加载)"),
+            tonumber(config.DEFAULT_PILLAR_H) or 0,
+            (tonumber(config.DEFAULT_PILLAR_H) or 0) * (rockPrims and rockPrims.W or 0),
+            glowOn and "开" or "关",
+            pillarOn and ((rockPrims.BASE_N or 0) + (glowOn and (rockPrims.GLOW_N or 0) or 0)) or 2,
+            state.rockDrawn or 0, #(state.rocks or {})))
     end
     -- ★ 图层顺序日志：关卡构建完成时打一次完整层序（见 M.logLayerOrder）
     M.logLayerOrder("关卡构建完成")
