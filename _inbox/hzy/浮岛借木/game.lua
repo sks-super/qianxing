@@ -782,6 +782,12 @@ function OnStart()
     state.view25d = paramSwitch("view25d", config.DEFAULT_VIEW_25D)
     state.waterGridLines = paramSwitch("waterGridLines", config.DEFAULT_WATER_GRID_LINES)
 
+    -- ★ 地图主题（第 34 批）：空中岛屿 / 海面
+    --   skyIsland = 1 / 空 / 0 → 空中岛屿（默认）；-1 → 回到原来的海面主题。
+    --   ⚠️ 写 "sky"/"sea" 字符串而不是布尔：下游要按主题分支（背景 / 岛底 / 顶面画法），
+    --     以后加第三种（夜空 / 熔岩）只需要再加一个字符串，不用改一堆 if。
+    state.theme = paramSwitch("skyIsland", config.DEFAULT_SKY_ISLAND) and "sky" or "sea"
+
     -- ★ 镜头放大（可选）：地块 / 树 / 石头 / 小人 / 旗子一律按倍数放大；海面与 HUD 不放大。
     --   0 / 空 = 没配 = 用 config 默认（DEFAULT_VIEW_ZOOM = 4.5 倍）；
     --   填 1 = 退回「整张地图正好一屏」的老样子。
@@ -796,10 +802,11 @@ function OnStart()
     --   只打一次；print 被裁掉就跳过。
     if type(print) == "function" then
         pcall(print, string.format(
-            "[浮岛借木] 参数 useArt=%s heroPixelOn=%s heroPrimsOn=%s view25d=%s zoom=%s | 元件 rect=%s container=%s player=%s prims=%s | 立绘图 S=%s W=%s A=%s D=%s",
+            "[浮岛借木] 参数 useArt=%s heroPixelOn=%s heroPrimsOn=%s view25d=%s zoom=%s theme=%s | 元件 rect=%s container=%s player=%s prims=%s | 立绘图 S=%s W=%s A=%s D=%s",
             tostring(state.useArt), tostring(state.heroPixelOn),
             tostring(state.heroPrSwitch),
             tostring(state.view25d), tostring(state.viewZoom),
+            tostring(state.theme),
             tostring(state.rectPrefabId), tostring(state.containerPrefabId),
             tostring(state.playerPrefabId), tostring(state.heroPrPrefabId),
             tostring(state.heroImageIds.S), tostring(state.heroImageIds.W),

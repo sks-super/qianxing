@@ -1,0 +1,23 @@
+--- a/浮岛借木/world.lua
++++ b/浮岛借木/world.lua
+@@ -1334,6 +1334,20 @@
+     return row and row[c] or nil
+ end
+ 
++-- ================================================================
++-- ★ 该格属于哪座岛（第 34 批；0 = 不属于任何岛）
++--   岛号直接取 imap 的值 —— 和 resetIsland / islandBox 用的是同一套编号。
++--   渲染层要靠它求「这座岛有多宽」，才能把岛底岩锥收成锥形。
++-- ================================================================
++function M.islandAtCell(c, r)
++    if not M.inBounds(c, r) then return 0 end
++    local md = M.maps and M.maps.MAPS and state.mapKey and M.maps.MAPS[state.mapKey]
++    if not md or type(md.imap) ~= "table" then return 0 end
++    local W = state.mapCols or 0
++    if W <= 0 then return 0 end
++    return md.imap[(r - 1) * W + (c - 1) + 1] or 0
++end
++
+ -- 这一格是不是「树桩位」（地表要画出一截树桩 / 画地表时高度要减一层）
+ function M.hasStump(c, r)
+     local at = state.stumpAt

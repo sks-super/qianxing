@@ -1,0 +1,445 @@
+--- a/浮岛借木/level.lua
++++ b/浮岛借木/level.lua
+@@ -41,7 +41,7 @@
+ local utils = require("utils")
+ local world = require("world")
+ 
+-M.BUILD = "b32"   -- 版本戳：真机日志里能一眼看出用的是哪一版文件（b32 = 第 32 批 去掉水面格子线）
++M.BUILD = "b34"   -- 版本戳：真机日志里能一眼看出用的是哪一版文件（b34 = 第 34 批 空中岛屿主题）
+ 
+ -- ★ 小人「图元笔触」数据（第 16 批）：来自「图元拟合拼图」四视角脚本，
+ --   已按游戏内 68px 尺度裁掉看不见的椭圆。没有这个模块就自动退回像素画/立绘。
+@@ -496,9 +496,16 @@
+     local cell = state.cellSize or 1
+     local centerY = state.viewCenterY or 0
+     local ix, iy = islandAnchor()
++    -- ★ 第 34 批：空中岛屿主题下把岛整体**往上挪**一截。
++    --   岛底还挂着一整块岩锥，海面主题那种「地面略低于屏幕中心」的构图会让岩锥
++    --   整片沉到底部 HUD 下面看不见，岛看起来就变成「贴在地上的一块板」，浮不起来。
++    --   ⚠️ 注意符号：控件 +y 向上，屏幕 y = 世界 y + camY；所以 camY 越大画面越**下**。
++    --     想让岛「看起来更高」必须把 camY 加回去（不是减）—— 第一版把符号写反了，
++    --     结果岛反而更低了。
++    local dy = (state.theme == "sky") and (cell * 0.60) or (-cell * 0.45)
+     if ix then
+         -- 岛的**视觉重心**：地面中心再往上抬一点（岛上的树 / 小人比地面高）
+-        return -ix, centerY - (iy + cell * 0.45)
++        return -ix, centerY - iy + dy
+     end
+     -- 站在水上：退回「小人钉中央」（原逻辑）
+     return -px, centerY - (py + cell * 0.5)
+@@ -748,7 +755,7 @@
+ -- ================================================================
+ local LAYER_LOG_SPEC = {
+     -- 自下而上 = 显示层序（与 ensureContainers / ensureGroundLayers 的创建顺序一致）
+-    { "containerBg",     "①海面底",      nil },
++    { "containerBg",     "①背景",        { { "skyCtrls", "skyUsed" } } },
+     { "containerSide",   "②地面·侧面",  { { "decoCtrls",    "decoUsed" } } },
+     { "containerRim",    "③地面·描边",  { { "rimCtrls",     "rimUsed" } } },
+     { "containerTile",   "④地面·顶面",  { { "landBaseCtrls", "landBaseUsed" },
+@@ -943,6 +950,139 @@
+ end
+ 
+ -- 海面底 + 水面网格线（与窗口无关，只在第一次 / 换图时铺）
++-- ================================================================
++-- ★ 十六进制色的插值（第 34 批）
++--   天空渐变要的是「两个色之间连续过渡」，而调色板存的是 "RRGGBB" 字符串；
++--   引擎的 Color 对象在不同版本上取 r/g/b 字段的方式不一致（有的要 /255），
++--   所以这里直接当字符串解析，不碰 Color —— 纯数字运算，模拟器与真机结果一致。
++-- ================================================================
++local function hex2rgb(h)
++    local s = tostring(h or "FFFFFF"):gsub("#", "")
++    if #s ~= 6 then return 255, 255, 255 end
++    return tonumber(s:sub(1, 2), 16) or 0,
++           tonumber(s:sub(3, 4), 16) or 0,
++           tonumber(s:sub(5, 6), 16) or 0
++end
++
++local function rgb2hex(r, g, b)
++    local function q(v)
++        v = math.floor(math.max(0, math.min(255, (tonumber(v) or 0) + 0.5)))
++        return string.format("%02X", v)
++    end
++    return q(r) .. q(g) .. q(b)
++end
++
++-- 两色插值（t = 0 → a，t = 1 → b）
++local function mixHex(a, b, t)
++    local ar, ag, ab = hex2rgb(a)
++    local br, bg, bb = hex2rgb(b)
++    t = math.max(0, math.min(1, tonumber(t) or 0))
++    return rgb2hex(ar + (br - ar) * t, ag + (bg - ag) * t, ab + (bb - ab) * t)
++end
++
++-- 天空竖直渐变：t = 0（屏幕顶）→ 1（屏幕底）
++--   色标是「参考图竖直扫描」的实测结果，见 config.PALETTE_SKY 的说明。
++local SKY_STOPS = {
++    { 0.00, "skyTop" },
++    { 0.14, "skyHigh" },
++    { 0.34, "skyMid" },
++    { 0.52, "skyLow" },
++    { 0.66, "skyHorizon" },
++    { 1.00, "skyHorizon" },
++}
++
++local function skyColorAt(palette, t)
++    local n = #SKY_STOPS
++    local prev = SKY_STOPS[1]
++    if t <= prev[1] then return palette[prev[2]] or "FFFFFF" end
++    for i = 2, n do
++        local cur = SKY_STOPS[i]
++        if t <= cur[1] then
++            local span = cur[1] - prev[1]
++            local k = (span > 0) and ((t - prev[1]) / span) or 0
++            return mixHex(palette[prev[2]] or "FFFFFF", palette[cur[2]] or "FFFFFF", k)
++        end
++        prev = cur
++    end
++    return palette[prev[2]] or "FFFFFF"
++end
++
++-- ================================================================
++-- ★ 天空 + 云（第 34 批 · 空中岛屿主题）
++--
++--   画在 containerBg 上 —— 这个容器**不受镜头平移影响**（applyCamera 只动
++--   containerGround / containerWorld / containerFx），所以天空天然是一块
++--   「背景板」：在岛内走动时画面本来就不动，云不跟着移看不出问题；
++--   而云在天上，本来也不该和地面一起平移。
++--
++--   ★ 为什么全部是矩形、还要分「横带」：
++--     真机上没有渐变控件，也没有可用的椭圆图元（100002 只是模拟器的代理，
++--     见 heroPrims 那批踩的坑）—— 渐变只能靠 N 条 1 像素级色差的横带拼；
++--     云只能靠「由宽到窄的一摞白矩形」堆出蓬松的土丘轮廓，再在下面压一条
++--     冷灰蓝的暗边，才有立体感。
++--
++--   ★ 云的位置用**固定种子的伪随机**：buildTerrain 每换一次窗口就重铺一次天空，
++--     用 math.random 的话云会随机跳位置 —— 玩家看到的是「云在抖」。
++--     固定种子 = 同一张画布下每次都摆在同一处。
++-- ================================================================
++local function buildSky(palette)
++    local parent = state.containerBg or state.containerWorld
++    local rect = rectSlot()
++    local cw = state.canvasW or config.DEFAULT_VIEW_WIDTH
++    local ch = state.canvasH or config.DEFAULT_VIEW_HEIGHT
++    local top = ch / 2                      -- 屏幕坐标原点在宿主中心，y 向上为正
++    local si = 1
++
++    -- ① 天空渐变（横带）
++    local n = math.max(4, math.floor(tonumber(config.DEFAULT_SKY_BANDS) or 20))
++    local bandH = ch / n
++    for i = 0, n - 1 do
++        local t = (i + 0.5) / n
++        si = paint(state.skyCtrls, si, parent, rect,
++                   0, top - (i + 0.5) * bandH,
++                   cw + 16, bandH + 2, skyColorAt(palette, t), 255, 0)
++    end
++
++    -- ② 云
++    local count = math.max(0, math.floor(tonumber(config.DEFAULT_SKY_CLOUD_COUNT) or 6))
++    local cloudHex = palette.cloud or "FFFFFF"
++    local warmHex  = palette.cloudWarm or cloudHex
++    local shadeHex = palette.cloudShade or "B7C8D6"
++    local seed = 20261026
++    local function rnd()
++        seed = (seed * 1103515245 + 12345) % 2147483648
++        return seed / 2147483648
++    end
++
++    local puffH = ch * 0.038
++    for _ = 1, count do
++        local w = cw * (0.15 + rnd() * 0.24)
++        local x = (rnd() - 0.5) * (cw + w)
++        local y = -ch * (0.06 + rnd() * 0.34)          -- 屏幕下半部
++        local puffs = 4 + math.floor(rnd() * 3)        -- 4~6 层
++        for p = 1, puffs do
++            local f = 1 - (p - 1) / puffs              -- 底层最宽，往上收
++            local pw = w * (0.34 + 0.66 * f)
++            local py = y + (p - 1) * puffH * 0.62
++            si = paint(state.skyCtrls, si, parent, rect,
++                       x, py, pw, puffH, (p == 1) and warmHex or cloudHex, 244, 0)
++        end
++        -- 云团下沿的冷暗边：一条淡灰蓝，把「云底」压出来（否则白压白糊成一片）
++        si = paint(state.skyCtrls, si, parent, rect,
++                   x, y - puffH * 0.42, w * 0.92, puffH * 0.30, shadeHex, 120, 0)
++    end
++
++    -- ③ 屏幕最底下那一条「云海」（参考图整片下半部都是云）
++    for k = 1, 3 do
++        local wid = cw * (1.25 - 0.12 * (k - 1))
++        si = paint(state.skyCtrls, si, parent, rect,
++                   0, -ch * 0.5 + (k - 1) * puffH * 0.95,
++                   wid, puffH * 1.6, cloudHex, 250, 0)
++    end
++
++    return si
++end
++
+ local function buildSea(palette)
+     -- ★ 地形层（第 21 批）：网格线 / 侧面 / 描边 / 顶面全挂在 containerGround 的三层
+     --   子容器里，它们比 containerWorld 先创建 → 永远在物体与小人之下。
+@@ -952,15 +1092,33 @@
+     local rect = rectSlot()
+     local waterSlot = makeSlot(state.waterPrefabId)
+ 
+-    -- ① 海面整屏底（bg 层，跨关卡复用，只在第一次创建）
+-    if not state.bgCtrl then
+-        local bg = utils.createControl(waterSlot.prefab, 0, 0,
+-            (state.canvasW or 800) + 800, (state.canvasH or 600) + 800, nil, state.containerBg)
+-        state.bgCtrlArt = (bg ~= nil) and waterSlot.art
+-        state.bgCtrl = bg
+-    end
+-    if state.bgCtrl and not state.bgCtrlArt then
+-        utils.setAlpha(state.bgCtrl, palette.water, 255)   -- 回退：通用矩形 + 调色板
++    -- ① 背景（★ 第 34 批：按主题分两支）
++    --
++    --   空中岛屿：「水面」这个底控件本身就是深青色的整屏大矩形，如果留着它
++    --   会把天空整片盖掉 —— 所以这里**直接隐藏**它，改由 buildSky 铺天空与云。
++    --   反过来切回海面主题时，必须把天空池清空（poolTrim 到 0）并让水面底重新可见，
++    --   否则会看到「天空压在海面上」这种半新半旧的状态。
++    local sky = (state.theme == "sky")
++    if sky then
++        if state.bgCtrl then utils.setVisible(state.bgCtrl, false) end
++        local si = buildSky(palette)
++        poolTrim(state.skyCtrls, si - 1)
++        state.skyUsed = si - 1
++    else
++        poolTrim(state.skyCtrls, 0)
++        state.skyUsed = 0
++        if not state.bgCtrl then
++            local bg = utils.createControl(waterSlot.prefab, 0, 0,
++                (state.canvasW or 800) + 800, (state.canvasH or 600) + 800, nil, state.containerBg)
++            state.bgCtrlArt = (bg ~= nil) and waterSlot.art
++            state.bgCtrl = bg
++        end
++        if state.bgCtrl then
++            utils.setVisible(state.bgCtrl, true)
++            if not state.bgCtrlArt then
++                utils.setAlpha(state.bgCtrl, palette.water, 255)   -- 回退：通用矩形 + 调色板
++            end
++        end
+     end
+ 
+     -- ② 水面细网格 —— ★ 第 32 批：用户要求「去掉地图上的格子线」，默认整段不画。
+@@ -968,11 +1126,13 @@
+     --    ← 默认 `config.DEFAULT_WATER_GRID_LINES`。关掉时**不建任何控件**，
+     --    所以不会留下 N 个 alpha=0 的空矩形白占池子。
+     --    ⚠️ 旧逻辑「关 = 画深色棋盘」已经废弃：关掉就是干净海面，不是换一种网格。
++    --    ★ 第 34 批：空中岛屿主题下根本没有水面，这段直接跳过
++    --      （水面格线画在 depthKey(BAND_GRID) 上，会浮在天空前面，一眼假）。
+     local di = 1
+     local gridOn = state.waterGridLines
+     if gridOn == nil then gridOn = (tonumber(config.DEFAULT_WATER_GRID_LINES) or 0) ~= 0 end
+     local alpha = tonumber(config.DEFAULT_WATER_LINE_ALPHA) or 0
+-    if gridOn and alpha > 0 then
++    if (not sky) and gridOn and alpha > 0 then
+         local lw = math.max(1, math.floor(cell * 0.035))
+         local over = math.ceil((state.canvasW or config.DEFAULT_VIEW_WIDTH) / (2 * cell)) + 2
+         local overY = math.ceil((state.canvasH or config.DEFAULT_VIEW_HEIGHT) / (2 * cell)) + 2
+@@ -1005,14 +1165,29 @@
+     local parentRim = state.containerRim or parent
+     local parentTile = state.containerTile or parent
+     local cell = state.cellSize
+-    local rim = cell * (config.DEFAULT_TILE_RIM_RATIO or 0.17)
++    -- ★ 第 34 批：主题分支要先算出来 —— 岛缘窄边的宽度就跟着主题走
++    local sky = (state.theme == "sky")
++    local rim = cell * (sky and (config.DEFAULT_SKY_RIM_RATIO or 0.10)
++                             or (config.DEFAULT_TILE_RIM_RATIO or 0.17))
+     local sideH = cell * (config.DEFAULT_TILE_SIDE_RATIO or 0.30)
+     local cliffMax = cell * (config.DEFAULT_CLIFF_MAX or 2.1)
+     local zc = cell * zVis()
+     local rect = rectSlot()
+     local landSlot = makeSlot(state.landPrefabId)
+-    local landArt = slotUsesArt(state.terrainCtrls, parentTile, landSlot)
++    local landArt = (not sky) and slotUsesArt(state.terrainCtrls, parentTile, landSlot)
++    -- ★★ 关键：顶面**必须换槽位**，不能只把 landArt 设成 false。
++    --   原因是 paint() 只给「非素材控件」染色（`if not item.art and hex`）——
++    --   而一个控件是不是素材，取决于**建它时用的槽位**，不是 landArt 这个布尔。
++    --   第 34 批第一版就栽在这：landArt=false 走进 else 分支、hex 传了 palette.land，
++    --   但槽位还是 landSlot → 建出来的是素材控件 → 颜色被忽略，
++    --   顶面仍然是草地贴图那只绿色（真机同理会一直是草纹，改配色根本看不出）。
++    local tileSlot = sky and rectSlot() or landSlot
+     local fit = (config.DEFAULT_ART_FIT or {}).land or { w = 1, h = 1, dy = 0 }
++    -- 空中岛屿的三个几何参数（只在 sky 主题下用）
++    local skyDepth = cell * (tonumber(config.DEFAULT_SKY_DEPTH) or 2.6)
++    local skySegs = math.max(1, math.floor(tonumber(config.DEFAULT_SKY_SEGMENTS) or 3))
++    local gridW = math.max(1, math.floor(cell * 0.030))
++    local gridAlpha = tonumber(config.DEFAULT_SKY_GRID_ALPHA) or 0
+     -- ★ 第 31 批：**沙滩带 / 侧面 / 顶面一律收在格子里面，外沿正好压在格线上**。
+     --   用户连报三轮「岛的边缘要和格子线（黑线）对齐、边框不能超过黑线」，
+     --   到这一版才把三个越线源全部堵住：
+@@ -1028,6 +1203,11 @@
+     local ti = 1
+     local bi = 1
+ 
++    -- ★ 第 34 批：岛底岩锥的登记表（岛号 → 最低沿 / 列范围）
++    --   skyConeIds 保序（pairs 的遍历顺序不保证 → 排序会随帧变，虽然画出来一样，
++    --   但控件占位会跳，调试时很容易误判成「图层在动」）。
++    local skyConeMap, skyConeIds = {}, {}
++
+     -- ★ 地形分**两遍**铺（第 21 批）：① 全部侧面 + 岛缘描边 → ② 全部草地顶面。
+     --
+     --   分两遍 + 分三层容器，等于把「草地永远盖住侧面和描边」写死成结构：
+@@ -1050,8 +1230,11 @@
+                 local dh = drawH(c, r) - drawH(c, r + 1)
+                 local wh = sideH + math.max(0, dh) * zc
+                 if wh > cliffMax then wh = cliffMax end
++                -- ★ 第 34 批：空中岛屿主题下这一圈读作「地壳」—— 用最亮的那档奶白，
++                --   往下才是逐渐变灰的岩锥（见③）。海面主题仍然是原来的土色。
++                local crustHex = sky and (palette.rockWarm or palette.soil) or palette.soil
+                 di = paint(state.decoCtrls, di, parent, rect, cx, bottom - wh / 2,
+-                           cell, wh, palette.soil, 255, depthKey(BAND_TILE, r, 0.1))
++                           cell, wh, crustHex, 255, depthKey(BAND_TILE, r, 0.1))
+                 -- ② 临外海的沙滩描边（第 31 批：**整条落在格子里面**，外沿 = 格线）
+                 --
+                 --   ★ 判定的邻格必须是**外海**（world.isOuterWater），不是「不是陆地」。
+@@ -1083,6 +1266,88 @@
+                                    bw, bh, palette.sand, 255, depthKey(BAND_TILE, r, 0.4))
+                     end
+                 end
++
++                -- ③ 岛底岩锥的「采样」：这里只**登记**每座岛的列范围与最低沿，
++                --   真正的岩锥在下面单独一趟画（一座岛画一次，而不是每格画一次）。
++                --   ★ 为什么不在这里逐格画：逐格画只能让每一列的下垂深度不同，
++                --     宽度永远是整格 —— 3~4 格宽的小岛看起来就是几根并排的柱子，
++                --     不像参考图那块「越往下越尖」的岩体。逐岛画才能让**宽度也收窄**。
++                --   ★ 列范围要按**所有**陆格统计（不是只统计南沿那一行）：
++                --     南沿往往比岛顶窄（岛是上宽下窄的），只按南沿算会让锥体比岛还窄。
++                --   ★ 也别用 imap 的 bbox：imap 会把岛内部的空洞 / 边缘也算进同一座岛，
++                --     拿它当宽度会让岩锥比草地顶面还宽（第 34 批第一版就是这个问题）。
++                if sky then
++                    local id = world.islandAtCell(c, r)
++                    if id and id > 0 then
++                        local rec = skyConeMap[id]
++                        if not rec then
++                            rec = { y = nil, r = r, c0 = c, c1 = c }
++                            skyConeMap[id] = rec
++                            skyConeIds[#skyConeIds + 1] = id
++                        end
++                        if c < rec.c0 then rec.c0 = c end
++                        if c > rec.c1 then rec.c1 = c end
++                        if not world.landAt(c, r + 1) then
++                            local yb = bottom - wh            -- 这一列地壳的下沿
++                            if (not rec.y) or yb < rec.y then
++                                rec.y = yb
++                                rec.r = r
++                            end
++                        end
++                    end
++                end
++            end
++        end
++    end
++
++    -- ③ 岛底岩锥（★ 第 34 批 · 空中岛屿主题）
++    --
++    --   参考图里的岛不是「一格厚的板」，而是一整块悬在空中的岩石：顶上一片平草地，
++    --   下面越收越窄、最后收成一个尖。2.5D 正交视角做不出透视，但剪影完全画得出来 ——
++    --   把它当成**一摞从宽到窄的横带**：
++    --
++    --     k=0（贴着地壳）宽度 = 整座岛的宽      k=1（锥尖）宽度 = 28%
++    --     每一带的竖向高度 = skyDepth / skySegments，颜色自上而下由亮到暗
++    --
++    --   ★ 一座岛**只画一次**（按 imap 岛号去重），所以控件数是「岛数 × 段数」，
++    --     不是「格数 × 段数」—— 一屏里 5 座岛 × 3 段 = 15 个控件，很便宜。
++    --   ★ 锥体的左右边界靠岛的真实 bbox（imap 求出来的 c0..c1）：越宽的岛锥越宽。
++    for _i = 1, #skyConeIds do
++        local id = skyConeIds[_i]
++        local rec = skyConeMap[id]
++        if rec and rec.y then
++            local wid = math.max(cell, (rec.c1 - rec.c0 + 1) * cell) * 0.96
++            local xMid = (cellCenterX(rec.c0) + cellCenterX(rec.c1)) / 2
++            local tip = tonumber(config.DEFAULT_SKY_TIP) or 0.26
++            local segH = skyDepth / skySegs
++            local yCur = rec.y
++            for sg = 1, skySegs do
++                local kMid = ((sg - 1) + 0.5) / skySegs
++                local wSeg = wid * (1 - (1 - tip) * kMid)
++                local k = (skySegs > 1) and ((sg - 1) / (skySegs - 1)) or 0
++                local hex
++                if k <= 0.5 then
++                    hex = mixHex(palette.rockWarm or palette.soil, palette.soil, k * 2)
++                else
++                    hex = mixHex(palette.soil, palette.rockShade or palette.soil,
++                                 (k - 0.5) * 2)
++                end
++                di = paint(state.decoCtrls, di, parent, rect,
++                           xMid, yCur - segH / 2, wSeg, segH + 1, hex, 255,
++                           depthKey(BAND_TILE, rec.r, 0.12))
++                -- 竖向凿痕：参考图的岩面是一道道竖的凹槽，不是一片平的奶白。
++                --   横带只表达「上亮下暗」，再叠两条淡灰竖条才读得出「这是一块岩石」。
++                --   ★ 必须**按本段自己的宽度**摆位（±25%·wSeg），不能按整岛宽度摆 ——
++                --     锥尖那一段只有岛宽的 1/5，按整岛宽度摆的话竖条会飘到天空里。
++                local fluteW = math.max(1, wSeg * 0.09)
++                for _f = 1, 2 do
++                    local fx = xMid + wSeg * (-0.25 + 0.50 * (_f - 1))
++                    di = paint(state.decoCtrls, di, parent, rect,
++                               fx, yCur - segH / 2, fluteW, segH + 1,
++                               palette.rockShade or palette.soil, 58,
++                               depthKey(BAND_TILE, rec.r, 0.13))
++                end
++                yCur = yCur - segH
+             end
+         end
+     end
+@@ -1093,6 +1358,13 @@
+     --     草地素材的内容只占画布的 87.9%，控件缩到正好一格之后内容只剩 0.879 格
+     --     → 格与格之间会露出 8px 的缝。这一层同色底把缝兜住，看起来仍是整片草地；
+     --     而岛的**外轮廓**仍然是严格的格子矩形（不再被素材控件撑出去）。
++    --
++    --   ★ 第 34 批（空中岛屿）：这里**刻意不用草地素材**，改成整格纯色，理由有两条：
++    --     ① 参考图的岛顶就是一片**平坦的亮黄绿**，没有草纹；素材那套绿色（#6DB03C）
++    --        压上去反而离参考图更远；
++    --     ② 用户要求「岛屿上有格子能分清角色在哪一格」——素材的草纹会把细格线
++    --        啃得看不清，纯色底 + 格线才是干净的「棋盘」。
++    --     海面主题不受影响，仍然照旧走素材。
+     for r = win.r0, win.r1 do
+         for c = win.c0, win.c1 do
+             if world.landAt(c, r) then
+@@ -1108,11 +1380,37 @@
+                                depthKey(BAND_TILE, r, 0.6))
+                 else
+                     local hex = palette.land
+-                    if (c + r) % 2 == 0 then hex = palette.landDark end
+-                    ti = paint(state.terrainCtrls, ti, parentTile, landSlot,
++                    if (not sky) and (c + r) % 2 == 0 then hex = palette.landDark end
++                    ti = paint(state.terrainCtrls, ti, parentTile, tileSlot,
+                                cx, cy, cell, cell, hex, 255,
+                                depthKey(BAND_TILE, r, 0.6))
+                 end
++
++                -- ③ 岛面格线（★ 第 34 批 · 空中岛屿主题专属）
++                --
++                --   画在 **containerRim**（顶面之上、树桩之下），所以永远压在草地
++                --   顶面之上、又不会盖住树 / 石头 / 小人。
++                --
++                --   ★ 只在「两格都是陆地」的公共边上画线：
++                --     岛缘那一条已经有一圈米白窄边（rim）当边界了，再压一条深绿格线
++                --     会和窄边糊成一条脏边；这样每个格子都被框住，而整岛的外轮廓
++                --     仍然是那条干净的米白窄边。
++                --   ★ 每格最多两条（右 + 下）：线的宽度是格宽的 3%（≈3px），
++                --     太细看不见、太粗像瓷砖缝，3% 在同色草地上刚好读得出。
++                if sky and gridAlpha > 0 then
++                    if world.landAt(c + 1, r) then
++                        ri = paint(state.rimCtrls, ri, parentRim, rect,
++                                   cx + cell / 2, cy, gridW, cell,
++                                   palette.tileGrid, gridAlpha,
++                                   depthKey(BAND_TILE, r, 0.45))
++                    end
++                    if world.landAt(c, r + 1) then
++                        ri = paint(state.rimCtrls, ri, parentRim, rect,
++                                   cx, cy - cell / 2, cell, gridW,
++                                   palette.tileGrid, gridAlpha,
++                                   depthKey(BAND_TILE, r, 0.46))
++                    end
++                end
+             end
+         end
+     end
+@@ -2367,6 +2665,8 @@
+     lastRestackSig = nil          -- ★ 换关后第一次 restackWorld 必定要打一次层序日志
+     poolTrim(state.terrainCtrls, 0)
+     poolTrim(state.landBaseCtrls, 0)   -- ★ 第 31 批：顶面底色池
++    poolTrim(state.skyCtrls, 0)        -- ★ 第 34 批：天空 / 云
++    state.skyUsed = 0
+     poolTrim(state.decoCtrls, 0)
+     poolTrim(state.rimCtrls, 0)
+     poolTrim(state.shadowCtrls, 0)

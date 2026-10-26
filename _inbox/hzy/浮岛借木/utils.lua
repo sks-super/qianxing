@@ -41,6 +41,12 @@ end
 function M.resolvePalette(data)
     local out = {}
     for k, v in pairs(config.DEFAULT_PALETTE or {}) do out[k] = v end
+    -- ★ 第 34 批：空中岛屿主题整体换一套地貌色（天空 / 草地 / 岩石）。
+    --   放在 DEFAULT 之后、地图主题之前 —— 于是「雪原 / 洼地」这类按地图覆盖的主题
+    --   仍然优先级更高（它们覆盖的是同一批 key），不会被这里盖掉。
+    if state.theme == "sky" then
+        for k, v in pairs(config.PALETTE_SKY or {}) do out[k] = v end
+    end
     if type(data) == "table" and type(data.palette) == "table" then
         for k, v in pairs(data.palette) do out[k] = v end
     end

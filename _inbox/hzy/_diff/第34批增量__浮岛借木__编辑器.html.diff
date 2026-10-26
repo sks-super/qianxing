@@ -1,0 +1,233 @@
+--- a/浮岛借木/编辑器.html
++++ b/浮岛借木/编辑器.html
+@@ -157,6 +157,15 @@
+     obj_shadow_alpha: 0,
+     water_grid_lines: 0,
+     water_line_alpha: 70,
++    // ---- 空中岛屿主题（★ 第 34 批，与 config.lua 的 DEFAULT_SKY_* 逐项一致）----
++    sky_island: 1,          // 1 = 空中岛屿（蓝天白云 + 奶白岩锥 + 黄绿草地格子）；0 = 海面主题
++    sky_depth: 1.5,         // 岛底岩锥总高度（格）
++    sky_rim_ratio: 0.10,    // 空中岛屿的岛缘窄边（比海面主题细一半）
++    sky_tip: 0.18,          // 岩锥尖端宽度占岛宽的比例
++    sky_segments: 5,        // 岩锥纵向分段
++    sky_grid_alpha: 170,    // 岛面格线不透明度
++    sky_cloud_count: 6,     // 云团数量
++    sky_bands: 48,          // 天空渐变横带数
+     hint_wrap: 26,
+     hud_title_size: 30,
+     hud_info_size: 22,
+@@ -189,6 +198,25 @@
+     hud: "F4F8FF", hudBar: "0B1A20", hint: "DFF0FF", ripple: "FFFFFF", dust: "E9DCBE",
+ };
+ 
++// ★ 空中岛屿配色镜像：与 config.lua 的 PALETTE_SKY 保持一致（第 34 批）
++const PALETTE_SKY = {
++    skyTop: "0162A9", skyHigh: "0888CD", skyMid: "5FCAF5",
++    skyLow: "CFEFFC", skyHorizon: "E3F3FB",
++    cloud: "FFFFFF", cloudWarm: "FBFBEF", cloudShade: "B7C8D6",
++    land: "E0F352", tileGrid: "B9CE3A", sand: "F4F0CF",
++    soil: "EFEAD8", rockWarm: "F7F3DA", rockShade: "B9BFAE",
++    water: "BEE4F5", waterDeep: "A9D8EE", waterShade: "8FB6C9",
++    shadowLand: "9BA84A",
++};
++
++// 当前生效的配色：空中岛屿主题覆盖在默认配色之上（和 utils.resolvePalette 同序）
++const THEME = {
++    get sky() { return DEFAULTS.sky_island > 0; },
++    get pal() {
++        return this.sky ? Object.assign({}, PALETTE, PALETTE_SKY) : PALETTE;
++    },
++};
++
+ const DEFAULT_COLS = 22, DEFAULT_ROWS = 13;
+ 
+ // ★ 初始关卡：与 config.lua 的 M.LEVELS 逐项一致（编辑器打开即可看到真实关卡）
+@@ -440,7 +468,7 @@
+ function shadow(c, r, wCells, alpha) {
+     if (alpha <= 0) return;
+     const w = wCells * CELL, h = 0.13 * CELL;
+-    rect(cx(c) - w / 2, footY(r) - h / 2, w, h, PALETTE.shadowLand, alpha / 255);
++    rect(cx(c) - w / 2, footY(r) - h / 2, w, h, THEME.pal.shadowLand, alpha / 255);
+ }
+ // ★ 以「脚线为 0、中心抬高 offCells 格」画一块 wCells × hCells 的矩形（与 level.lua 同源）
+ //   dxCells = 相对格中心的横向偏移（格）。所有物体的几何都用它表达，改一处两边一起改。
+@@ -455,22 +483,86 @@
+ //   状态（正面推出来的），所以这里只需要躺姿这一套。
+ const LOG_THICK = 0.50, LOG_LEN = 1.00, LOG_CAP = 0.09;
+ 
++// ★ 空中岛屿（第 34 批）：与 level.lua 的 hex2rgb / rgb2hex / mixHex / SKY_STOPS 同源
++function hex2rgb(h) {
++    const s = String(h || "FFFFFF").replace("#", "");
++    return [parseInt(s.slice(0, 2), 16) || 0,
++            parseInt(s.slice(2, 4), 16) || 0,
++            parseInt(s.slice(4, 6), 16) || 0];
++}
++function mixHex(a, b, t) {
++    const A = hex2rgb(a), B = hex2rgb(b);
++    t = Math.max(0, Math.min(1, t));
++    const q = v => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, "0").toUpperCase();
++    return q(A[0] + (B[0] - A[0]) * t) + q(A[1] + (B[1] - A[1]) * t) + q(A[2] + (B[2] - A[2]) * t);
++}
++const SKY_STOPS = [
++    [0.00, "skyTop"], [0.14, "skyHigh"], [0.34, "skyMid"],
++    [0.52, "skyLow"], [0.66, "skyHorizon"], [1.00, "skyHorizon"],
++];
++function skyColorAt(P, t) {
++    let prev = SKY_STOPS[0];
++    if (t <= prev[0]) return P[prev[1]];
++    for (let i = 1; i < SKY_STOPS.length; i++) {
++        const cur = SKY_STOPS[i];
++        if (t <= cur[0]) {
++            const span = cur[0] - prev[0];
++            const k = span > 0 ? (t - prev[0]) / span : 0;
++            return mixHex(P[prev[1]], P[cur[1]], k);
++        }
++        prev = cur;
++    }
++    return P[prev[1]];
++}
++
++// 天空 + 云（屏幕空间固定；云用固定种子，重绘时不会跳位置）
++function drawSkyBackground(P) {
++    const W = canvas.width, H = canvas.height;
++    const n = Math.max(4, Math.floor(DEFAULTS.sky_bands));
++    const bandH = H / n;
++    for (let i = 0; i < n; i++)
++        rect(0, i * bandH, W + 16, bandH + 2, skyColorAt(P, (i + 0.5) / n), 1);
++
++    let seed = 20261026;
++    const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
++    const puffH = H * 0.038;
++    for (let k = 0; k < DEFAULTS.sky_cloud_count; k++) {
++        const w = W * (0.15 + rnd() * 0.24);
++        const x = (rnd() - 0.5) * (W + w);
++        const yc = H * (0.56 + rnd() * 0.34);              // 屏幕下半部
++        const puffs = 4 + Math.floor(rnd() * 3);
++        for (let p = 1; p <= puffs; p++) {
++            const f = 1 - (p - 1) / puffs;
++            const pw = w * (0.34 + 0.66 * f);
++            rect(x, yc - p * puffH * 0.62, pw, puffH, p === 1 ? P.cloudWarm : P.cloud, 0.96);
++        }
++        rect(x, yc - puffH * 0.42, w * 0.92, puffH * 0.30, P.cloudShade, 0.47);
++    }
++    for (let k = 1; k <= 3; k++)
++        rect(-W * 0.12, H - k * puffH * 0.95, W * (1.25 - 0.12 * (k - 1)), puffH * 1.6, P.cloud, 0.98);
++}
++
+ function draw() {
+     const lv = cur();
+     layout();
+     ctx.clearRect(0, 0, canvas.width, canvas.height);
+ 
+-    // ① 海面
+-    rect(0, 0, canvas.width, canvas.height, PALETTE.water, 1);
++    // ① 背景（★ 第 34 批：按主题分两支 —— 空中岛屿画天空，海面主题画海水）
++    const SKY = THEME.sky;
++    const P = THEME.pal;
++    if (SKY) drawSkyBackground(P);
++    else rect(0, 0, canvas.width, canvas.height, PALETTE.water, 1);
+     const V25 = DEFAULTS.view_25d > 0;
+-    const RIM = V25 ? DEFAULTS.tile_rim_ratio * CELL : DEFAULTS.coast_pad / 2;
++    const RIM = SKY ? DEFAULTS.sky_rim_ratio * CELL
++                    : (V25 ? DEFAULTS.tile_rim_ratio * CELL : DEFAULTS.coast_pad / 2);
+     const SIDE = V25 ? DEFAULTS.tile_side_ratio * CELL : 0;
+     const SHADOW = V25 ? DEFAULTS.tile_shadow_alpha / 255 : 0;
+     const OBJ_SHADOW = DEFAULTS.obj_shadow_alpha;
+ 
+     // ② 水面网格 —— ★ 第 32 批：默认 `water_grid_lines = 0` 完全不画（纯海面）。
+     //    旧逻辑的 else 分支（水下深色棋盘）已删除：关掉就是干净海面，不是换一种网格。
+-    if (V25 && DEFAULTS.water_grid_lines > 0) {
++    //    ★ 第 34 批：空中岛屿主题下没有水面，整段跳过。
++    if (!SKY && V25 && DEFAULTS.water_grid_lines > 0) {
+         // 细网格线（屏幕水平/垂直），铺满整块画布
+         const lw = Math.max(1, Math.floor(CELL * 0.035));
+         const a = DEFAULTS.water_line_alpha / 255;
+@@ -480,6 +572,64 @@
+         for (let r = -2; r <= rowsOf(lv) + 2; r++)
+             rect(0, gy0 + r * CELL - lw / 2, canvas.width, lw, PALETTE.waterLine, a);
+     }
++
++    if (SKY) {
++        // ★ 空中岛屿（第 34 批）：
++        //   地壳(奶白，一格厚) → 岛心往下垂的岩锥(分 3 段由亮到暗) → 米白窄边 → 纯色顶面 + 格线
++        //   ⚠️ 预览是**简化版**：编辑器里的关卡是字符画、没有 imap 岛号，
++        //      岩锥的收窄只能按「本行的连续陆地段」近似（真机按整座岛的 bbox 算）。
++        const DEPTH = DEFAULTS.sky_depth * CELL;
++        const SEGS = Math.max(1, Math.floor(DEFAULTS.sky_segments));
++        const GRID_A = DEFAULTS.sky_grid_alpha / 255;
++        const GW = Math.max(1, Math.floor(CELL * 0.030));
++        // ③-a 地壳 + 岩锥
++        for (let r = 1; r <= rowsOf(lv); r++)
++            for (let c = 1; c <= colsOf(lv); c++) {
++                if (!isLand(lv, c, r)) continue;
++                const x = cx(c), bottom = cy(r) + CELL / 2;
++                rect(x - CELL / 2, bottom, CELL, SIDE, P.rockWarm, 1);
++                if (isLand(lv, c, r + 1)) continue;       // 只在岛的最下沿挂岩锥
++                let a = c, b = c;
++                while (isLand(lv, a - 1, r)) a--;
++                while (isLand(lv, b + 1, r)) b++;
++                const mid = (a + b) / 2, half = Math.max((b - a) / 2, 0.5);
++                const u = (c - mid) / (half + 0.6);
++                const tDepth = Math.max(1 - u * u, 0.08);
++                const segH = (DEPTH * tDepth) / SEGS;
++                const TIP = DEFAULTS.sky_tip;
++                let yCur = bottom + SIDE;
++                for (let sg = 1; sg <= SEGS; sg++) {
++                    const k = SEGS > 1 ? (sg - 1) / (SEGS - 1) : 0;
++                    const kMid = ((sg - 1) + 0.5) / SEGS;
++                    const wSeg = CELL * (1 - (1 - TIP) * kMid) * 0.96;
++                    const hex = k <= 0.5 ? mixHex(P.rockWarm, P.soil, k * 2)
++                                         : mixHex(P.soil, P.rockShade, (k - 0.5) * 2);
++                    rect(x - wSeg / 2, yCur, wSeg, segH + 1, hex, 1);
++                    yCur += segH;
++                }
++            }
++        // ③-b 米白窄边（只画临水的一侧，整条落在格子里面 —— 与 level.lua 第 31/34 批一致）
++        for (let r = 1; r <= rowsOf(lv); r++)
++            for (let c = 1; c <= colsOf(lv); c++) {
++                if (!isLand(lv, c, r)) continue;
++                const x = cx(c), y = cy(r);
++                if (!isLand(lv, c, r - 1)) rect(x - CELL / 2, y - CELL / 2, CELL, RIM, P.sand, 1);
++                if (!isLand(lv, c, r + 1)) rect(x - CELL / 2, y + CELL / 2 - RIM, CELL, RIM, P.sand, 1);
++                if (!isLand(lv, c - 1, r)) rect(x - CELL / 2, y - CELL / 2, RIM, CELL, P.sand, 1);
++                if (!isLand(lv, c + 1, r)) rect(x + CELL / 2 - RIM, y - CELL / 2, RIM, CELL, P.sand, 1);
++            }
++        // ③-c 纯色顶面（不用草地素材）+ 岛面格线
++        for (let r = 1; r <= rowsOf(lv); r++)
++            for (let c = 1; c <= colsOf(lv); c++) {
++                if (!isLand(lv, c, r)) continue;
++                const x = cx(c), y = cy(r);
++                rect(x - CELL / 2, y - CELL / 2, CELL, CELL, P.land, 1);
++                if (GRID_A > 0) {
++                    if (isLand(lv, c + 1, r)) rect(x + CELL / 2 - GW / 2, y - CELL / 2, GW, CELL, P.tileGrid, GRID_A);
++                    if (isLand(lv, c, r + 1)) rect(x - CELL / 2, y + CELL / 2 - GW / 2, CELL, GW, P.tileGrid, GRID_A);
++                }
++            }
++    } else {
+     // ③ 地块装饰趟：岛缘投影 → 侧面厚度 → 沙滩描边
+     //    （必须整趟画完再画顶面，否则岛内相邻格之间会露出描边，像带缝的地砖）
+     for (let r = 1; r <= rowsOf(lv); r++)
+@@ -489,18 +639,19 @@
+             if (V25 && SHADOW > 0) {
+                 const sh = SIDE * 0.5;
+                 rect(x - (CELL + RIM * 2 + 4) / 2, bottom + RIM + SIDE, CELL + RIM * 2 + 4, sh,
+-                     PALETTE.waterShade, SHADOW);
++                     P.waterShade, SHADOW);
+             }
+-            if (V25) rect(x - (CELL + RIM * 2) / 2, bottom + RIM, CELL + RIM * 2, SIDE, PALETTE.soil, 1);
++            if (V25) rect(x - (CELL + RIM * 2) / 2, bottom + RIM, CELL + RIM * 2, SIDE, P.soil, 1);
+             rect(x - CELL / 2 - RIM, cy(r) - CELL / 2 - RIM, CELL + RIM * 2, CELL + RIM * 2,
+-                 PALETTE.sand, 1);
++                 P.sand, 1);
+         }
+     // ④ 草地顶面
+     for (let r = 1; r <= rowsOf(lv); r++)
+         for (let c = 1; c <= colsOf(lv); c++)
+             if (isLand(lv, c, r))
+                 rect(cx(c) - CELL / 2, cy(r) - CELL / 2, CELL, CELL,
+-                     (c + r) % 2 === 0 ? PALETTE.landDark : PALETTE.land, 1);
++                     (c + r) % 2 === 0 ? P.landDark : P.land, 1);
++    }
+ 
+     // ⑤ 物体（顺序与 level.lua 一致：树根 → 倒下的树 → 石头 → 树 → 终点旗 → 小人）
+     //    一律站在「脚线」上，并带一块接触阴影（2.5D 的贴地感）
