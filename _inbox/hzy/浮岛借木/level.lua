@@ -41,12 +41,16 @@ local config = require("config")
 local utils = require("utils")
 local world = require("world")
 
-M.BUILD = "b40"   -- 版本戳：真机日志里能一眼看出用的是哪一版文件
-                  --   b39 = 第 39 批：侧视远臂钉在躯干上（撤掉第 38 批的飘带判定）+ 步时/转身略快
+M.BUILD = "b41"   -- 版本戳：真机日志里能一眼看出用的是哪一版文件
+                  --   b41 = 第 41 批：石柱边缘磨平（竖条层定轮廓 + 细节笔裁进轮廓）
                   --   b40 = 第 40 批：石头换成「图腾柱」（rockPrims.lua 的图元逐笔画）
+                  --   b39 = 第 39 批：侧视远臂钉在躯干上（撤掉第 38 批的飘带判定）+ 步时/转身略快
 
 -- ★ 石头用的「图腾柱」图元数据（第 40 批）
 --   用户导出的「超限素材组」脚本 1043 个旋转图元 → 归一到「高 = 1」+ 覆盖率贪心精简。
+--   第 41 批起最前面还有一段**竖条层**（M.SIL_N 条）：它按「每行左右边界」铺出柱子的
+--   外轮廓，边缘永远是直的 —— 细节笔都被裁到轮廓往里 1 格，不会再把角伸出去。
+--   所以 BASE 的前 SIL_N 笔必须在最底下先画，别打乱顺序。
 --   ★ 没有这个模块就自动退回旧石块（两块纯色矩形），**不会白屏**；
 --     真机若看到石头还是老样子，先看自检日志里的「石头=」那一段。
 --   ⚠️ 新加的 .lua 必须先在「客户端脚本资源管理器」里建好映射才会被打包 ——
@@ -3258,10 +3262,12 @@ function M.build(data, mapKey)
         local glowOn = state.rockPillarGlow
         if glowOn == nil then glowOn = (tonumber(config.DEFAULT_PILLAR_GLOW) or 1) > 0 end
         pcall(print, string.format(
-            "[浮岛借木] 石头=%s 柱子高=%.2f格 宽=%.2f格 辉光=%s 笔/根=%d 可视窗内=%d/%d 根",
+            "[浮岛借木] 石头=%s 柱子高=%.2f格 柱身宽=%.2f格 竖条=%d 辉光=%s 笔/根=%d 可视窗内=%d/%d 根",
             pillarOn and "图腾柱(图元笔触)" or (rockPrims and "旧石块(rockPillar=-1)" or "旧石块(rockPrims 未加载)"),
             tonumber(config.DEFAULT_PILLAR_H) or 0,
-            (tonumber(config.DEFAULT_PILLAR_H) or 0) * (rockPrims and rockPrims.W or 0),
+            -- 柱身实测宽 = rockPrims.W 里扣掉两侧边缘笔触（≈0.26）；W 本身是最外沿，别当柱宽
+            (tonumber(config.DEFAULT_PILLAR_H) or 0) * (rockPrims and rockPrims.BODY_W or rockPrims and rockPrims.W or 0),
+            (rockPrims and rockPrims.SIL_N) or 0,
             glowOn and "开" or "关",
             pillarOn and ((rockPrims.BASE_N or 0) + (glowOn and (rockPrims.GLOW_N or 0) or 0)) or 2,
             state.rockDrawn or 0, #(state.rocks or {})))
