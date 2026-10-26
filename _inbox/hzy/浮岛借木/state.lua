@@ -356,7 +356,7 @@ M.heroTurnDir = 0         -- 本次转动的屏幕方向：+1 向右 / -1 向左
 M.heroTurnWidthFix = 1    -- 换图时的宽度补偿比（旧视角宽 / 新视角宽），让屏幕宽度连续
 M.heroViewW = {}          -- 每个视角的剪影宽度缓存（格），换视角时算一次
 M.heroPrTintK = 1         -- 图元整体的明暗系数（1 = 不暗；转身时压到 1-DIM，读作背光面）
-M.heroRibbonFix = nil     -- 脚本参数 heroRibbonFix（-1 = 飘带跟着手臂甩，第 38 批）
+M.heroFarArm = nil        -- 脚本参数 heroFarArm（侧面视角远侧手臂的摆幅比例，第 39 批）
 M.stepDistRef = nil       -- 一步的屏幕距离基准（连按打断时按它缩放时长；换关 / 改缩放后清空）
 M.rippleCtrl = nil        -- 涟漪特效控件
 M.dustCtrl = nil          -- 落地 / 立木扬尘控件（和涟漪分开，可同时出现）

@@ -1,0 +1,26 @@
+diff --git "a/_inbox/hzy/\346\265\256\345\262\233\345\200\237\346\234\250/game.lua" "b/_inbox/hzy/\346\265\256\345\262\233\345\200\237\346\234\250/game.lua"
+index b1cb3d5..fc920b8 100644
+--- "a/_inbox/hzy/\346\265\256\345\262\233\345\200\237\346\234\250/game.lua"
++++ "b/_inbox/hzy/\346\265\256\345\262\233\345\200\237\346\234\250/game.lua"
+@@ -778,10 +778,17 @@ function OnStart()
+     --   填 -1 关掉，小人退回「整体滑行」。
+     state.heroWalkOn = paramSwitch("heroWalkOn", config.DEFAULT_HERO_WALK_ON)
+ 
+-    -- ★ 部件修饰（第 38 批）
+-    --   heroRibbonFix = -1 → 身前那条飘带跟着手臂一起甩（回到改动前）；
+-    --     0 / 空 / 1 = 固定不动（默认）。判定与实现见 level.repaintHeroPrims。
+-    state.heroRibbonFix = paramSwitch("heroRibbonFix", config.DEFAULT_HERO_RIBBON_FIX)
++    -- ★ 部件修饰（第 38 批 · 第 39 批改了 ①）
++    --   ① 远侧手臂（第 39 批，取代第 38 批的「飘带固定」）：
++    --      侧面视角摆臂时，只摆靠近镜头那条手臂；另一条被身体挡住的**钉在躯干上**。
++    --      它就是用户说的「身前 / 身后那条类似领带的带状物」—— 只露贴着身体边缘的
++    --      一小条，转 30° 就扫出轮廓之外。实现在 level.updateHeroWalk。
++    --      取值 0~1（0 = 完全不摆，默认；1 = 两条一起摆，回到第 37 批的行为）。
++    --      ⚠️ 真机没填的数字参数返回 0（不是 nil）—— 这里把 0 也当成「没配」，
++    --         让 config.DEFAULT_HERO_FAR_ARM 永远是唯一真源（改成别的值也生效）。
++    local fa = getParamNumber("heroFarArm", config.DEFAULT_HERO_FAR_ARM)
++    if fa == nil or fa == 0 then fa = tonumber(config.DEFAULT_HERO_FAR_ARM) or 0 end
++    state.heroFarArm = utils.clamp(fa, 0, 1)
+ 
+     -- ★ 2.5D 视角（可选）：地块厚度 + 岛缘投影
+     --   view25d = 0 → 退回改动前的平面正交画法（沙边改用 DEFAULT_COAST_PAD 像素）

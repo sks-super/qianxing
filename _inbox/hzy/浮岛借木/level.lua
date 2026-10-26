@@ -41,7 +41,8 @@ local config = require("config")
 local utils = require("utils")
 local world = require("world")
 
-M.BUILD = "b34"   -- 版本戳：真机日志里能一眼看出用的是哪一版文件（b34 = 第 34 批 空中岛屿主题）
+M.BUILD = "b39"   -- 版本戳：真机日志里能一眼看出用的是哪一版文件
+                  --   b39 = 第 39 批：侧视远臂钉在躯干上（撤掉第 38 批的飘带判定）+ 步时/转身略快
 
 -- ★ 小人「图元笔触」数据（第 16 批）：来自「图元拟合拼图」四视角脚本，
 --   已按游戏内 68px 尺度裁掉看不见的椭圆。没有这个模块就自动退回像素画/立绘。
@@ -2197,11 +2198,6 @@ end
 --   1 back（白底虚化） / 2 head / 3 torso / 4 armL / 5 armR / 6 legL / 7 legR
 local PR_BACK, PR_HEAD, PR_TORSO, PR_ARM_L, PR_ARM_R, PR_LEG_L, PR_LEG_R = 1, 2, 3, 4, 5, 6, 7
 
--- ★ 第 38 批：第 8 个「虚拟部件」—— 它**没有自己的容器**，控件挂在躯干容器上。
---   只用它的独立控件池（`heroPrPools[PR_RIBBON]`）来装「从手臂里挑出来的飘带笔」。
---   这样手臂旋转时飘带不跟着转，而控件依然住在同一棵子树里，换视角照常复用。
-local PR_RIBBON = 8
-
 -- ★ 部件之间的**绘制层次**（后面 = 盖在上面），照原脚本的顺序还原：
 --     垫底白雾 → 腿（衬裙在蓝裙子后面） → 躯干（蓝裙子） → 两臂 → 头
 --   ⚠️ 一开始按「头/躯干/臂/腿」的自然顺序画，腿就排到了躯干之后——
@@ -2279,28 +2275,13 @@ local function shadeRGB(rgb, k)
     return string.format("%02X%02X%02X", r, g, b)
 end
 
--- 亮度（0~255，人眼权重）—— 飘带判定用
-local function rgbLum(rgb)
-    local r = math.floor(rgb / 65536) % 256
-    local g = math.floor(rgb / 256) % 256
-    local b = rgb % 256
-    return 0.299 * r + 0.587 * g + 0.114 * b
-end
-
--- ★ 第 38 批 · 这是不是「身前那条飘带」？
---   为什么需要判：导四视角数据时按「躯干半宽」分部件，主角那条围巾垂在身侧、
---   恰好越过半宽线，于是整条被划进了**靠近镜头的那条手臂**（A→armR，D→armL）。
---   侧面摆臂 ±30°，它就跟着甩出去 —— 用户看到的「领带在动」。
---   判据（世界坐标 = 部件关节 + 相对偏移，单位格）：
---     · 颜色浅：手臂本身是深棕（亮度 20~40），飘带是米黄到橙（亮度 90~150）
---     · 高度：从腰上方垂到大腿（0.22 ~ 0.46 格）
---     · 横向：贴着躯干（|x| < 0.25 格）—— 手臂张开的部分在这个范围外
-local RIBBON_LUM, RIBBON_Y0, RIBBON_Y1, RIBBON_X = 88, 0.22, 0.46, 0.25
-local function isRibbonEl(rgb, wx, wy)
-    if wy <= RIBBON_Y0 or wy >= RIBBON_Y1 then return false end
-    if math.abs(wx) >= RIBBON_X then return false end
-    return rgbLum(rgb) > RIBBON_LUM
-end
+-- ★ 第 39 批：第 38 批那两个「飘带判定」的函数（`rgbLum` / `isRibbonEl`）已经删掉。
+--   它们想挑出「围巾垂在身侧的那条带子」，实际挑中的是**手和袖口的浅色笔**：
+--   A 视角 armR 的 60 笔里 18 笔被判成飘带，而那 18 笔正是那只橙色手掌。
+--   挪到躯干容器后，摆臂时袖子照甩、手掌留在原地 —— 身前身后各多出一块橙色
+--   「领带状物」，比原来的问题更糟（用户第 39 批报的就是这个）。
+--   真正的「带子」是**远侧那条被身体挡住的手臂**：它只露贴着身体边缘的一小条，
+--   跟着转 30° 就扫出轮廓之外。修法见 `updateHeroWalk` 的 `DEFAULT_HERO_FAR_ARM`。
 
 -- ★ 第 38 批 · 一个视角的「剪影宽度」（格）。
 --   为什么要它：四个视角的宽度并不一样（正面 0.9 格、侧面 0.55 格），
@@ -2354,23 +2335,6 @@ function M.repaintHeroPrims()
     local imageId = state.heroPrImageId or 0
     if imageId <= 0 then imageId = config.DEFAULT_HERO_PRIMS_IMAGE end
 
-    -- ★ 第 38 批 · 飘带改投：只有**侧面视角**才判，而且只挑「靠近镜头那条手臂」。
-    --   正面 / 背面也被这个判据扫到过（S 视角 21 笔），但那里混着袖口与手的浅色，
-    --   移走会让手少一块；那边摆臂只有 12°，本来就看不出飘带在动 —— 不动它最稳。
-    local ribbonOn = state.heroRibbonFix
-    if ribbonOn == nil then ribbonOn = (tonumber(config.DEFAULT_HERO_RIBBON_FIX) or 1) > 0 end
-    local ribbonFrom = 0
-    if ribbonOn then
-        if facingNow == "A" then ribbonFrom = PR_ARM_R
-        elseif facingNow == "D" then ribbonFrom = PR_ARM_L end
-    end
-    local torsoPart = view[PR_TORSO]
-    local torsoPiv = nil
-    if type(torsoPart) == "table" and torsoPart[1] then
-        torsoPiv = { x = torsoPart[1], y = torsoPart[2] }
-    end
-    if not torsoPiv then ribbonFrom = 0 end
-
     -- ★ 第 38 批 · 腿部加深：抬腿后露出来的那片颜色偏浅，读作「腿部变浅了」
     local legShade = tonumber(config.DEFAULT_HERO_LEG_SHADE) or 1
     if legShade <= 0 then legShade = 1 end
@@ -2379,11 +2343,6 @@ function M.repaintHeroPrims()
     --   而且**零额外调用** —— 反正这次 repaint 本来就要把每笔的颜色重发一遍。
     local tintK = tonumber(state.heroPrTintK) or 1
     if tintK <= 0 then tintK = 1 end
-    local ribbonUsed = 0
-    -- 飘带笔要挂到躯干容器上（pi=3 的容器；这里提早取也是同一个，heroPrPartBox 幂等）
-    local torsoBox = nil
-    if ribbonFrom > 0 then torsoBox = heroPrPartBox(PR_TORSO) end
-    if not torsoBox then ribbonFrom = 0 end
 
     local used, want, failRun = 0, 0, 0
     for pi = 1, #view do
@@ -2406,26 +2365,11 @@ function M.repaintHeroPrims()
                     want = want + 1
                     local ex, ey = part[k] or 0, part[k + 1] or 0
                     local rgb = math.floor(part[k + 5] or 0)
-                    -- ★ 第 38 批：这一笔是飘带吗？（只对「近镜头那条手臂」判）
-                    local toRibbon = false
-                    if ribbonFrom == pi then
-                        toRibbon = isRibbonEl(rgb, px + ex, py + ey)
-                    end
-                    local item, relX, relY
-                    if toRibbon then
-                        -- 挪到躯干容器：坐标要换算成「相对躯干关节」
-                        local idx = ribbonUsed + 1
-                        item = heroPrSlot(PR_RIBBON, idx, torsoBox, prefabId, imageId)
-                        relX, relY = px + ex - torsoPiv.x, py + ey - torsoPiv.y
-                        if item then ribbonUsed = idx end
-                    else
-                        item = heroPrSlot(pi, e, box, prefabId, imageId)
-                        relX, relY = ex, ey
-                    end
+                    local item = heroPrSlot(pi, e, box, prefabId, imageId)
                     if item then
                         local c = item.c
                         utils.setSize(c, part[k + 2] * cell, part[k + 3] * cell)
-                        utils.setPosition(c, relX * cell, relY * cell)
+                        utils.setPosition(c, ex * cell, ey * cell)
                         utils.setRotation(c, part[k + 4])
                         local hex
                         local kk = 1
@@ -2452,16 +2396,6 @@ function M.repaintHeroPrims()
                         utils.setVisible(pool[j] and pool[j].c, false)
                     end
                 end
-            end
-        end
-    end
-
-    -- ★ 第 38 批：飘带池按「本轮用了几笔」收尾（换到没有飘带的视角就整池隐藏）
-    if state.heroPrPools then
-        local rpool = state.heroPrPools[PR_RIBBON]
-        if rpool then
-            for j = ribbonUsed + 1, #rpool do
-                utils.setVisible(rpool[j] and rpool[j].c, false)
             end
         end
     end
@@ -2557,8 +2491,25 @@ function M.updateHeroWalk(dt)
 
     if sideView then
         -- 侧面：手臂绕肩前后摆（这是「在走路」最主要的信号），腿前后迈 + 轻微转动
-        setPartRot(PR_ARM_L, -armA)
-        setPartRot(PR_ARM_R, armA)
+        -- ★ 第 39 批 · **只摆靠近镜头的那条手臂**。
+        --   另一条被身体挡住的（远侧）手臂在图里只露出贴着身体边缘的一小条，
+        --   让它跟着转 30°，那一小条就扫出身体轮廓之外 —— 用户两批都报的
+        --   「身前 / 身后有类似领带的带状物在动」就是它。
+        --   远侧手臂干脆**钉死在身体上**（摆幅 × DEFAULT_HERO_FAR_ARM，默认 0）：
+        --   它本来就被挡住，不摆也看不出少了什么；而这一钉，那条「带子」就没了。
+        --   ⚠️ 别再想着「把飘带的笔画挑出来挪到躯干容器」—— 第 38 批试过，
+        --      亮度判据抓走的是手和袖口的浅色笔，手掌被钉在原地后反而更花。
+        local farK = tonumber(state.heroFarArm)
+        if farK == nil then farK = tonumber(config.DEFAULT_HERO_FAR_ARM) or 0 end
+        if farK < 0 then farK = 0 elseif farK > 1 then farK = 1 end
+        local armL, armR = -armA, armA
+        if facing == "A" then
+            armL = armL * farK            -- A（朝左）：近镜头是 armR，armL 在远侧
+        elseif facing == "D" then
+            armR = armR * farK            -- D（朝右）：近镜头是 armL，armR 在远侧
+        end
+        setPartRot(PR_ARM_L, armL)
+        setPartRot(PR_ARM_R, armR)
         setPartPlace(PR_ARM_L, 0, 0, 0)
         setPartPlace(PR_ARM_R, 0, 0, 0)
         setPartRot(PR_LEG_L, legA)
@@ -3164,13 +3115,16 @@ function M.build(data, mapKey)
             tonumber(config.DEFAULT_STEP_ANIM_TIME) or 0, turnDur, turnSq * 100,
             tonumber(config.DEFAULT_HERO_WALK_PERIOD) or 0,
             (turnDur > 0.01 and turnSq < 0.99) and "开" or "关（瞬切）"))
-        -- ★ 第 38 批：三个新增量各自生效与否，一眼能看出来（真机报「飘带还在动」先看这行）
+        -- ★ 第 38 批：三个新增量各自生效与否，一眼能看出来（真机报「转身不立体」先看这行）
+        -- ★ 第 39 批：「远侧手臂」这档取代了原来的「飘带」——
+        --   报「走路时身前 / 身后还有带子在飘」先看这里是 0% 还是非 0。
+        local farArm = tonumber(config.DEFAULT_HERO_FAR_ARM) or 0
         pcall(print, string.format(
-            "[浮岛借木] 立体 补高=%.0f%% 漂移=%.3f格 倾斜=%.1f° | 飘带=%s 腿深=%.2f | 视角宽 S=%.2f A=%.2f D=%.2f W=%.2f",
+            "[浮岛借木] 立体 补高=%.0f%% 漂移=%.3f格 倾斜=%.1f° | 远侧手臂=%.0f%% 腿深=%.2f | 视角宽 S=%.2f A=%.2f D=%.2f W=%.2f",
             (tonumber(config.DEFAULT_HERO_TURN_DEPTH) or 0) * 100,
             tonumber(config.DEFAULT_HERO_TURN_DRIFT) or 0,
             tonumber(config.DEFAULT_HERO_TURN_TILT) or 0,
-            (state.heroRibbonFix == false) and "跟手臂甩" or "固定",
+            farArm * 100,
             tonumber(config.DEFAULT_HERO_LEG_SHADE) or 1,
             heroViewWidthOf("S"), heroViewWidthOf("A"), heroViewWidthOf("D"), heroViewWidthOf("W")))
     end
