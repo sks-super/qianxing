@@ -162,7 +162,9 @@ local function tryMove(key)
         if act.moved then
             local dur = config.DEFAULT_STEP_ANIM_TIME
             if kind ~= "move" then dur = config.DEFAULT_ACTION_ANIM_TIME end
-            level.beginPlayerMove(dur)
+            -- ★ 第 37 批：单纯走路按**实际距离**缩放时长（连按不会忽快忽慢）；
+            --   推 / 撞 / 滑那几种仍用固定时长 —— 它们要读的是动作本身。
+            level.beginPlayerMove(dur, kind == "move")
         end
         if act.changed then
             -- ★ 先登记「倒 / 立 / 侧推」的过渡，再重建：

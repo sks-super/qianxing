@@ -225,6 +225,21 @@ function M.setRotation(ctrl, deg)
 end
 
 -- ================================================================
+-- ★ 缩放控件（第 37 批）—— 转身过渡用它把整幅画「压扁再展开」
+--   ★ 接口是官方 SDK 里的 `ClientUIBaseControl:SetLocalScale(x, y, z)`，
+--     不是自造的方法；老桩没有时 pcall 静默失败 → 不压缩而已，画面照常。
+--   ★ 只改缩放，不改尺寸：`SetSizeDelta` 是排版尺寸（会影响锚点吸附与换行），
+--     而 localScale 是纯视觉变换，子控件会一起缩 —— 正是「整幅画压扁」要的效果。
+-- ================================================================
+function M.setScale(ctrl, sx, sy)
+    if not ctrl then return end
+    local x = tonumber(sx) or 1
+    local y = tonumber(sy) or 1
+    if pcall(function() ctrl:SetLocalScale(x, y, 1) end) then return true end
+    return pcall(function() ctrl.localScale = { x, y, 1 } end)
+end
+
+-- ================================================================
 -- ★ 显示控件 / 隐藏控件
 -- ================================================================
 function M.setVisible(ctrl, visible)

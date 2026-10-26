@@ -1977,6 +1977,35 @@ function M.animateObject(dt)
 end
 
 -- ================================================================
+-- ★ 朝向：逻辑朝向 vs 画面朝向（第 37 批）
+--   `state.playerFacing` 是**逻辑**朝向 —— 按方向键的那一刻就改，规则 / 深度 / 音效都用它，
+--   一点都不能晚（晚一帧就会「按了左键人还面朝下」）。
+--   但**画在屏幕上**的那个朝向要跟着转身过渡走，所以另立 `state.heroFacing`：
+--   转身的前半程仍用旧朝向，压到最窄的那一帧才换成新朝向。
+--   ★ 所有「取朝向去画东西」的地方都必须读 `heroVision()`，
+--     读 `state.playerFacing` 会让三套画法（图元 / 立绘 / 像素）各自错帧。
+-- ================================================================
+local function heroVision()
+    return state.heroFacing or state.playerFacing or "S"
+end
+
+-- 当前真正在显示的那个角色根容器（图元 / 立绘 / 像素画三选一，与 buildPlayer 的优先级同源）
+local function heroRootCtrl()
+    if state.heroPr and state.heroPrBox then return state.heroPrBox end
+    if state.playerCtrlImg and state.playerCtrl then return state.playerCtrl end
+    if state.heroPixel and state.heroArtBox then return state.heroArtBox end
+    return state.playerCtrl
+end
+
+-- 把转身的「压扁系数」下发到根容器（值没变就不重复调 —— 每帧一次接口调用不贵，但没必要）
+local function applyHeroTurnScale(s)
+    local v = tonumber(s) or 1
+    if math.abs((state.heroTurnScale or 1) - v) < 0.004 then return end
+    state.heroTurnScale = v
+    utils.setScale(heroRootCtrl(), v, 1)
+end
+
+-- ================================================================
 -- ★ 小人：用纯色矩形「画」出来（不是引用图片）
 --   数据在 heroArt.lua：每个朝向 = 一套矩形 { x, y, w, h, 颜色索引 }，
 --   摆在一张 COLS × ROWS 的网格上，整个网格正好 1 格高。
@@ -2032,7 +2061,7 @@ end
 -- 按当前朝向重画一遍小人（换朝向 / 换关卡 / 格子边长变了都要调）
 function M.repaintPlayerArt()
     if not state.heroPixel or not state.heroArtBox then return false end
-    local facing = state.playerFacing or "S"
+    local facing = heroVision()
     local sp, colors, cols, rows = heroSprite(facing)
     if not sp then return false end
     cols = tonumber(cols) or 0
@@ -2207,7 +2236,7 @@ end
 -- ================================================================
 function M.repaintHeroPrims()
     if not state.heroPr or not state.heroPrBox then return false end
-    local view = (heroPrims and (heroPrims[state.playerFacing or "S"] or heroPrims.S)) or nil
+    local view = (heroPrims and (heroPrims[heroVision()] or heroPrims.S)) or nil
     if type(view) ~= "table" then return false end
 
     local cell = state.cellSize or 1
@@ -2272,7 +2301,7 @@ function M.repaintHeroPrims()
     end
 
     state.heroPrUsed = used
-    state.heroPrDrawn = state.playerFacing or "S"
+    state.heroPrDrawn = heroVision()
     utils.setVisible(state.heroPrBox, true)
     return true
 end
@@ -2338,7 +2367,7 @@ function M.updateHeroWalk(dt)
     --       两者互相抵消 → 这个视角只做「抬脚 + 重心起伏」，不做前后位移、不转腿。
     --   ⚠️ 第 17 批是一律按屏幕 x 位移的：幅度只有 0.03 格（≈2px）时看不出问题，
     --      第 36 批一放大到 0.085 格，正面视角立刻变成「两条腿左右劈叉」。
-    local facing = state.playerFacing or "S"
+    local facing = heroVision()
     local sideView = (facing == "A" or facing == "D")
     local dirX = 0
     if facing == "D" then dirX = 1 elseif facing == "A" then dirX = -1 end
@@ -2410,10 +2439,24 @@ end
 function M.applyPlayerImage()
     if not state.playerCtrlImg or not state.playerCtrl then return false end
     local ids = state.heroImageIds or {}
-    local id = tonumber(ids[state.playerFacing or "S"] or 0) or 0
+    local id = tonumber(ids[heroVision()] or 0) or 0
     if id <= 0 then id = tonumber(ids.S or 0) or 0 end
     if id <= 0 then return false end
     return utils.applyImage(state.playerCtrl, id)
+end
+
+-- ================================================================
+-- ★ 按「画面朝向」重画一次（三套画法各走各的入口）
+--   ★ 换朝向只在**转身中点**发生，所以这个函数一帧最多被调一次。
+-- ================================================================
+function M.repaintHeroForFacing()
+    if state.heroPr then
+        M.repaintHeroPrims()      -- 图元笔触：换一套椭圆 = 转身
+    elseif state.playerCtrlImg then
+        M.applyPlayerImage()      -- 图片立绘：换一张图就是转身
+    elseif state.heroPixel then
+        M.repaintPlayerArt()
+    end
 end
 
 -- ================================================================
@@ -2421,18 +2464,83 @@ end
 --   ★ 只认 W/S/A/D 四个方向，别的键忽略 —— 免得把奇怪的值写进 state。
 --   ★ 转身在**规则判定之前**发生：顶着墙按方向键，人也会先转过去，
 --     否则会出现「按了左键，人还面朝下」的怪样子。
+--   ★ 第 37 批：逻辑朝向**立刻**改（规则不能等），画面朝向交给 `updateHeroTurn`
+--     走 0.2 秒的「压扁 → 换图 → 展开」过渡 —— 原来是瞬间换一套图，
+--     每一次转身都是硬跳，连按转向时看着像「闪烁」而不是「转身」。
 -- ================================================================
 function M.setPlayerFacing(key)
     if not key or not world.DIRS[key] then return end
     if state.playerFacing == key then return end
+    -- ⚠️ 先取「当前画面朝向」再改逻辑朝向：heroVision() 在 heroFacing 还没初始化时
+    --   会回退到 playerFacing，先改就会取到**新**朝向，转身直接退化成瞬切。
+    local cur = heroVision()
     state.playerFacing = key
-    if state.heroPr then
-        M.repaintHeroPrims()      -- 图元笔触：换一套椭圆 = 转身
-    elseif state.heroPixel then
-        M.repaintPlayerArt()
-    elseif state.playerCtrlImg then
-        M.applyPlayerImage()      -- 图片立绘：换一张图就是转身
+
+    local dur = tonumber(config.DEFAULT_HERO_TURN_TIME) or 0.20
+    local squash = tonumber(config.DEFAULT_HERO_TURN_SQUASH) or 0.30
+    if dur <= 0.01 or squash >= 0.99 or cur == key then
+        -- 过渡被关掉（时长为 0 / 压扁系数 ≥ 1）：退回瞬间换图
+        state.heroFacing = key
+        state.heroTurnDur = 0
+        state.heroTurnT = 0
+        state.heroTurnFrom = ""
+        M.repaintHeroForFacing()
+        applyHeroTurnScale(1)
+        return
     end
+    -- ★ 转身途中又按了新方向：从「当前画面朝向」重新起转，不叠加、不排队。
+    --   过渡全程只有 0.2 秒，排队会让人物对着旧方向转完再转回来，像失控。
+    state.heroTurnFrom = cur
+    state.heroTurnT = 0
+    state.heroTurnDur = dur
+    state.heroTurnSquashCfg = squash
+end
+
+-- ================================================================
+-- ★ 转身过渡：压扁 → 换朝向 → 展开（每帧推进）
+--   ★ 曲线用 `1 - (1-S)·sin(πp)`：
+--       p=0 → 1（原宽）、p=0.5 → S（最窄）、p=1 → 1（原宽），两端导数为 0
+--       —— 起步和收尾都不生硬，中段最快，正好对应「一转身就侧过去了」。
+--   ★ 换朝向的那一帧放在 p=0.5（最窄处）：宽度只剩 30%，新旧两套图差什么
+--     都看不出来 —— 这就是整个过渡不需要中间帧资源的原因。
+--   ★ 只压 x，不动 y、不动位置：脚必须留在原地，否则会「滑一步再转身」。
+-- ================================================================
+function M.updateHeroTurn(dt)
+    local target = state.playerFacing or "S"
+
+    -- 没在转身：画面朝向跟随逻辑朝向（兜底：别的入口直接改了 playerFacing）
+    if (state.heroTurnDur or 0) <= 0 then
+        if not state.heroFacing then state.heroFacing = target end
+        if state.heroFacing ~= target then
+            state.heroFacing = target
+            M.repaintHeroForFacing()
+        end
+        applyHeroTurnScale(1)
+        return
+    end
+
+    local dur = state.heroTurnDur
+    local t = (state.heroTurnT or 0) + (tonumber(dt) or 0)
+    if t >= dur then
+        -- 转完了：收尾成「新朝向 + 原宽」
+        state.heroTurnT = 0
+        state.heroTurnDur = 0
+        state.heroTurnFrom = ""
+        state.heroFacing = target
+        M.repaintHeroForFacing()
+        applyHeroTurnScale(1)
+        return
+    end
+
+    state.heroTurnT = t
+    local p = t / dur
+    if p >= 0.5 and state.heroFacing ~= target then
+        state.heroFacing = target
+        M.repaintHeroForFacing()
+    end
+    local squash = state.heroTurnSquashCfg or tonumber(config.DEFAULT_HERO_TURN_SQUASH) or 0.30
+    local k = math.sin(p * math.pi)              -- 0 → 1 → 0
+    applyHeroTurnScale(1 - (1 - squash) * k)
 end
 
 -- ================================================================
@@ -2755,6 +2863,12 @@ function M.clear()
     state.objAnimActive = false
     state.objAnimFrom, state.objAnimTo = nil, nil
     state.objAnimT = 0
+    -- ★ 第 37 批：转身过渡 + 步距基准也归零（否则新关卡第一帧会带着上一关的压扁系数）
+    state.heroTurnT = 0
+    state.heroTurnDur = 0
+    state.heroTurnFrom = ""
+    state.heroTurnScale = 1
+    state.stepDistRef = nil
 end
 
 -- ================================================================
@@ -2792,6 +2906,14 @@ function M.build(data, mapKey)
             tostring(state.viewZoom), math.floor(state.cellSize or 0), ww, wh, cw, chh,
             needFollow and "一屏装不下 → 镜头钉在「玩家所在岛的中心」（岛内走动画面不动，换岛才平移）"
                         or "一屏装得下 → 镜头不动"))
+        -- ★ 动作节奏（第 37 批）：真机报「走得慢 / 转身没效果」时，先看这一行对不对
+        local turnDur = tonumber(config.DEFAULT_HERO_TURN_TIME) or 0
+        local turnSq = tonumber(config.DEFAULT_HERO_TURN_SQUASH) or 1
+        pcall(print, string.format(
+            "[浮岛借木] 动作 步时=%.2fs 转身=%.2fs(压到 %.0f%%) 摆动周期=%.2fs | 转身过渡=%s",
+            tonumber(config.DEFAULT_STEP_ANIM_TIME) or 0, turnDur, turnSq * 100,
+            tonumber(config.DEFAULT_HERO_WALK_PERIOD) or 0,
+            (turnDur > 0.01 and turnSq < 0.99) and "开" or "关（瞬切）"))
     end
     -- ★ 图层顺序日志：关卡构建完成时打一次完整层序（见 M.logLayerOrder）
     M.logLayerOrder("关卡构建完成")
@@ -2817,6 +2939,15 @@ function M.syncPlayerNow()
     state.heroWalkAmp = 0
     M.updateHeroWalk(0)
     placeHeroPrims()                     -- 图元笔触：整幅画贴在脚底线上
+    -- ★ 转身过渡也要归零（第 37 批）：万一是在「压扁到一半」时重开 / 换关，
+    --   小人会停在 30% 宽 —— 显式复位朝向、计时与缩放，别指望控件自己回正。
+    state.heroFacing = state.playerFacing or "S"
+    state.heroTurnT = 0
+    state.heroTurnDur = 0
+    state.heroTurnFrom = ""
+    state.heroTurnScale = 1
+    utils.setScale(heroRootCtrl(), 1, 1)
+    state.stepDistRef = nil              -- 一步的屏幕距离基准（换关 / 改缩放后必须重算）
     utils.setPosition(state.playerShadowCtrl, px, py - playerFootOffset() - (state.cellSize or 1) * 0.01)
     local cell = state.cellSize or 1
     local bodyH = state.playerBodyH
@@ -2829,12 +2960,36 @@ end
 -- ================================================================
 -- ★ 开始一次位移动画（从当前位置走向新位置）
 --   ★ 顺手重排一次世界：小人换行之后，「前面的树挡不挡得住它」会变。
+--   ★ 第 37 批：`byDistance = true` 时按**实际剩下的屏幕距离**缩放时长。
+--     步时加长到 0.26 秒后，玩家连按方向键很常见 —— 上一步还没走完就被打断，
+--     新的一步从半路起步、实际要走「剩余 + 1 格」。若仍给完整步时，
+--     屏幕上会突然快一截（同样的 0.26 秒跑 1.6 格），读作「抽了一下」。
+--     按距离同比例调时长 = 屏幕速度恒定；没被打断时系数正好是 1，一切照旧。
 -- ================================================================
-function M.beginPlayerMove(duration)
+function M.beginPlayerMove(duration, byDistance)
     state.playerAnimFromX = state.playerVisX
     state.playerAnimFromY = state.playerVisY
     state.playerAnimT = 0
-    state.playerAnimDur = math.max(0.001, tonumber(duration) or config.DEFAULT_STEP_ANIM_TIME or 0.1)
+    local dur = math.max(0.001, tonumber(duration) or config.DEFAULT_STEP_ANIM_TIME or 0.1)
+
+    if byDistance then
+        local tx, ty = playerAnchor()
+        local ddx = tx - state.playerAnimFromX
+        local ddy = ty - state.playerAnimFromY
+        local dist = math.sqrt(ddx * ddx + ddy * ddy)
+        local ref = tonumber(state.stepDistRef) or 0
+        -- 基准 = 观测到的最小单步距离（正常一步恒为这个值；被打断只会更大）。
+        -- ⚠️ 换关 / 缩放变化时必须在 syncPlayerNow 里清掉，否则基准会过期。
+        if ref <= 0 or dist < ref then
+            ref = dist
+            state.stepDistRef = ref
+        end
+        if ref > 1 and dist > 1 then
+            dur = dur * utils.clamp(dist / ref, 0.55, 1.9)
+        end
+    end
+
+    state.playerAnimDur = dur
     M.restackWorld()
 end
 
@@ -2859,6 +3014,7 @@ function M.updateVisuals(dt)
     end
     utils.setPosition(state.playerCtrl, state.playerVisX, state.playerVisY)
     placeHeroArt()                       -- 像素画：每帧只移动这一个容器
+    M.updateHeroTurn(dt)                 -- 转身过渡：决定这一帧画哪个朝向、压多扁
     M.updateHeroWalk(dt)                 -- 图元笔触：先更新摆臂/迈腿的角度
     placeHeroPrims()                     -- 图元笔触：每帧只移动这一个容器
     utils.setPosition(state.playerShadowCtrl, state.playerVisX,
