@@ -1,0 +1,21 @@
+diff --git "a/_inbox/hzy/\346\265\256\345\262\233\345\200\237\346\234\250/state.lua" "b/_inbox/hzy/\346\265\256\345\262\233\345\200\237\346\234\250/state.lua"
+index 0708b78..258ab73 100644
+--- "a/_inbox/hzy/\346\265\256\345\262\233\345\200\237\346\234\250/state.lua"
++++ "b/_inbox/hzy/\346\265\256\345\262\233\345\200\237\346\234\250/state.lua"
+@@ -347,6 +347,16 @@ M.heroTurnDur = 0         -- 本次转身总时长（秒）；0 = 没在转身
+ M.heroTurnFrom = ""       -- 这次转身是从哪个朝向转过来的（排查 / 日志用）
+ M.heroTurnScale = 1       -- 当前水平缩放（1 = 正常，<1 = 转身压扁中）；避免重复下发
+ M.heroTurnSquashCfg = 0.30 -- 本次转身用的压扁系数（起转那一刻从 config 抓一次，途中改了参数也不跳）
++-- ★ 转身的立体感（第 38 批）：只压扁读作「纸片被挤」，要补三个量才像绕竖轴转。
++--   四个值都由 updateHeroTurn 每帧写、由 placeHeroPrims / applyHeroTurnPose 消费。
++M.heroTurnSY = 1          -- 纵向缩放（压扁时 >1，补足投影面积 → 有体积）
++M.heroTurnDX = 0          -- 横向漂移（像素，朝转动方向；绕轴转时剪影中心会挪）
++M.heroTurnTilt = 0        -- 倾斜角（度，朝转动方向；惯性）
++M.heroTurnDir = 0         -- 本次转动的屏幕方向：+1 向右 / -1 向左 / 0 正背互换
++M.heroTurnWidthFix = 1    -- 换图时的宽度补偿比（旧视角宽 / 新视角宽），让屏幕宽度连续
++M.heroViewW = {}          -- 每个视角的剪影宽度缓存（格），换视角时算一次
++M.heroPrTintK = 1         -- 图元整体的明暗系数（1 = 不暗；转身时压到 1-DIM，读作背光面）
++M.heroRibbonFix = nil     -- 脚本参数 heroRibbonFix（-1 = 飘带跟着手臂甩，第 38 批）
+ M.stepDistRef = nil       -- 一步的屏幕距离基准（连按打断时按它缩放时长；换关 / 改缩放后清空）
+ M.rippleCtrl = nil        -- 涟漪特效控件
+ M.dustCtrl = nil          -- 落地 / 立木扬尘控件（和涟漪分开，可同时出现）

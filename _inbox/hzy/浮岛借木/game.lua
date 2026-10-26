@@ -778,6 +778,11 @@ function OnStart()
     --   填 -1 关掉，小人退回「整体滑行」。
     state.heroWalkOn = paramSwitch("heroWalkOn", config.DEFAULT_HERO_WALK_ON)
 
+    -- ★ 部件修饰（第 38 批）
+    --   heroRibbonFix = -1 → 身前那条飘带跟着手臂一起甩（回到改动前）；
+    --     0 / 空 / 1 = 固定不动（默认）。判定与实现见 level.repaintHeroPrims。
+    state.heroRibbonFix = paramSwitch("heroRibbonFix", config.DEFAULT_HERO_RIBBON_FIX)
+
     -- ★ 2.5D 视角（可选）：地块厚度 + 岛缘投影
     --   view25d = 0 → 退回改动前的平面正交画法（沙边改用 DEFAULT_COAST_PAD 像素）
     --   waterGridLines = 0 → 水面**不画格子线**（★ 第 32 批改为默认；填 1 可恢复）

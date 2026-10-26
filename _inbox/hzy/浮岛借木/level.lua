@@ -1997,12 +1997,38 @@ local function heroRootCtrl()
     return state.playerCtrl
 end
 
--- 把转身的「压扁系数」下发到根容器（值没变就不重复调 —— 每帧一次接口调用不贵，但没必要）
-local function applyHeroTurnScale(s)
-    local v = tonumber(s) or 1
-    if math.abs((state.heroTurnScale or 1) - v) < 0.004 then return end
-    state.heroTurnScale = v
-    utils.setScale(heroRootCtrl(), v, 1)
+-- 把转身姿态下发到根容器。
+--   ★ 第 37 批只有「压扁」一个量（scaleX）；第 38 批加上纵向补高、横向漂移、倾斜 ——
+--     这三个才是「像 3D 绕轴转」而不是「纸片被挤了一下」的关键。
+--   ★ 图元笔触那条路的**位置**由 placeHeroPrims 每帧统一算（要合并走路起伏与倾斜），
+--     这里只对它下发 scale / rotation；图片立绘与像素画没有那个合并点，位置也在这里给。
+local function applyHeroTurnPose()
+    local root = heroRootCtrl()
+    if not root then return end
+    local sx = state.heroTurnScale or 1
+    local sy = state.heroTurnSY or 1
+    utils.setScale(root, sx, sy)
+    if root ~= state.heroPrBox then
+        -- 图片立绘 / 像素画：这里就要把漂移与倾斜一起给掉
+        utils.setRotation(root, state.heroTurnTilt or 0)
+        utils.setPosition(root, (state.playerVisX or 0) + (state.heroTurnDX or 0), state.playerVisY or 0)
+    end
+end
+
+-- 转身姿态复位（换关 / 重开 / 过渡关掉时用）：宽高归 1、漂移与倾斜归 0
+local function resetHeroTurnPose()
+    state.heroTurnScale = 1
+    state.heroTurnSY = 1
+    state.heroTurnDX = 0
+    state.heroTurnTilt = 0
+    state.heroTurnDir = 0
+    local root = heroRootCtrl()
+    if not root then return end
+    utils.setScale(root, 1, 1)
+    utils.setRotation(root, 0)
+    if root ~= state.heroPrBox then
+        utils.setPosition(root, state.playerVisX or 0, state.playerVisY or 0)
+    end
 end
 
 -- ================================================================
@@ -2171,6 +2197,11 @@ end
 --   1 back（白底虚化） / 2 head / 3 torso / 4 armL / 5 armR / 6 legL / 7 legR
 local PR_BACK, PR_HEAD, PR_TORSO, PR_ARM_L, PR_ARM_R, PR_LEG_L, PR_LEG_R = 1, 2, 3, 4, 5, 6, 7
 
+-- ★ 第 38 批：第 8 个「虚拟部件」—— 它**没有自己的容器**，控件挂在躯干容器上。
+--   只用它的独立控件池（`heroPrPools[PR_RIBBON]`）来装「从手臂里挑出来的飘带笔」。
+--   这样手臂旋转时飘带不跟着转，而控件依然住在同一棵子树里，换视角照常复用。
+local PR_RIBBON = 8
+
 -- ★ 部件之间的**绘制层次**（后面 = 盖在上面），照原脚本的顺序还原：
 --     垫底白雾 → 腿（衬裙在蓝裙子后面） → 躯干（蓝裙子） → 两臂 → 头
 --   ⚠️ 一开始按「头/躯干/臂/腿」的自然顺序画，腿就排到了躯干之后——
@@ -2234,9 +2265,87 @@ end
 --   数据形如：{ {px,py,n, x,y,w,h,rot,rgb,alpha ×n}, ... 6 个部件 }
 --   其中 x,y 已经是**相对关节**的偏移，所以直接贴到部件容器里就行。
 -- ================================================================
+
+-- 把 0xRRGGBB 的每个通道乘 k（k<1 变暗），再转回 "%06X"。
+--   ★ 不用位运算（`>>` / `&`）：千星那套 Lua 版本不保证支持，除法取模最稳。
+local function shadeRGB(rgb, k)
+    local r = math.floor(rgb / 65536) % 256
+    local g = math.floor(rgb / 256) % 256
+    local b = rgb % 256
+    r = math.floor(r * k); g = math.floor(g * k); b = math.floor(b * k)
+    if r > 255 then r = 255 elseif r < 0 then r = 0 end
+    if g > 255 then g = 255 elseif g < 0 then g = 0 end
+    if b > 255 then b = 255 elseif b < 0 then b = 0 end
+    return string.format("%02X%02X%02X", r, g, b)
+end
+
+-- 亮度（0~255，人眼权重）—— 飘带判定用
+local function rgbLum(rgb)
+    local r = math.floor(rgb / 65536) % 256
+    local g = math.floor(rgb / 256) % 256
+    local b = rgb % 256
+    return 0.299 * r + 0.587 * g + 0.114 * b
+end
+
+-- ★ 第 38 批 · 这是不是「身前那条飘带」？
+--   为什么需要判：导四视角数据时按「躯干半宽」分部件，主角那条围巾垂在身侧、
+--   恰好越过半宽线，于是整条被划进了**靠近镜头的那条手臂**（A→armR，D→armL）。
+--   侧面摆臂 ±30°，它就跟着甩出去 —— 用户看到的「领带在动」。
+--   判据（世界坐标 = 部件关节 + 相对偏移，单位格）：
+--     · 颜色浅：手臂本身是深棕（亮度 20~40），飘带是米黄到橙（亮度 90~150）
+--     · 高度：从腰上方垂到大腿（0.22 ~ 0.46 格）
+--     · 横向：贴着躯干（|x| < 0.25 格）—— 手臂张开的部分在这个范围外
+local RIBBON_LUM, RIBBON_Y0, RIBBON_Y1, RIBBON_X = 88, 0.22, 0.46, 0.25
+local function isRibbonEl(rgb, wx, wy)
+    if wy <= RIBBON_Y0 or wy >= RIBBON_Y1 then return false end
+    if math.abs(wx) >= RIBBON_X then return false end
+    return rgbLum(rgb) > RIBBON_LUM
+end
+
+-- ★ 第 38 批 · 一个视角的「剪影宽度」（格）。
+--   为什么要它：四个视角的宽度并不一样（正面 0.9 格、侧面 0.55 格），
+--   转身时如果两边都按同一个缩放系数走，**换图那一帧屏幕宽度会突然变窄** ——
+--   那就是「其实换了一张图」的破绽。按旧/新宽度之比补偿，宽度就连续了。
+--   椭圆是旋转过的，x 方向的半宽要按 |w/2·cosθ| + |h/2·sinθ| 算。
+local function heroViewWidth(view)
+    if type(view) ~= "table" then return 1 end
+    local lo, hi = 1e9, -1e9
+    for pi = 1, #view do
+        local part = view[pi]
+        if type(part) == "table" and #part >= 3 then
+            local px, n = part[1], part[3]
+            local k = 4
+            for e = 1, n do
+                local ex, ew, eh, er = part[k] or 0, part[k + 2] or 0, part[k + 3] or 0, part[k + 4] or 0
+                local th = math.rad(er)
+                local half = math.abs(ew * 0.5 * math.cos(th)) + math.abs(eh * 0.5 * math.sin(th))
+                local c = px + ex
+                if c - half < lo then lo = c - half end
+                if c + half > hi then hi = c + half end
+                k = k + 7
+            end
+        end
+    end
+    if hi <= lo then return 1 end
+    return hi - lo
+end
+
+-- 视角宽度缓存（换视角那一帧 repaint 时顺手算，之后随时可取）
+local function heroViewWidthOf(facing)
+    local cache = state.heroViewW
+    if cache and cache[facing] then return cache[facing] end
+    local view = heroPrims and heroPrims[facing]
+    if type(view) ~= "table" then return 1 end
+    local w = heroViewWidth(view)
+    state.heroViewW = state.heroViewW or {}
+    state.heroViewW[facing] = w
+    return w
+end
+
 function M.repaintHeroPrims()
     if not state.heroPr or not state.heroPrBox then return false end
-    local view = (heroPrims and (heroPrims[heroVision()] or heroPrims.S)) or nil
+    local facingNow = heroVision()
+    local view = (heroPrims and (heroPrims[facingNow] or heroPrims.S)) or nil
     if type(view) ~= "table" then return false end
 
     local cell = state.cellSize or 1
@@ -2244,6 +2353,37 @@ function M.repaintHeroPrims()
     if prefabId <= 0 then prefabId = config.DEFAULT_PREFAB_HERO_PRIMS end
     local imageId = state.heroPrImageId or 0
     if imageId <= 0 then imageId = config.DEFAULT_HERO_PRIMS_IMAGE end
+
+    -- ★ 第 38 批 · 飘带改投：只有**侧面视角**才判，而且只挑「靠近镜头那条手臂」。
+    --   正面 / 背面也被这个判据扫到过（S 视角 21 笔），但那里混着袖口与手的浅色，
+    --   移走会让手少一块；那边摆臂只有 12°，本来就看不出飘带在动 —— 不动它最稳。
+    local ribbonOn = state.heroRibbonFix
+    if ribbonOn == nil then ribbonOn = (tonumber(config.DEFAULT_HERO_RIBBON_FIX) or 1) > 0 end
+    local ribbonFrom = 0
+    if ribbonOn then
+        if facingNow == "A" then ribbonFrom = PR_ARM_R
+        elseif facingNow == "D" then ribbonFrom = PR_ARM_L end
+    end
+    local torsoPart = view[PR_TORSO]
+    local torsoPiv = nil
+    if type(torsoPart) == "table" and torsoPart[1] then
+        torsoPiv = { x = torsoPart[1], y = torsoPart[2] }
+    end
+    if not torsoPiv then ribbonFrom = 0 end
+
+    -- ★ 第 38 批 · 腿部加深：抬腿后露出来的那片颜色偏浅，读作「腿部变浅了」
+    local legShade = tonumber(config.DEFAULT_HERO_LEG_SHADE) or 1
+    if legShade <= 0 then legShade = 1 end
+    -- ★ 第 38 批 · 转身明暗：整幅画按一个系数压暗（1 = 不变）。
+    --   转动时朝向镜头的是背光面，这一档明暗是「像 3D」最直接的信息，
+    --   而且**零额外调用** —— 反正这次 repaint 本来就要把每笔的颜色重发一遍。
+    local tintK = tonumber(state.heroPrTintK) or 1
+    if tintK <= 0 then tintK = 1 end
+    local ribbonUsed = 0
+    -- 飘带笔要挂到躯干容器上（pi=3 的容器；这里提早取也是同一个，heroPrPartBox 幂等）
+    local torsoBox = nil
+    if ribbonFrom > 0 then torsoBox = heroPrPartBox(PR_TORSO) end
+    if not torsoBox then ribbonFrom = 0 end
 
     local used, want, failRun = 0, 0, 0
     for pi = 1, #view do
@@ -2264,13 +2404,39 @@ function M.repaintHeroPrims()
                 local k = 4
                 for e = 1, n do
                     want = want + 1
-                    local item = heroPrSlot(pi, e, box, prefabId, imageId)
+                    local ex, ey = part[k] or 0, part[k + 1] or 0
+                    local rgb = math.floor(part[k + 5] or 0)
+                    -- ★ 第 38 批：这一笔是飘带吗？（只对「近镜头那条手臂」判）
+                    local toRibbon = false
+                    if ribbonFrom == pi then
+                        toRibbon = isRibbonEl(rgb, px + ex, py + ey)
+                    end
+                    local item, relX, relY
+                    if toRibbon then
+                        -- 挪到躯干容器：坐标要换算成「相对躯干关节」
+                        local idx = ribbonUsed + 1
+                        item = heroPrSlot(PR_RIBBON, idx, torsoBox, prefabId, imageId)
+                        relX, relY = px + ex - torsoPiv.x, py + ey - torsoPiv.y
+                        if item then ribbonUsed = idx end
+                    else
+                        item = heroPrSlot(pi, e, box, prefabId, imageId)
+                        relX, relY = ex, ey
+                    end
                     if item then
                         local c = item.c
                         utils.setSize(c, part[k + 2] * cell, part[k + 3] * cell)
-                        utils.setPosition(c, part[k] * cell, part[k + 1] * cell)
+                        utils.setPosition(c, relX * cell, relY * cell)
                         utils.setRotation(c, part[k + 4])
-                        utils.setAlpha(c, string.format("%06X", math.floor(part[k + 5] or 0)), part[k + 6] or 255)
+                        local hex
+                        local kk = 1
+                        if pi == PR_LEG_L or pi == PR_LEG_R then kk = kk * legShade end
+                        if tintK < 0.999 then kk = kk * tintK end
+                        if kk < 0.999 then
+                            hex = shadeRGB(rgb, kk)
+                        else
+                            hex = string.format("%06X", rgb)
+                        end
+                        utils.setAlpha(c, hex, part[k + 6] or 255)
                         utils.setVisible(c, true)
                         used = used + 1
                         failRun = 0
@@ -2286,6 +2452,16 @@ function M.repaintHeroPrims()
                         utils.setVisible(pool[j] and pool[j].c, false)
                     end
                 end
+            end
+        end
+    end
+
+    -- ★ 第 38 批：飘带池按「本轮用了几笔」收尾（换到没有飘带的视角就整池隐藏）
+    if state.heroPrPools then
+        local rpool = state.heroPrPools[PR_RIBBON]
+        if rpool then
+            for j = ribbonUsed + 1, #rpool do
+                utils.setVisible(rpool[j] and rpool[j].c, false)
             end
         end
     end
@@ -2425,8 +2601,15 @@ local function placeHeroPrims()
         bob = cell * bobRatio * amp * math.abs(math.sin(phase * 2))
         tilt = (tonumber(config.DEFAULT_HERO_WALK_TILT) or 2.5) * amp * math.sin(phase)
     end
-    utils.setRotation(state.heroPrBox, tilt)
-    utils.setPosition(state.heroPrBox, state.playerVisX, state.playerVisY + cell * 0.5 + bob)
+    -- ★ 第 38 批：转身的「立体感」三个量也在这里合并 ——
+    --   纵向补高 sy 要把位置按 cell*0.5*sy 抬高，脚线才留在原地；
+    --   横向漂移 dx 与倾斜 tilt 直接叠上去。
+    local cellHalf = cell * (state.heroTurnSY or 1) * 0.5
+    local walkTilt = tilt
+    local turnTilt = state.heroTurnTilt or 0
+    utils.setRotation(state.heroPrBox, walkTilt + turnTilt)
+    utils.setPosition(state.heroPrBox, state.playerVisX + (state.heroTurnDX or 0),
+                      state.playerVisY + cellHalf + bob)
 end
 
 -- ================================================================
@@ -2476,24 +2659,48 @@ function M.setPlayerFacing(key)
     local cur = heroVision()
     state.playerFacing = key
 
-    local dur = tonumber(config.DEFAULT_HERO_TURN_TIME) or 0.20
-    local squash = tonumber(config.DEFAULT_HERO_TURN_SQUASH) or 0.30
+    local dur = tonumber(config.DEFAULT_HERO_TURN_TIME) or 0.24
+    local squash = tonumber(config.DEFAULT_HERO_TURN_SQUASH) or 0.32
     if dur <= 0.01 or squash >= 0.99 or cur == key then
         -- 过渡被关掉（时长为 0 / 压扁系数 ≥ 1）：退回瞬间换图
         state.heroFacing = key
         state.heroTurnDur = 0
         state.heroTurnT = 0
         state.heroTurnFrom = ""
+        state.heroPrTintK = 1
         M.repaintHeroForFacing()
-        applyHeroTurnScale(1)
+        resetHeroTurnPose()
         return
     end
     -- ★ 转身途中又按了新方向：从「当前画面朝向」重新起转，不叠加、不排队。
-    --   过渡全程只有 0.2 秒，排队会让人物对着旧方向转完再转回来，像失控。
+    --   过渡全程只有 0.24 秒，排队会让人物对着旧方向转完再转回来，像失控。
     state.heroTurnFrom = cur
     state.heroTurnT = 0
     state.heroTurnDur = dur
     state.heroTurnSquashCfg = squash
+
+    -- ★ 第 38 批：这次转身在屏幕上是「往哪边转」—— 漂移与倾斜都朝这个方向。
+    --   取两个朝向的横向分量之差：S→D = +1（向右转）、D→S = -1、A→S = +1。
+    --   正面↔背面（S↔W）横向分量都是 0 → dir = 0，只压扁、不漂移（那本来就是「翻面」）。
+    local function faceX(f)
+        if f == "D" then return 1 elseif f == "A" then return -1 end
+        return 0
+    end
+    local d = faceX(key) - faceX(cur)
+    if d > 0 then state.heroTurnDir = 1
+    elseif d < 0 then state.heroTurnDir = -1
+    else state.heroTurnDir = 0 end
+
+    -- ★ 第 38 批：宽度补偿。四个视角的剪影宽度不同（正面宽、侧面窄），
+    --   换图那一帧若两边用同一个缩放系数，屏幕宽度会**突然变窄** ——
+    --   一窄就露馅：读作「换了一张图」而不是「转过去了」。
+    --   这里记下旧/新宽度之比，换图后先把宽度撑回去，再在剩下的半程里平滑收回 1。
+    local wFrom = heroViewWidthOf(cur)
+    local wTo = heroViewWidthOf(key)
+    local fix = 1
+    if wFrom > 0.05 and wTo > 0.05 then fix = wFrom / wTo end
+    if fix > 1.6 then fix = 1.6 elseif fix < 0.7 then fix = 0.7 end
+    state.heroTurnWidthFix = fix
 end
 
 -- ================================================================
@@ -2501,9 +2708,10 @@ end
 --   ★ 曲线用 `1 - (1-S)·sin(πp)`：
 --       p=0 → 1（原宽）、p=0.5 → S（最窄）、p=1 → 1（原宽），两端导数为 0
 --       —— 起步和收尾都不生硬，中段最快，正好对应「一转身就侧过去了」。
---   ★ 换朝向的那一帧放在 p=0.5（最窄处）：宽度只剩 30%，新旧两套图差什么
+--   ★ 换朝向的那一帧放在 p=0.5（最窄处）：宽度只剩 32%，新旧两套图差什么
 --     都看不出来 —— 这就是整个过渡不需要中间帧资源的原因。
---   ★ 只压 x，不动 y、不动位置：脚必须留在原地，否则会「滑一步再转身」。
+--   ★ 第 38 批：同一条 sin(πp) 曲线同时驱动「纵向补高 / 横向漂移 / 倾斜」，
+--     三者都在 p=0.5 到峰值、两端为 0 —— 和压扁同一个节奏，不会互相打架。
 -- ================================================================
 function M.updateHeroTurn(dt)
     local target = state.playerFacing or "S"
@@ -2515,32 +2723,71 @@ function M.updateHeroTurn(dt)
             state.heroFacing = target
             M.repaintHeroForFacing()
         end
-        applyHeroTurnScale(1)
+        -- 姿态已经是「正位」时不要每帧重复下发（每帧 3 次接口调用没必要）
+        local off = math.abs((state.heroTurnScale or 1) - 1) > 0.004
+                 or math.abs((state.heroTurnSY or 1) - 1) > 0.004
+                 or math.abs(state.heroTurnDX or 0) > 0.01
+                 or math.abs(state.heroTurnTilt or 0) > 0.01
+        if off then resetHeroTurnPose() end
+        -- ★ 明暗也要收尾（第 38 批）：万一在「最暗」那一帧被别的分支跳过，颜色会一直暗着
+        if math.abs((state.heroPrTintK or 1) - 1) > 0.004 then
+            state.heroPrTintK = 1
+            M.repaintHeroForFacing()
+        end
         return
     end
 
     local dur = state.heroTurnDur
     local t = (state.heroTurnT or 0) + (tonumber(dt) or 0)
     if t >= dur then
-        -- 转完了：收尾成「新朝向 + 原宽」
+        -- 转完了：收尾成「新朝向 + 正位」
         state.heroTurnT = 0
         state.heroTurnDur = 0
         state.heroTurnFrom = ""
         state.heroFacing = target
+        state.heroPrTintK = 1                -- 第 38 批：明暗一并回正
         M.repaintHeroForFacing()
-        applyHeroTurnScale(1)
+        resetHeroTurnPose()
         return
     end
 
     state.heroTurnT = t
     local p = t / dur
+    local k = math.sin(p * math.pi)              -- 0 → 1 → 0
+    -- ★ 第 38 批 · 明暗跟随：`tintK = 1 - DIM·k`，变化超过 4% 才重绘一次。
+    --   必须在「换图」判定之前更新，换图那一帧才用得上新的明暗 —— 少一次全量重绘。
+    --   ⚠️ 每触发一次都是 842 笔 × 4 次接口调用，一次转身最多 4 次，别把阈值调小。
+    local dim = tonumber(config.DEFAULT_HERO_TURN_DIM) or 0
+    if dim > 0.001 then
+        local want = 1 - dim * k
+        if math.abs(want - (state.heroPrTintK or 1)) > 0.04 then
+            state.heroPrTintK = want
+            M.repaintHeroForFacing()
+        end
+    end
     if p >= 0.5 and state.heroFacing ~= target then
         state.heroFacing = target
         M.repaintHeroForFacing()
     end
-    local squash = state.heroTurnSquashCfg or tonumber(config.DEFAULT_HERO_TURN_SQUASH) or 0.30
-    local k = math.sin(p * math.pi)              -- 0 → 1 → 0
-    applyHeroTurnScale(1 - (1 - squash) * k)
+    local squash = state.heroTurnSquashCfg or tonumber(config.DEFAULT_HERO_TURN_SQUASH) or 0.32
+    local cell = state.cellSize or 1
+    local dir = state.heroTurnDir or 0
+
+    state.heroTurnScale = 1 - (1 - squash) * k
+    -- 宽度补偿：p≥0.5 时先按「旧宽/新宽」撑回去，再在半程内平滑收回 1
+    --   → 换图那一帧的**屏幕**宽度前后相等，看不出「换了一张图」。
+    local fix = state.heroTurnWidthFix or 1
+    if fix ~= 1 and p >= 0.5 then
+        local t2 = (p - 0.5) * 2
+        state.heroTurnScale = state.heroTurnScale * (fix + (1 - fix) * t2)
+    end
+    -- 纵向补高：压扁时投影面积要守恒，只压不长就是纸片
+    state.heroTurnSY = 1 + (tonumber(config.DEFAULT_HERO_TURN_DEPTH) or 0) * k
+    -- 横向漂移：绕竖轴转时剪影中心会朝转动方向挪（近侧先到镜头前）
+    state.heroTurnDX = (tonumber(config.DEFAULT_HERO_TURN_DRIFT) or 0) * cell * k * dir
+    -- 惯性倾斜：上半身朝转向侧偏一点
+    state.heroTurnTilt = (tonumber(config.DEFAULT_HERO_TURN_TILT) or 0) * k * dir
+    applyHeroTurnPose()
 end
 
 -- ================================================================
@@ -2864,10 +3111,13 @@ function M.clear()
     state.objAnimFrom, state.objAnimTo = nil, nil
     state.objAnimT = 0
     -- ★ 第 37 批：转身过渡 + 步距基准也归零（否则新关卡第一帧会带着上一关的压扁系数）
+    --   ★ 第 38 批：立体感的三个量（纵向补高 / 漂移 / 倾斜）一起归零，
+    --     并且直接下发到根容器 —— 这里只清 state 的话，控件会停在上一关的姿态。
     state.heroTurnT = 0
     state.heroTurnDur = 0
     state.heroTurnFrom = ""
-    state.heroTurnScale = 1
+    state.heroPrTintK = 1
+    resetHeroTurnPose()
     state.stepDistRef = nil
 end
 
@@ -2914,6 +3164,15 @@ function M.build(data, mapKey)
             tonumber(config.DEFAULT_STEP_ANIM_TIME) or 0, turnDur, turnSq * 100,
             tonumber(config.DEFAULT_HERO_WALK_PERIOD) or 0,
             (turnDur > 0.01 and turnSq < 0.99) and "开" or "关（瞬切）"))
+        -- ★ 第 38 批：三个新增量各自生效与否，一眼能看出来（真机报「飘带还在动」先看这行）
+        pcall(print, string.format(
+            "[浮岛借木] 立体 补高=%.0f%% 漂移=%.3f格 倾斜=%.1f° | 飘带=%s 腿深=%.2f | 视角宽 S=%.2f A=%.2f D=%.2f W=%.2f",
+            (tonumber(config.DEFAULT_HERO_TURN_DEPTH) or 0) * 100,
+            tonumber(config.DEFAULT_HERO_TURN_DRIFT) or 0,
+            tonumber(config.DEFAULT_HERO_TURN_TILT) or 0,
+            (state.heroRibbonFix == false) and "跟手臂甩" or "固定",
+            tonumber(config.DEFAULT_HERO_LEG_SHADE) or 1,
+            heroViewWidthOf("S"), heroViewWidthOf("A"), heroViewWidthOf("D"), heroViewWidthOf("W")))
     end
     -- ★ 图层顺序日志：关卡构建完成时打一次完整层序（见 M.logLayerOrder）
     M.logLayerOrder("关卡构建完成")
@@ -2940,13 +3199,13 @@ function M.syncPlayerNow()
     M.updateHeroWalk(0)
     placeHeroPrims()                     -- 图元笔触：整幅画贴在脚底线上
     -- ★ 转身过渡也要归零（第 37 批）：万一是在「压扁到一半」时重开 / 换关，
-    --   小人会停在 30% 宽 —— 显式复位朝向、计时与缩放，别指望控件自己回正。
+    --   小人会停在 32% 宽 —— 显式复位朝向、计时与姿态，别指望控件自己回正。
     state.heroFacing = state.playerFacing or "S"
     state.heroTurnT = 0
     state.heroTurnDur = 0
     state.heroTurnFrom = ""
-    state.heroTurnScale = 1
-    utils.setScale(heroRootCtrl(), 1, 1)
+    state.heroPrTintK = 1
+    resetHeroTurnPose()
     state.stepDistRef = nil              -- 一步的屏幕距离基准（换关 / 改缩放后必须重算）
     utils.setPosition(state.playerShadowCtrl, px, py - playerFootOffset() - (state.cellSize or 1) * 0.01)
     local cell = state.cellSize or 1
