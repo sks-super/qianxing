@@ -201,11 +201,16 @@ M.containerWorld   = nil   -- ③ 世界总层：本身不画任何东西，只�
                            --   ★ 第 22 批：物体不再全部混在一个容器里。用户明确要求
                            --     「按控件容器方式创建，把图层固定为 角色 / 树木 / 石头 / 地面」，
                            --     于是世界层里再固定分出三个子容器，创建顺序即层级：
-M.containerRock    = nil   -- ③-a 石头层（在地面之上、树木之下）
+M.containerRock    = nil   -- ③-a 石头层（在地面之上、树木之下）—— 只管「站得比小人靠后」的柱子
 M.containerTree    = nil   -- ③-b 树木层（立树 / 倒木 / 木筏 / 木牌 / 倒·立过渡代理）
 M.containerPlayer  = nil   -- ③-c 角色层（**固定最上**：小人永不被地形或物体盖住）
                            --   ⚠️ 代价：角色不再参与「近处树挡住远处小人」的深度排序，
                            --     永远完整可见。这是固定四层结构的必然结果，也是用户要的效果。
+M.containerRockFront = nil -- ③-d ★ 第 42 批：石头·前景层（在小人之**上**）
+                           --   只装「脚线比小人更靠下 = 离镜头更近」的柱子，
+                           --   于是「小人站在柱子后面」会被柱子挡住，靠前则盖住柱子。
+                           --   ⚠️ 它同时也压住了树（树层固定在小人之下）—— 见
+                           --     config.DEFAULT_PILLAR_OCCLUDE 的说明，可填 -1 关掉。
 M.containerFx      = nil   -- ④ 特效（涟漪；刻意浮在世界之上，免得每步都重排一遍）
 M.containerHud     = nil   -- ⑤ 界面
 M.containerFade    = nil   -- ⑥ 黑幕过渡（最顶）
@@ -272,6 +277,10 @@ M.objectCtrls = {}        -- 地面物体池（树桩 / 老树根；通用矩形
 M.objectUsed = 0          -- 地面物体池本帧占用数量
 M.rockCtrls = {}          -- ★ 石头池（第 22 批独立出来）—— 只挂 containerRock
 M.rockUsed = 0
+M.rockFrontCtrls = {}     -- ★ 第 42 批：石头·前景池 —— 只挂 containerRockFront（小人之上）
+M.rockFrontUsed = 0       --   和 rockCtrls 一样，控件建在哪层就永远在哪层，所以必须分池
+M.rockSideTbl = {}        -- 每根柱子上一帧是「前 / 后」（下标 = state.rocks 的下标）
+M.rockSplitY = nil        -- 上次分层时用的「小人脚线」（屏幕 y）；没变就不用重新判断
 M.logCtrls = {}           -- ★ 木头池（倒木 / 木筏 / 被推立的树干）—— 只挂 containerTree
 M.logUsed = 0             --   ★ 池子按**所在容器**分开：池里的控件建在哪一层就永远在哪一层，
                           --     混池复用会把石头画到树木层、把木头画到地面层去。
@@ -360,7 +369,10 @@ M.heroFarArm = nil        -- 脚本参数 heroFarArm（侧面视角远侧手臂�
 -- ★ 石头 → 图腾柱（第 40 批）
 M.rockPillar = nil        -- 脚本参数 rockPillar（true = 柱子；false = 旧石块）
 M.rockPillarGlow = nil    -- 脚本参数 pillarGlow（true = 带辉光层；false = 只画核心层）
+M.pillarOcclude = nil     -- ★ 脚本参数 pillarOcclude（第 42 批：true = 柱子挡角色）
 M.rockDrawn = 0           -- 本帧画了几根柱子（可视窗裁剪后；只给自检日志用）
+M.rockFlat = 0            -- 本帧退化成色块的有几根（预算不够时；只给自检日志用）
+M.rockFrontDrawn = 0      -- 本帧画在「前景层」（盖住小人）的有几根
 M.stepDistRef = nil       -- 一步的屏幕距离基准（连按打断时按它缩放时长；换关 / 改缩放后清空）
 M.rippleCtrl = nil        -- 涟漪特效控件
 M.dustCtrl = nil          -- 落地 / 立木扬尘控件（和涟漪分开，可同时出现）
@@ -388,6 +400,7 @@ M.selfOrderedContainers = {
     containerRock = true,
     containerTree = true,
     containerPlayer = true,   -- 角色层内部不排序（同一时刻只有一个控件可见）
+    containerRockFront = true,-- ★ 第 42 批：前景石头层同样由 restackWorld 按深度键点名
 }
 
 -- ================================================================

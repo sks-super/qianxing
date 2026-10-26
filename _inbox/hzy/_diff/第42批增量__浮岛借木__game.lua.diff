@@ -1,0 +1,62 @@
+diff --git "a/_inbox/hzy/\346\265\256\345\262\233\345\200\237\346\234\250/game.lua" "b/_inbox/hzy/\346\265\256\345\262\233\345\200\237\346\234\250/game.lua"
+index da4c6d5..bcbb369 100644
+--- "a/_inbox/hzy/\346\265\256\345\262\233\345\200\237\346\234\250/game.lua"
++++ "b/_inbox/hzy/\346\265\256\345\262\233\345\200\237\346\234\250/game.lua"
+@@ -79,20 +79,23 @@ end
+ --   从下到上：**地面 → 石头 → 树木 → 角色**，再往上是特效 / HUD / 黑幕。
+ --     containerBg       海面整屏底
+ --     containerGround   地面层（内部再分 侧面 / 描边 / 顶面 / 树桩 四个子层）
+---     containerWorld    世界总层（不画东西，只是下面三层的父节点 + 镜头平移对象）
+---       containerRock   石头层
++--     containerWorld    世界总层（不画东西，只是下面几层的父节点 + 镜头平移对象）
++--       containerRock   石头层（站在小人**后面**的柱子）
+ --       containerTree   树木层（立树 / 倒木 / 木筏 / 木牌 / 过渡代理）
+---       containerPlayer 角色层（固定最上）
++--       containerPlayer 角色层
++--       containerRockFront ★ 第 42 批：石头·前景层（站在小人**前面**的柱子，会挡住角色）
+ --     containerFx / containerHud / containerFade
+ --   ★ 层级 = **容器创建顺序**，一次建好后不再变；不靠 SetAsLastSibling，
+ --     所以对象池扩容、窗口重铺都不会把角色埋进地图里。
+---   ★ 层与层之间不再做深度穿插（角色永远完整可见）；层**内部**仍按深度键排序。
++--   ★ 层与层之间不再做深度穿插；层**内部**仍按深度键排序。
++--   ★ 第 42 批唯一的例外是石头：要「挡住角色」就必须跨到角色上下两侧，
++--     于是拆成 rock / rockFront 两个固定层（两个池也分开了，见 state.rockFrontCtrls）。
+ -- ================================================================
+ local function ensureContainers()
+     local order = {
+         "containerBg",        -- ① 海面（整屏底）
+         "containerGround",    -- ② 地面层：水面网格 / 地块侧面 / 岛缘描边 / 草地顶面 / 树桩
+-        "containerWorld",     -- ③ 世界总层（下面三个固定物体层的父节点）
++        "containerWorld",     -- ③ 世界总层（下面四个固定物体层的父节点）
+         "containerFx",        -- ④ 特效（涟漪）
+         "containerHud",       -- ⑤ HUD（关卡名 / 步数 / 消息 / 提示）
+         "containerFade",      -- ⑥ 黑幕过渡（最顶）
+@@ -106,9 +109,9 @@ local function ensureContainers()
+             if not state[key] then okAll = false end
+         end
+     end
+-    -- ★ 三个固定物体层：**必须按 石头 → 树木 → 角色 的顺序建**（这就是层序）。
+-    --   挂在世界总层下面，镜头只平移世界总层，三层一起跟着走。
+-    for _, key in ipairs({ "containerRock", "containerTree", "containerPlayer" }) do
++    -- ★ 四个固定物体层：**必须按 石头 → 树木 → 角色 → 石头(前景) 的顺序建**（这就是层序）。
++    --   挂在世界总层下面，镜头只平移世界总层，几层一起跟着走。
++    for _, key in ipairs({ "containerRock", "containerTree", "containerPlayer", "containerRockFront" }) do
+         if not state[key] then
+             state[key] = createContainer(state.containerWorld)
+             changed = true
+@@ -798,10 +801,14 @@ function OnStart()
+ 
+     -- ★ 石头 → 图腾柱（第 40 批）
+     --   rockPillar = -1 → 回到「两块纯色矩形」的旧石块（0 / 空 = 按 config 默认，即柱子）。
+-    --   pillarGlow = -1 / 0 → 只画核心层（少 45% 控件，柱子会闷一点）。
++    --   pillarGlow = -1 / 0 → 只画核心层（少 38% 控件，柱子会闷一点）。
+     --   ⚠️ 只是画法：石头照样不可通行、推不动，规则层一行没动。
+     state.rockPillar = paramSwitch("rockPillar", config.DEFAULT_ROCK_PILLAR)
+     state.rockPillarGlow = paramSwitch("pillarGlow", config.DEFAULT_PILLAR_GLOW)
++    --   pillarOcclude = -1 → 柱子不再遮挡角色（石头层退回单层，控件数略省）。
++    --   ★ 第 42 批：柱子按「脚线比小人更靠下」分到前景层（在小人之上），
++    --     于是「小人站在柱子后面」会被柱子挡住。关掉就没有这个遮挡。
++    state.pillarOcclude = paramSwitch("pillarOcclude", config.DEFAULT_PILLAR_OCCLUDE)
+ 
+     -- ★ 地图主题（第 34 批加入，第 35 批默认回退到海面）
+     --   skyIsland = 1 → 空中岛屿；0 / 空 / -1 → 原来的海面主题（★ 现在默认这一支）。
