@@ -1,0 +1,114 @@
+diff --git "a/_inbox/hzy/\346\265\256\345\262\233\345\200\237\346\234\250/level.lua" "b/_inbox/hzy/\346\265\256\345\262\233\345\200\237\346\234\250/level.lua"
+index 8a46ad0..b75a2ea 100644
+--- "a/_inbox/hzy/\346\265\256\345\262\233\345\200\237\346\234\250/level.lua"
++++ "b/_inbox/hzy/\346\265\256\345\262\233\345\200\237\346\234\250/level.lua"
+@@ -2293,13 +2293,16 @@ end
+ -- 把某个部件按「关节 + 前后位移 + 抬脚高度」重新摆一次
+ --   ★ 腿走的是**位移**（迈出去 / 抬起来），不是旋转：
+ --     这个角色穿长裙，腿一转就会看到裙子从腰上撕开；位移只让脚整体挪一点，剪影不裂。
+-local function setPartPlace(pi, dx, lift)
++--   ★ 第 36 批：`dx` / `dy` 都是**格**（相对关节的偏移），`lift` 是**像素**。
++--     dy 是给「正面 / 背面视角按深度错位」留的口子，现在正面不做前后位移（见下面的说明）。
++local function setPartPlace(pi, dx, dy, lift)
+     local boxes = state.heroPrBoxes
+     local piv = state.heroPrPivots
+     if not boxes or not boxes[pi] or not piv or not piv[pi] then return end
+     local cell = state.cellSize or 1
+-    utils.setPosition(boxes[pi], (piv[pi].x + (dx or 0)) * cell,
+-                      (piv[pi].y - 0.5) * cell + (lift or 0))
++    utils.setPosition(boxes[pi],
++                      (piv[pi].x + (dx or 0)) * cell,
++                      (piv[pi].y - 0.5 + (dy or 0)) * cell + (lift or 0))
+ end
+ 
+ function M.updateHeroWalk(dt)
+@@ -2328,24 +2331,50 @@ function M.updateHeroWalk(dt)
+     local sA = math.sin(phase)
+     local sB = -math.sin(phase)          -- 另一条腿反相
+ 
+-    -- 手臂：绕肩关节摆（手臂是独立的窄条，转起来不会撕坏别处）
+-    local armA = (config.DEFAULT_HERO_WALK_ARM or 13) * math.sin(phase) * amp
+-    setPartRot(PR_ARM_L, -armA)
+-    setPartRot(PR_ARM_R, armA)
+-
+-    -- 腿：前后迈 + 抬脚（位移，不旋转）
+-    --   ⚠️ 单位：stepX 必须是**格**（setPartPlace 内部会再乘格宽），
+-    --      抬脚 lift 是**像素**（它直接加在算好的 y 上）。这里搞反过一次，
+-    --      腿被甩到身体两侧各 0.5 格远 —— 真机上一眼就能看出来。
+-    local stepX = (config.DEFAULT_HERO_WALK_STEP_X or 0.03) * amp
+-    local liftMax = cell * (config.DEFAULT_HERO_WALK_LIFT or 0.03) * amp
+-    local legA = (config.DEFAULT_HERO_WALK_LEG or 0) * math.sin(phase) * amp
+-    setPartRot(PR_LEG_L, legA)
+-    setPartRot(PR_LEG_R, -legA)
++    -- ★ 第 36 批：动作要按**角色朝向**投影到屏幕 —— 2.5D 正交视角里没有真正的 Z 轴，
++    --   「前后」在两个视角家族里落在不同的屏幕上：
++    --     · 侧面（A 左 / D 右）：前后 = 屏幕**左右** → 腿可以真的前后迈、手臂绕肩转
++    --     · 正面 / 背面（S 南 / W 北）：前后 = 屏幕**上下（深度）**，而抬脚也是向上，
++    --       两者互相抵消 → 这个视角只做「抬脚 + 重心起伏」，不做前后位移、不转腿。
++    --   ⚠️ 第 17 批是一律按屏幕 x 位移的：幅度只有 0.03 格（≈2px）时看不出问题，
++    --      第 36 批一放大到 0.085 格，正面视角立刻变成「两条腿左右劈叉」。
++    local facing = state.playerFacing or "S"
++    local sideView = (facing == "A" or facing == "D")
++    local dirX = 0
++    if facing == "D" then dirX = 1 elseif facing == "A" then dirX = -1 end
++
++    local armA = (config.DEFAULT_HERO_WALK_ARM or 30) * math.sin(phase) * amp
++    local legA = (config.DEFAULT_HERO_WALK_LEG or 8) * math.sin(phase) * amp
++    local stepX = (config.DEFAULT_HERO_WALK_STEP_X or 0.06) * amp
++    local liftMax = cell * (config.DEFAULT_HERO_WALK_LIFT or 0.055) * amp
+     local upL = (sA > 0 and sA or 0)
+     local upR = (sB > 0 and sB or 0)
+-    setPartPlace(PR_LEG_L, -sA * stepX, upL * liftMax)
+-    setPartPlace(PR_LEG_R, -sB * stepX, upR * liftMax)
++
++    if sideView then
++        -- 侧面：手臂绕肩前后摆（这是「在走路」最主要的信号），腿前后迈 + 轻微转动
++        setPartRot(PR_ARM_L, -armA)
++        setPartRot(PR_ARM_R, armA)
++        setPartPlace(PR_ARM_L, 0, 0, 0)
++        setPartPlace(PR_ARM_R, 0, 0, 0)
++        setPartRot(PR_LEG_L, legA)
++        setPartRot(PR_LEG_R, -legA)
++        setPartPlace(PR_LEG_L, dirX * sA * stepX, 0, upL * liftMax)
++        setPartPlace(PR_LEG_R, dirX * sB * stepX, 0, upR * liftMax)
++    else
++        -- 正面 / 背面：不转腿（会劈叉、会看到裙子撕开），只抬脚 —— 一条腿抬起、一条踩地，
++        --   配合整幅画的上下起伏（bob）就能读出「在迈步」。
++        --   ★ 手臂给一个小角度反相摆（12°）：完全不动会读成「整体滑行」，
++        --     给到侧面那档 30° 又会横着张开像举双手。
++        local armF = (config.DEFAULT_HERO_WALK_ARM_FRONT or 12) * math.sin(phase) * amp
++        setPartRot(PR_ARM_L, -armF)
++        setPartRot(PR_ARM_R, armF)
++        setPartPlace(PR_ARM_L, 0, 0, 0)
++        setPartPlace(PR_ARM_R, 0, 0, 0)
++        setPartRot(PR_LEG_L, 0)
++        setPartRot(PR_LEG_R, 0)
++        setPartPlace(PR_LEG_L, 0, 0, upL * liftMax)
++        setPartPlace(PR_LEG_R, 0, 0, upR * liftMax)
++    end
+ end
+ 
+ local function placeHeroPrims()
+@@ -2353,11 +2382,21 @@ local function placeHeroPrims()
+     local cell = state.cellSize or 1
+     utils.setSize(state.heroPrBox, cell, cell)
+     -- 走路时整幅画轻微上下浮动（一个步幅两次），像身体重心在起落；静止时不动
++    --   ★ 第 36 批：幅度提到 config 里（`DEFAULT_HERO_WALK_BOB`），原来是硬编码 0.012 格
++    --     —— 在 cell=99 时只有 1px 出头，等于没有。
++    --   ★ 第 36 批再加「左右倾」（`DEFAULT_HERO_WALK_TILT`）：整幅画绕**身体中心**晃 2.5°，
++    --     读作重心在两脚之间转移。这个角色长袍遮腿，正面视角光靠抬脚看不出在走，
++    --     左右倾是剪影层面最有效的补偿（6 个部件都在这个容器里，一起转，不会撕裂）。
+     local amp = state.heroWalkAmp or 0
+     local bob = 0
++    local tilt = 0
+     if amp > 0.01 then
+-        bob = cell * 0.012 * amp * math.abs(math.sin((state.heroWalkPhase or 0) * 2))
++        local phase = state.heroWalkPhase or 0
++        local bobRatio = tonumber(config.DEFAULT_HERO_WALK_BOB) or 0.045
++        bob = cell * bobRatio * amp * math.abs(math.sin(phase * 2))
++        tilt = (tonumber(config.DEFAULT_HERO_WALK_TILT) or 2.5) * amp * math.sin(phase)
+     end
++    utils.setRotation(state.heroPrBox, tilt)
+     utils.setPosition(state.heroPrBox, state.playerVisX, state.playerVisY + cell * 0.5 + bob)
+ end
+ 
