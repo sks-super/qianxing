@@ -1,0 +1,15 @@
+diff --git "a/_inbox/hzy/\346\265\256\345\262\233\345\200\237\346\234\250/game.lua" "b/_inbox/hzy/\346\265\256\345\262\233\345\200\237\346\234\250/game.lua"
+index 80d7511..925f79d 100644
+--- "a/_inbox/hzy/\346\265\256\345\262\233\345\200\237\346\234\250/game.lua"
++++ "b/_inbox/hzy/\346\265\256\345\262\233\345\200\237\346\234\250/game.lua"
+@@ -782,8 +782,8 @@ function OnStart()
+     state.view25d = paramSwitch("view25d", config.DEFAULT_VIEW_25D)
+     state.waterGridLines = paramSwitch("waterGridLines", config.DEFAULT_WATER_GRID_LINES)
+ 
+-    -- ★ 地图主题（第 34 批）：空中岛屿 / 海面
+-    --   skyIsland = 1 / 空 / 0 → 空中岛屿（默认）；-1 → 回到原来的海面主题。
++    -- ★ 地图主题（第 34 批加入，第 35 批默认回退到海面）
++    --   skyIsland = 1 → 空中岛屿；0 / 空 / -1 → 原来的海面主题（★ 现在默认这一支）。
+     --   ⚠️ 写 "sky"/"sea" 字符串而不是布尔：下游要按主题分支（背景 / 岛底 / 顶面画法），
+     --     以后加第三种（夜空 / 熔岩）只需要再加一个字符串，不用改一堆 if。
+     state.theme = paramSwitch("skyIsland", config.DEFAULT_SKY_ISLAND) and "sky" or "sea"
