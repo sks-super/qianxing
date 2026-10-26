@@ -782,13 +782,14 @@ function OnStart()
     state.view25d = paramSwitch("view25d", config.DEFAULT_VIEW_25D)
     state.waterGridLines = paramSwitch("waterGridLines", config.DEFAULT_WATER_GRID_LINES)
 
-    -- ★ 镜头放大（可选）：地块 / 树 / 石头 / 小人 / 旗子一律按倍数放大。
-    --   0 / 空 = 没配 = 用 config 默认（DEFAULT_VIEW_ZOOM = 2 倍）；
+    -- ★ 镜头放大（可选）：地块 / 树 / 石头 / 小人 / 旗子一律按倍数放大；海面与 HUD 不放大。
+    --   0 / 空 = 没配 = 用 config 默认（DEFAULT_VIEW_ZOOM = 4.5 倍）；
     --   填 1 = 退回「整张地图正好一屏」的老样子。
     --   ⚠️ 不能写 0 当「关」：真机里没填的数字参数就是 0。
+    --   ★ 第 33 批：上限 4 → 6 —— 默认值已经是 4.5，旧上限会把它夹回 4（放大 1.5 倍失效）。
     local vz = getParamNumber("viewZoom", config.DEFAULT_VIEW_ZOOM)
     if vz == nil or vz <= 0 then vz = config.DEFAULT_VIEW_ZOOM end
-    state.viewZoom = utils.clamp(vz, 0.5, 4)
+    state.viewZoom = utils.clamp(vz, 0.5, 6)
     state.camFollow = config.DEFAULT_CAM_FOLLOW or 1
 
     -- ★ 参数快照：真机「为什么全是纯色块 / 小人是个橙块」时，先看这一行。
