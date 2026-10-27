@@ -1,0 +1,67 @@
+--- a/_inbox/hzy/_tools/gen_hero_lineart_prims.mjs
++++ b/_inbox/hzy/_tools/gen_hero_lineart_prims.mjs
+@@ -32,9 +32,33 @@
+ //    方格排列要不漏四角得放大到 ≥1.414× —— 1.25× 每个格子四角都留一个缝，
+ //    地图（海面 / 格线）就从这些缝里透出来，在 111px 的小人身上就是一颗颗小点。
+ //    现在两手一起改：① **砖缝错行**（奇数行右移半格）→ 覆盖半径要求从 0.707 格降到 0.559 格；
+-//    ② 放大到 1.35× 留余量。于是纸面成了实心白块。
+-const PAPER_GROW = 1.35
++//    ② 放大到 1.45× 留余量。于是纸面成了实心白块（1.35× 时补上侧视还会漏，见 PAPER_SPILL）。
++const PAPER_GROW = 1.45
+ const PAPER_STAGGER = 0.5
++// ★★ 铺纸面的判据要**把剪影往外膨胀一点**：原来只认「椭圆中心落在剪影里」，
++//    可剪影最外那一圈（头发尖、指尖、脚后跟）宽度不到 1 格，中心点根本落不进去
++//    → 那里一块纸面都没有 → 地图格线从头发上缘 / 腿外侧透出来。
++//    （实测：朝右视角内部有 24% 没被盖住，全在轮廓外缘那一圈。）
++//    膨胀 0.8 格、椭圆半径 1.45/2=0.725 格 → 纸面只溢出轮廓 ~0.08 格（不到 1px）。
++const PAPER_SPILL = 0.8
++
++/** 掩码膨胀（r 以掩码像素计）*/
++function dilateMask(m, w, h, r) {
++  const out = new Uint8Array(w * h)
++  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
++    if (!m[y * w + x]) continue
++    for (let dy = -r; dy <= r; dy++) {
++      const yy = y + dy
++      if (yy < 0 || yy >= h) continue
++      const span = Math.floor(Math.sqrt(r * r - dy * dy))
++      for (let dx = -span; dx <= span; dx++) {
++        const xx = x + dx
++        if (xx >= 0 && xx < w) out[yy * w + xx] = 1
++      }
++    }
++  }
++  return out
++}
+ 
+ const JOINTS = {
+   back: [0, 0.5],
+@@ -202,19 +226,21 @@
+     const toY = (my) => (1 - (my - by0) / bh) * TARGET_H
+     const cwN = (cw / bw) * (TARGET_H * bw / bh)
+     const chN = (ch / bh) * TARGET_H
+-    const px = (mx, my) => {
++    // ★ 判据用的不是 solid，而是**膨胀 PAPER_SPILL 格**之后的版本（见 PAPER_SPILL 的说明）
++    const growRpx = Math.max(1, Math.round(cw * PAPER_SPILL))
++    const grow = dilateMask(solid, mk.w, mk.h, growRpx)
++    const inGrow = (mx, my) => {
+       const X = Math.max(0, Math.min(mk.w - 1, Math.round(mx)))
+       const Y = Math.max(0, Math.min(mk.h - 1, Math.round(my)))
+-      return solid[Y * mk.w + X]
++      return grow[Y * mk.w + X]
+     }
+-    for (let gy = 0; gy < rowsN; gy++) {
++    for (let gy = -1; gy <= rowsN; gy++) {
+       const stagger = (gy % 2) ? PAPER_STAGGER : 0      // ★ 砖缝错行（见 PAPER_GROW 的说明）
+-      for (let gx = -1; gx <= PAPER_COLS; gx++) {
++      for (let gx = -2; gx <= PAPER_COLS + 1; gx++) {
+         const cx = bx0 + (gx + stagger + 0.5) * cw
+         const cy = by0 + (gy + 0.5) * ch
+-        if (cx < bx0 - cw || cx > bx1 + cw) continue
+-        // 判据：椭圆中心在剪影里就铺（多出去的半格由 PAPER_GROW 负责，边缘只溢出 ~0.5px）
+-        if (!px(cx, cy)) continue
++        // 判据：椭圆中心落在「膨胀后的剪影」里就铺 —— 只认 solid 会让轮廓最外那一圈没纸
++        if (!inGrow(cx, cy)) continue
+         parts.back.push({
+           x: toX(cx), y: toY(cy),
+           w: cwN * PAPER_GROW, h: chN * PAPER_GROW, rot: 0,
