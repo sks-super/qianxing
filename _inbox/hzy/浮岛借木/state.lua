@@ -358,6 +358,13 @@ M.heroFacing = "S"        -- 当前画在屏幕上的朝向（W/S/A/D）
 M.heroTurnT = 0           -- 本次转身已播放时长（秒）
 M.heroTurnDur = 0         -- 本次转身总时长（秒）；0 = 没在转身
 M.heroTurnFrom = ""       -- 这次转身是从哪个朝向转过来的（排查 / 日志用）
+-- ★ 第 46 批：场景道具（树 / 倒木 / 立木）的图元笔触池
+--   按 kind 分开（PINE / LOG_X / LOG_Z / TRUNK），每个 pool 里是同一套笔的控件。
+M.propPrPools = {}        -- kind → 控件池
+M.propPrUse = {}          -- kind → 本帧已用笔数（每帧归零，见 propPrBegin）
+M.propPrTotal = 0         -- 本帧画出的道具墨笔总数（图层日志 / 自检用）
+M.propPaperCtrls = {}     -- 道具纸面用的**白色矩形**池（和墨线分开：矩形能无缝平铺）
+M.propPaperUsed = 0       -- 本帧用了多少个纸面矩形
 M.heroTurnScale = 1       -- 当前水平缩放（1 = 正常，<1 = 转身压扁中）；避免重复下发
 M.heroTurnSquashCfg = 0.30 -- 本次转身用的压扁系数（起转那一刻从 config 抓一次，途中改了参数也不跳）
 -- ★ 转身的立体感（第 38 批）：只压扁读作「纸片被挤」，要补三个量才像绕竖轴转。

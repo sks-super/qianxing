@@ -41,7 +41,8 @@ local config = require("config")
 local utils = require("utils")
 local world = require("world")
 
-M.BUILD = "b45"   -- 版本戳：真机日志里能一眼看出用的是哪一版文件
+M.BUILD = "b46"   -- 版本戳：真机日志里能一眼看出用的是哪一版文件
+                  --   b46 = 第 46 批：树木 / 倒木 / 立木换成线稿图元（propPrims.lua）
                   --   b45 = 第 45 批：线稿风（inkStyle：白纸 + 墨线）+ 角色换成线稿图元小人
                   --   b44 = 第 44 批：柱子遮挡改成**纯矩形相交**（小人 / 树 / 倒木 / 木筏都算遮挡物）
                   --   b43 = 第 43 批：柱子只在「同列且真的盖得住小人」时才进前层 —— 走位不再改变柱子外观
@@ -95,6 +96,20 @@ do
 end
 
 M.HERO_ART_LOADED = (heroArt ~= nil)   -- 供 game.lua 打版本日志；false 也完全不影响画面
+
+-- ★ 场景道具的「图元笔触」数据（第 46 批）：树 / 倒木 / 立木都换成线稿图元。
+--   来源同样是用户导出的「超限素材组」脚本（旋转椭圆），由 _tools/gen_prop_lineart_prims.mjs
+--   转成 propPrims.lua。没有这个模块就自动退回纯色矩形（和线稿风之前一模一样），**不会白屏**。
+--   ⚠️ 新加的 .lua 必须先在「客户端脚本资源管理器」里建好映射才会被打包，没建映射时
+--      require 会失败 → 退回纯色（这也是本条用 pcall 的原因）。
+local propPrims = nil
+do
+    local ok, mod = pcall(require, "propPrims")
+    if ok and type(mod) == "table" and type(mod.PINE) == "table" then
+        propPrims = mod
+    end
+end
+M.PROP_PRIMS_LOADED = (propPrims ~= nil)
 
 -- >>> HERO_BUILTIN BEGIN（由 _tools/emit_hero_builtin.py 生成，别手改）
 -- 小人的像素画底稿：heroArt.lua 没导入时用它，保证「不引用任何脚本/图片」也能画出小人。
@@ -767,6 +782,7 @@ local RESTACK_POOLS = {
     { "rockCtrls",     "rockUsed" },     -- ★ 石头层（第 22 批独立容器）
     { "rockFrontCtrls","rockFrontUsed" },-- ★ 第 42 批：石头·前景层（在小人之上，会挡住角色）
     { "logCtrls",      "logUsed" },      -- ★ 木头（倒木 / 木筏 / 立木）—— 树木层
+    { "propPaperCtrls", "propPaperUsed" }, -- ★ 第 46 批：道具纸面（白色矩形，压在墨线下面）
     { "treeCtrls",     "treeUsed" },
     { "goalCtrls",     "goalUsed" },
     -- ★ 木头倒 / 立的过渡代理：它也站在世界里（要参与「近处压远处」），
@@ -798,7 +814,9 @@ local LAYER_LOG_SPEC = {
     { "containerTree",   "⑦树木",       { { "logCtrls",     "logUsed" },
                                             { "treeCtrls",    "treeUsed" },
                                             { "goalCtrls",    "goalUsed" },
-                                            { "objProxyCtrls", "objProxyUsed" } } },
+                                            { "objProxyCtrls", "objProxyUsed" },
+                                            { "propPrTotal",  "propPrTotal" },
+                                            { "propPaperUsed", "propPaperUsed" } } },
     { "containerPlayer", "⑧角色",       nil },
     { "containerRockFront", "⑨石头·前景(挡角色)", { { "rockFrontCtrls", "rockFrontUsed" } } },
     { "containerFx",     "⑩特效",       nil },
@@ -842,6 +860,25 @@ function M.restackWorld()
         end
     end
 
+    -- ★ 第 46 批：道具图元池（树 / 倒木 / 立木）也要参与排序 —— 它们按 kind 分开，
+    --   写不进上面那张静态表，只能在这里补一遍（kind 名排序，保证每帧顺序一致）。
+    if state.propPrPools then
+        local kinds = {}
+        for kind in pairs(state.propPrPools) do kinds[#kinds + 1] = kind end
+        table.sort(kinds)
+        for _, kind in ipairs(kinds) do
+            local pool = state.propPrPools[kind]
+            local used = (state.propPrUse or {})[kind] or 0
+            for i = 1, used do
+                local item = pool and pool[i]
+                if item and item.c then
+                    seq = seq + 1
+                    list[#list + 1] = { c = item.c, k = tonumber(item.key) or 999999, s = seq }
+                end
+            end
+        end
+    end
+
     -- ★ 第 22 批：小人**不再参与**这里的排序。
     --   角色有独立的、固定最上的 containerPlayer，排序对它没有任何意义
     --   （排序只在同一父容器内生效），反而会把身体 / 头 / 像素画容器的先后搅乱。
@@ -860,6 +897,7 @@ function M.restackWorld()
     for _, pair in ipairs(RESTACK_POOLS) do
         sig[#sig + 1] = tostring(state[pair[2]] or 0)
     end
+    sig[#sig + 1] = tostring(state.propPrTotal or 0)   -- ★ 第 46 批：道具图元笔数
     if #list > 0 then
         sig[#sig + 1] = tostring(list[1].k)
         sig[#sig + 1] = tostring(list[#list].k)
@@ -903,8 +941,109 @@ local function paintInk(pool, i, parent, slot, cx, cy, w, h, hex, alpha, key, t)
     return paint(pool, i, parent, slot, cx, cy, w, h, hex, alpha, key)
 end
 
--- 探一次：这个槽位在当前存档里**实际**能建成素材控件吗？
---   （素材元件实例化失败会当场回退，所以问池子里的第 1 个控件最准）
+-- ================================================================
+-- ★ 第 46 批：场景道具（树 / 倒木 / 立木）的「图元笔触」
+--   一棵树 / 一根木头 = 一百到三百多个旋转椭圆，和角色是同一套笔法。
+--   数据在 propPrims.lua：坐标单位「格」、原点在**底边中点**、y 向上，
+--   所以只要给 (cx, baseY) 和 cell 就能摆到位。
+--   每个道具两个部件：1 纸面（白色底衬） → 2 墨线。
+--     ★ 纸面必须画在墨之前：导出的图元只有墨、身体是透明的，
+--       不铺纸面的话地图格线会从树身 / 木头里透出来（第 45 批在同角色上踩过）。
+--   ★ 池按 kind 分开（不同 kind 笔数差很多：树 178 / 立木 219 / 南北倒木 320），
+--     游标 `state.propPrUse[kind]` 每帧归零，`propPrEnd` 把多出来的控件藏掉。
+--   ★ 控件直接挂在**树木层**，和 logCtrls / treeCtrls 一起参与 restackWorld 排序
+--     （见 restackWorld 里的动态池那段）—— 否则创建工作做得再对，远近关系也是错的。
+-- ================================================================
+local function propPrPool(kind)
+    state.propPrPools = state.propPrPools or {}
+    local pool = state.propPrPools[kind]
+    if not pool then
+        pool = {}
+        state.propPrPools[kind] = pool
+    end
+    return pool
+end
+
+local function propPrBegin()
+    state.propPrUse = state.propPrUse or {}
+    for k in pairs(state.propPrUse) do state.propPrUse[k] = 0 end
+    state.propPrTotal = 0
+    state.propPaperUsed = 0
+end
+
+local function propPrEnd()
+    for kind, pool in pairs(state.propPrPools or {}) do
+        poolTrim(pool, (state.propPrUse or {})[kind] or 0)
+    end
+    poolTrim(state.propPaperCtrls, state.propPaperUsed or 0)
+end
+
+-- 画一个道具；失败（没有数据 / 建不出控件）返回 false，调用方退回纯色矩形
+local function paintProp(kind, parent, cx, baseY, baseKey)
+    local data = propPrims and propPrims[kind]
+    if type(data) ~= "table" then return false end
+    local cell = state.cellSize or 1
+    local key0 = tonumber(baseKey) or 0
+    local prefabId = state.heroPrPrefabId or 0
+    if prefabId <= 0 then prefabId = config.DEFAULT_PREFAB_HERO_PRIMS end
+    local imageId = state.heroPrImageId or 0
+    if imageId <= 0 then imageId = config.DEFAULT_HERO_PRIMS_IMAGE end
+
+    -- ① 纸面：白色**矩形**（按行合并出来的），先画，key 比墨小
+    local paper = propPrims[kind .. "_PAPER"]
+    if type(paper) == "table" then
+        local pn = tonumber(paper[1]) or 0
+        local pi = (state.propPaperUsed or 0) + 1
+        local pslot = rectSlot()
+        local k = 2
+        for _ = 1, pn do
+            pi = paint(state.propPaperCtrls, pi, parent, pslot,
+                       cx + (paper[k] or 0) * cell, baseY + (paper[k + 1] or 0) * cell,
+                       (paper[k + 2] or 0) * cell, (paper[k + 3] or 0) * cell,
+                       "FFFFFF", 255, key0 - 0.006 + pi * 0.0000005)
+            k = k + 4
+        end
+        state.propPaperUsed = pi - 1
+    end
+
+    -- ② 墨线：旋转椭圆，和角色同一套笔法
+    state.propPrUse = state.propPrUse or {}
+    local pool = propPrPool(kind)
+    local i = (state.propPrUse[kind] or 0) + 1
+    local startI = i
+    for pi = 1, #data do
+        local part = data[pi]
+        local n = (type(part) == "table") and (tonumber(part[3]) or 0) or 0
+        local k = 4
+        for e = 1, n do
+            local item = pool[i]
+            if not item then
+                local ctrl = utils.createControl(prefabId, 0, 0, 1, 1, nil, parent, imageId)
+                if not ctrl then
+                    state.propPrUse[kind] = i - 1
+                    return false
+                end
+                pcall(function() ctrl.imageType = Enum.ImageType.Stretch end)
+                item = { c = ctrl }
+                pool[i] = item
+            end
+            local c = item.c
+            utils.setSize(c, (part[k + 2] or 0) * cell, (part[k + 3] or 0) * cell)
+            utils.setPosition(c, cx + (part[k] or 0) * cell, baseY + (part[k + 1] or 0) * cell)
+            utils.setRotation(c, part[k + 4] or 0)
+            utils.setAlpha(c, string.format("%06X", math.floor(part[k + 5] or 0)), part[k + 6] or 255)
+            utils.setVisible(c, true)
+            item.key = key0 + e * 0.00005
+            i = i + 1
+            k = k + 7
+        end
+    end
+    state.propPrUse[kind] = i - 1
+    state.propPrTotal = (state.propPrTotal or 0) + (i - startI)
+    return true
+end
+
+-- 探一次：这个槽位在当前存档里**实际**能建成素材控件吗？--   （素材元件实例化失败会当场回退，所以问池子里的第 1 个控件最准）
 local function slotUsesArt(pool, parent, slot)
     if not slot.art then return false end
     local item = poolGet(pool, 1, parent, slot)
@@ -2056,6 +2195,11 @@ function M.rebuildObjects()
 
     local function keyOf(r, sub, stack) return objKey(r, sub, stack) end
 
+    -- ★ 第 46 批：道具图元池的游标每帧归零（一次 rebuildObjects = 一帧的全部道具）
+    propPrBegin()
+    -- ★ 线稿风 + 有 propPrims 数据时才走图元笔触；否则一切照旧走纯色矩形
+    local propArt = state.inkStyle and (propPrims ~= nil)
+
     -- 脚下的接触阴影：让物体真的「贴」在地上，而不是浮着
     --   ★ 单独一个池（state.shadowCtrls）：椭圆的图源在建控件时就要打上，
     --     和物体池的纯色矩形不是同一种控件，混在一个池里迟早画串。
@@ -2081,6 +2225,12 @@ function M.rebuildObjects()
     --   ★ 只画可视窗附近的（整图最多 41 个桩位，隔一屏画一次，控件数可控）。
     local win = state.terrainWin or terrainWindow()
     local stumpMargin = 3
+    -- ★ 第 46 批：道具（树 / 木头）也按可视窗裁剪 —— 整图 41 棵树，全画的话
+    --   41 × 178 笔 ≈ 7300 个控件，真机扛不住。窗口外的不画（控件留着，只是隐藏）。
+    local function inWin(c, r)
+        return c >= (win.c0 - stumpMargin) and c <= (win.c1 + stumpMargin)
+           and r >= (win.r0 - stumpMargin) and r <= (win.r1 + stumpMargin)
+    end
     local stumpH = zVis() * cell                       -- 树桩恒 1 层（= DEFAULT_Z_VIS）
     local stumpW = cell * (config.DEFAULT_STUMP_W or 0.34)
     local stumpTop = cell * (config.DEFAULT_STUMP_TOP or 0.05)
@@ -2122,10 +2272,18 @@ function M.rebuildObjects()
     for _, lg in ipairs(state.logs) do
         if not hideAnimAt(lg.c, lg.r) then
             local sp = lyingShape(lg.c, lg.r, lg.dir, lg.z)
-            shadow(sp.cx, entBaseY(lg.c, lg.r, lg.z), cell * 0.80, lg.r,
-                   stackOf(lg.c, lg.r, lg.z))
-            li = paintLyingLog(logPool, li, parentTree, rect, sp, palette,
-                               keyOf(lg.r, SUB_LOG, stackOf(lg.c, lg.r, lg.z)))
+            local stack = stackOf(lg.c, lg.r, lg.z)
+            shadow(sp.cx, entBaseY(lg.c, lg.r, lg.z), cell * 0.80, lg.r, stack)
+            -- ★ 第 46 批：线稿风的倒木直接画素材图元（东西躺 / 南北躺各一套）
+            local drew = false
+            if propArt and inWin(lg.c, lg.r) then
+                drew = paintProp(sp.alongX == 1 and "LOG_X" or "LOG_Z", parentTree,
+                                 sp.cx, sp.cy - sp.h * 0.5, keyOf(lg.r, SUB_LOG, stack))
+            end
+            if not drew then
+                li = paintLyingLog(logPool, li, parentTree, rect, sp, palette,
+                                   keyOf(lg.r, SUB_LOG, stack))
+            end
         end
     end
 
@@ -2136,7 +2294,14 @@ function M.rebuildObjects()
         local sp = lyingShape(rf.c, rf.r, rf.dir, rf.z)
         local stack = stackOf(rf.c, rf.r, rf.z)
         shadow(sp.cx, entBaseY(rf.c, rf.r, rf.z), cell * 0.86, rf.r, stack)
-        li = paintLyingLog(logPool, li, parentTree, rect, sp, palette, keyOf(rf.r, SUB_RAFT, stack))
+        local drew = false
+        if propArt and inWin(rf.c, rf.r) then
+            drew = paintProp(sp.alongX == 1 and "LOG_X" or "LOG_Z", parentTree,
+                             sp.cx, sp.cy - sp.h * 0.5, keyOf(rf.r, SUB_RAFT, stack))
+        end
+        if not drew then
+            li = paintLyingLog(logPool, li, parentTree, rect, sp, palette, keyOf(rf.r, SUB_RAFT, stack))
+        end
         local crossH = cell * LOG_THICK * 0.82
         local crossW = cell * 0.94
         if sp.alongX == 1 then
@@ -2179,8 +2344,17 @@ function M.rebuildObjects()
         shadow(x, base, cell * 0.72, tr.r, stack)
         if tr.bare then
             if not hideAnimAt(tr.c, tr.r) then
-                li = paintStandingTrunk(logPool, li, parentTree, rect, standingShape(tr.c, tr.r, tr.z),
-                                        palette, keyOf(tr.r, SUB_TREE, stack))
+                -- ★ 第 46 批：立着的无叶树干 → TRUNK 素材
+                local drew = false
+                if propArt and inWin(tr.c, tr.r) then
+                    local sp2 = standingShape(tr.c, tr.r, tr.z)
+                    drew = paintProp("TRUNK", parentTree, sp2.cx, sp2.cy - sp2.h * 0.5,
+                                     keyOf(tr.r, SUB_TREE, stack))
+                end
+                if not drew then
+                    li = paintStandingTrunk(logPool, li, parentTree, rect, standingShape(tr.c, tr.r, tr.z),
+                                            palette, keyOf(tr.r, SUB_TREE, stack))
+                end
             end
         elseif treeArt then
             local fit = (config.DEFAULT_ART_FIT or {}).tree or { w = 1.82, h = 1.82, dy = 0.5 }
@@ -2189,7 +2363,14 @@ function M.rebuildObjects()
                        cell * (fit.w or 1), cell * (fit.h or 1), nil, nil,
                        keyOf(tr.r, SUB_TREE, stack))
         else
-            if state.inkStyle then
+            -- ★ 第 46 批：真树 → PINE 素材（图元笔触）。画不出来才退回下面的纯色层叠。
+            local drew = false
+            if propArt and inWin(tr.c, tr.r) then
+                drew = paintProp("PINE", parentTree, x, base, keyOf(tr.r, SUB_TREE, stack))
+            end
+            if drew then
+                -- 图元笔触已经画好了，这里什么都不做
+            elseif state.inkStyle then
                 -- ★ 线稿风：树冠拆成**上下两层**（宽 + 窄）才有「树」的剪影。
                 --   一整块描边方框在白纸上就是个「白盒子」，看不出是树。
                 ti = paintInk(state.treeCtrls, ti, parentTree, treeSlotInk, x, base + cell * 0.30,
@@ -2267,6 +2448,8 @@ function M.rebuildObjects()
     state.logUsed = li - 1
     poolTrim(state.shadowCtrls, si - 1)
     state.shadowUsed = si - 1
+    -- ★ 第 46 批：道具图元池收尾（把这一帧没用到的控件藏起来）
+    propPrEnd()
 
     -- ⑧ 「倒 / 立」的过渡代理（不在动画期间就自动清空自己）
     M.paintObjProxy()

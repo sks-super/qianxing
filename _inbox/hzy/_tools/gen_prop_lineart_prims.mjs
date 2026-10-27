@@ -1,0 +1,404 @@
+// 第 46 批 · 把「超限素材组」导出的线稿**场景道具**脚本 → propPrims.lua（图元笔触）
+//   用法：node _tools/gen_prop_lineart_prims.mjs [out.lua]
+//   源：C:/Users/lenovo/Downloads/<名字>_线稿_裁剪*.lua（旋转椭圆，画布宽高在 ROOT 里）
+//
+//   ★ 和角色那份（gen_hero_lineart_prims.mjs）的差别：
+//     · 角色有四个视角、按「人物高 1.15 格」等比归一化；
+//       道具是**单张**、按**各自的游戏内尺寸**（宽 × 高，单位格）做非等比缩放 ——
+//       因为倒木在游戏里就是 1.00 × 0.50 格，素材本身是 3.96:1，必须压扁才对得上。
+//     · 角色有配套的「像素数据」txt 可以直接求内部；道具没有 → 自己把图元**栅格化**，
+//       再走「膨胀堵断口 → 洪水填充求外部 → 腐蚀」求内部（同一套思路）。
+//     · 道具数量少但笔画不省（logZ 有 268 笔），所以纸面格数按道具尺度单独给。
+//
+//   ⚠️ 纸面（白色底衬）是必须的：线稿素材只有墨、身体是透明的，
+//      不铺纸面的话地图上的**格线会从树/木头里透出来**（第 45 批在同角色上踩过）。
+import fs from 'node:fs'
+import path from 'node:path'
+import { createRequire } from 'node:module'
+
+const require2 = createRequire('C:/Users/lenovo/.workbuddy/binaries/node/workspace/')
+const { createCanvas } = require2('@napi-rs/canvas')
+
+const DL = 'C:/Users/lenovo/Downloads'
+const OUT = process.argv[2] || '浮岛借木/propPrims.lua'
+
+// ---- 每个道具：源名前缀 / 游戏内尺寸（格）/ 纸面格数 ----
+//   tw,th 与 level.lua 里的常量必须一致（LOG_LEN 1.00 / LOG_THICK 0.50 / TRUNK_W 0.36 / TRUNK_H 1.00）
+//   ms = 笔画最小粗细（格）：非等比缩放会把**某个方向**的线压细，
+//        压得越狠这个值就越大（LOG_X 素材 3.96:1 压成 2:1，竖线只剩 1/2.3）。
+//        0.035 格 ≈ 3.5px（cell=99）—— 再小屏幕上就看不见了。
+const PROPS = [
+  { key: 'PINE',  stem: 'pine_线稿_裁剪',            tw: 0.72, th: 1.05, ms: 0.010, label: '松树（真树）' },
+  { key: 'LOG_X', stem: '00_水平树干_线稿_裁剪',     tw: 1.00, th: 0.50, ms: 0.035, label: '东西向倒木' },
+  { key: 'LOG_Z', stem: '02_竖直躺放圆木_线稿_裁剪', tw: 0.50, th: 1.00, ms: 0.035, label: '南北向倒木' },
+  { key: 'TRUNK', stem: '01_直立树干_线稿_裁剪',     tw: 0.36, th: 1.00, ms: 0.025, label: '立着的无叶树干' },
+]
+
+const MIN_SIZE = 0.008      // 归一化后最长边 < 0.008 格（≈0.8px）→ 看不见，丢
+const MIN_ALPHA = 40        // 太淡的笔在白纸上就是脏点
+// ★★ 笔画最小粗细（格）：道具是**非等比**压扁的（倒木素材 3.96:1 → 1.00:0.50），
+//    竖向被压掉一半，原本 2px 的**竖线**只剩 0.5px —— 屏幕上直接被抗锯齿吃掉，
+//    一根木头只剩几条横线（实测就是这么废的）。这里给每笔兜一个下限：
+//    0.014 格 ≈ 1.4px（cell=99），细线不会消失，也不会明显变粗。
+const MIN_STROKE = 0.014
+const INK_MAX = 0x28        // 线稿本来就是近黑，比这更深的一律定格
+const ALPHA_TARGET = 210    // alpha 中位拉到这个值（素材原值中位只有 130 出头 → 白纸上发灰）
+const ALPHA_GAIN_MAX = 2.0
+
+// 纸面：砖缝错行 + 1.45× 放大 + 判据膨胀 0.8 格（三条缺一不可，见第 45 批的说明）
+const PAPER_GROW = 1.55
+const PAPER_STAGGER = 0.5
+const PAPER_SPILL = 0
+
+const RENDER_H = 420        // 栅格化高度（像素）；纸面判据在这个分辨率上求
+
+/** 找 `前缀*.lua`（多个取 mtime 最新） */
+function findSource(stem) {
+  const hits = fs.readdirSync(DL)
+    .filter((f) => f.startsWith(stem) && f.endsWith('.lua'))
+    .map((f) => path.join(DL, f))
+    .map((p) => ({ p, t: fs.statSync(p).mtimeMs }))
+    .sort((a, b) => b.t - a.t)
+  return hits.length ? hits[0].p : null
+}
+
+/** 解析「超限素材组」18 字段：asset,x,y,w,h,pivot…,scale…,rotZ,r,g,b,a */
+function parseElements(src) {
+  const rootM = /local ROOT = \{\s*([\d.]+),\s*([\d.]+),\s*([\d.]+),\s*([\d.]+)/.exec(src)
+  const CW = rootM ? +rootM[3] : 0
+  const CH = rootM ? +rootM[4] : 0
+  const E = []
+  for (const m of src.matchAll(/\{([-\d.,\s]+)\}/g)) {
+    const f = m[1].split(',').map((v) => v.trim()).filter((v) => v.length)
+    if (f.length < 18) continue
+    E.push({
+      cx: +f[1], cy: +f[2], w: Math.abs(+f[3]), h: Math.abs(+f[4]),
+      rot: +f[13], rgb: [+f[14], +f[15], +f[16]], a: +f[17],
+    })
+  }
+  return { E, CW, CH }
+}
+
+/** 旋转后外接矩形（只按中心点求会把斜着的笔裁掉一圈） */
+function bboxOf(E) {
+  let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9
+  for (const e of E) {
+    const rad = e.rot * Math.PI / 180
+    const cs = Math.abs(Math.cos(rad)), sn = Math.abs(Math.sin(rad))
+    const hw = (e.w * cs + e.h * sn) / 2, hh = (e.w * sn + e.h * cs) / 2
+    x0 = Math.min(x0, e.cx - hw); x1 = Math.max(x1, e.cx + hw)
+    y0 = Math.min(y0, e.cy - hh); y1 = Math.max(y1, e.cy + hh)
+  }
+  return { x0, x1, y0, y1, w: x1 - x0, h: y1 - y0 }
+}
+
+/**
+ * 非等比缩放一个「旋转椭圆」笔，返回缩放后等价的 {w, h, rot}。
+ *
+ * ★★ 第 46 批的血泪：倒木素材 3.96:1 要压成 2:1（sx/sy = 2.3），
+ *    一开始图省事写 `w*sx, h*sy` —— 对 rot=0 的横笔没错，但素材里
+ *    **rot≈90° 的长笔长轴是 h**，按 sy 缩放等于放大 2.3 倍，
+ *    于是几根线直接戳到木头外面 0.08 格，游戏里就是一圈乱线。
+ *    正确做法：把椭圆写成矩阵 A = R(θ)·diag(w/2, h/2)，
+ *    左乘缩放对角阵 S 得 M = S·A，再对 M 做 SVD：
+ *      奇异值² → 半轴长度、左奇异向量 → 主轴角度。
+ *    这样任意角度都能精确还原（图元只支持旋转椭圆，而 SVD 给的正好是它）。
+ */
+function anisoEllipse(w, h, rotDeg, sx, sy) {
+  const th = rotDeg * Math.PI / 180
+  const hw = w / 2, hh = h / 2
+  const a11 = Math.cos(th) * hw, a12 = -Math.sin(th) * hh
+  const a21 = Math.sin(th) * hw, a22 = Math.cos(th) * hh
+  const m11 = sx * a11, m12 = sx * a12       // M = diag(sx, sy) · A
+  const m21 = sy * a21, m22 = sy * a22
+  // MᵀM 的特征值（= 奇异值²）
+  const e = m11 * m11 + m21 * m21 + m12 * m12 + m22 * m22
+  const f = m11 * m11 + m21 * m21 - m12 * m12 - m22 * m22
+  const g = 2 * (m11 * m12 + m21 * m22)
+  const disc = Math.hypot(g, f)
+  const s1 = Math.sqrt(Math.max(0, (e + disc) / 2))
+  const s2 = Math.sqrt(Math.max(0, (e - disc) / 2))
+  // 主轴：V 的主方向 → M·v 归一化后的方向就是屏幕上的长轴角度
+  const pv = 0.5 * Math.atan2(g, f)
+  const v1x = Math.cos(pv), v1y = Math.sin(pv)
+  const ux = m11 * v1x + m12 * v1y
+  const uy = m21 * v1x + m22 * v1y
+  let rot = Math.atan2(uy, ux) * 180 / Math.PI
+  if (Math.abs(rot) < 1e-9 && s1 < 1e-12) rot = rotDeg
+  return { w: s1 * 2, h: s2 * 2, rot }
+}
+
+/** 圆形结构元膨胀 */
+function dilate(m, w, h, r) {
+  if (r <= 0) return m
+  const out = new Uint8Array(w * h)
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    if (!m[y * w + x]) continue
+    for (let dy = -r; dy <= r; dy++) {
+      const yy = y + dy
+      if (yy < 0 || yy >= h) continue
+      const span = Math.floor(Math.sqrt(r * r - dy * dy))
+      for (let dx = -span; dx <= span; dx++) {
+        const xx = x + dx
+        if (xx >= 0 && xx < w) out[yy * w + xx] = 1
+      }
+    }
+  }
+  return out
+}
+
+/** 膨胀 → 洪水填充求外部 → 腐蚀 → 内部（手绘线稿有断口，必须先把口子堵上） */
+function interiorOf(m, w, h, R = 3) {
+  const dil = dilate(m, w, h, R)
+  const out = new Uint8Array(w * h)
+  const st = []
+  const push = (x, y) => {
+    if (x < 0 || y < 0 || x >= w || y >= h) return
+    const i = y * w + x
+    if (out[i] || dil[i]) return
+    out[i] = 1; st.push(i)
+  }
+  for (let x = 0; x < w; x++) { push(x, 0); push(x, h - 1) }
+  for (let y = 0; y < h; y++) { push(0, y); push(w - 1, y) }
+  while (st.length) {
+    const i = st.pop(), x = i % w, y = (i - x) / w
+    push(x - 1, y); push(x + 1, y); push(x, y - 1); push(x, y + 1)
+  }
+  // 腐蚀回去：离外部（out）R 像素以内的都不算内部
+  const inside = new Uint8Array(w * h)
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    if (out[y * w + x]) continue
+    let keep = 1
+    for (let dy = -R; dy <= R && keep; dy++) for (let dx = -R; dx <= R; dx++) {
+      const yy = y + dy, xx = x + dx
+      if (yy < 0 || yy >= h || xx < 0 || xx >= w) continue
+      if (out[yy * w + xx]) { keep = 0; break }
+    }
+    if (keep) inside[y * w + x] = 1
+  }
+  for (let i = 0; i < w * h; i++) if (m[i]) inside[i] = 1   // 墨线本身也算剪影
+  return inside
+}
+
+function fmt(v) {
+  let s = v.toFixed(4)
+  if (s === '-0.0000') s = '0.0000'
+  return s.replace(/0+$/, '').replace(/\.$/, '')
+}
+
+/** 一个道具 → { ink:[...], paper:[...], ... } */
+function buildProp(def) {
+  const file = findSource(def.stem)
+  if (!file) return null
+  const src = fs.readFileSync(file, 'utf8')
+  const { E, CW, CH } = parseElements(src)
+  if (!E.length) throw new Error(`${path.basename(file)}：没解析出任何图元，检查导出格式`)
+
+  const bb = bboxOf(E)
+  // 非等比：横纵各自缩放到游戏尺寸（倒木必须压扁才能对上 1.00×0.50）
+  const sx = def.tw / bb.w
+  const sy = def.th / bb.h
+  const xc = (bb.x0 + bb.x1) / 2
+
+  // ---- 墨笔 ----
+  const aSorted = E.map((e) => e.a).sort((a, b) => a - b)
+  const aMed = aSorted[Math.floor(aSorted.length / 2)] || 150
+  const gain = Math.max(1, Math.min(ALPHA_GAIN_MAX, ALPHA_TARGET / aMed))
+
+  const ink = []
+  let dropped = 0
+  for (const e of E) {
+    if (e.a < MIN_ALPHA) { dropped++; continue }
+    let w = e.w * sx, h = e.h * sy
+    if (Math.max(w, h) < MIN_SIZE) { dropped++; continue }
+    const ms = def.ms || MIN_STROKE
+    // ★ 非等比缩放要用 SVD（见 anisoEllipse）：直接 w*sx / h*sy 会把
+    //   rot≈90° 的长笔放大约 2 倍、戳出轮廓（第 46 批倒木就是被这个坑栽的）。
+    const fit = anisoEllipse(e.w, e.h, e.rot, sx, sy)
+    w = Math.max(fit.w, ms)
+    h = Math.max(fit.h, ms)
+    const rotOut = fit.rot
+    // ★ 墨色一律取**中性灰**（按亮度）：逐通道 min 会把源图墨的冷偏色留下 = 白底上的「蓝」
+    const lum = Math.round(0.299 * e.rgb[0] + 0.587 * e.rgb[1] + 0.114 * e.rgb[2])
+    const v = Math.min(INK_MAX, Math.max(0, lum))
+    ink.push({
+      x: (e.cx - xc) * sx,
+      y: (e.cy - bb.y0) * sy,          // y 向上：底边 = 0
+      w, h, rot: rotOut,
+      rgb: v, a: Math.max(0, Math.min(255, Math.round(e.a * gain))),
+    })
+  }
+
+  // ---- 纸面：先把图元栅格化成墨 mask，再求内部 ----
+  const pxc = RENDER_H / def.th                  // 每格像素
+  const W = Math.max(8, Math.ceil(def.tw * pxc))
+  const H = Math.max(8, Math.ceil(def.th * pxc))
+  const cv = createCanvas(W, H)
+  const ctx = cv.getContext('2d')
+  ctx.fillStyle = '#000000'
+  ctx.fillRect(0, 0, W, H)
+  ctx.fillStyle = '#FFFFFF'
+  for (const e of ink) {
+    const X = (e.x + def.tw / 2) * pxc
+    const Y = (def.th - e.y) * pxc
+    ctx.save()
+    ctx.translate(X, Y)
+    ctx.rotate(-e.rot * Math.PI / 180)
+    ctx.beginPath()
+    ctx.ellipse(0, 0, Math.max(0.4, e.w * pxc / 2), Math.max(0.4, e.h * pxc / 2), 0, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.restore()
+  }
+  const img = ctx.getImageData(0, 0, W, H).data
+  const mk = new Uint8Array(W * H)
+  for (let i = 0; i < W * H; i++) mk[i] = img[i * 4] > 127 ? 1 : 0
+  const solid = interiorOf(mk, W, H, 3)
+
+  // ---- 纸面：**按行扫描 + 区间合并成矩形**，不是一个个椭圆 ----
+  //   ★ 为什么换成矩形：椭圆纸面要「铺满不留缝」就必须放大到 1.55×，
+  //     半径 0.775 格 → 边缘必然凸出轮廓一大圈，在树冠这种齿状轮廓上
+  //     就是一圈「白色花瓣」（第一版实测非常难看）。
+  //     矩形是**无缝平铺**的：纵向严格相接、横向可以按像素合并成一大条，
+  //     于是同样的覆盖率只需要几十个控件，边缘误差只有 1 个列宽（≈1px）。
+  //   ★ 纵向行高 ROW_H 格（决定台阶粗细），横向按 PX_STEP 像素合并（决定左右端精度）。
+  const ROW_H = 0.028
+  const rows = Math.max(1, Math.round(def.th / ROW_H))
+  const chPx = H / rows
+  const ch = def.th / rows
+  const colStep = 2                                    // 列扫描步长（像素），2px ≈ 0.005 格
+  const paper = []
+  for (let gy = 0; gy < rows; gy++) {
+    const y0 = Math.round(gy * chPx)
+    const y1 = Math.min(H, Math.round((gy + 1) * chPx))
+    if (y1 <= y0) continue
+    // 这一行里「算作实心」的列：该列 3 个采样点里过半数在 solid 内
+    const cols = []
+    for (let x = 0; x < W; x += colStep) {
+      let hit = 0, tot = 0
+      for (let k = 0; k < 3; k++) {
+        const yy = Math.min(H - 1, y0 + Math.round((k + 0.5) / 3 * (y1 - y0)))
+        tot++
+        if (solid[yy * W + Math.min(W - 1, x)]) hit++
+      }
+      cols.push(hit * 2 >= tot ? 1 : 0)
+    }
+    // 合并连续区间
+    let run = -1
+    for (let i = 0; i <= cols.length; i++) {
+      if (i < cols.length && cols[i]) { if (run < 0) run = i; continue }
+      if (run >= 0) {
+        const xa = run * colStep, xb = Math.min(W, i * colStep)
+        if (xb - xa >= colStep) {
+          paper.push({
+            x: ((xa + xb) / 2 / W - 0.5) * def.tw,
+            y: (H - (y0 + y1) / 2) / H * def.th,
+            w: (xb - xa) / W * def.tw,
+            // ★ 行高多给 25%：矩形在真机上会被取整到像素，2.77px 的行高取整后
+            //   会差出 1px 的缝 —— 一道一道的横线从树身里透出来（用户一眼就能看见）。
+            //   纵向重叠一点是无害的（都是白色），横向本来就是整条合并。
+            h: ch * 1.25,
+          })
+        }
+        run = -1
+      }
+    }
+  }
+
+  return {
+    file: path.basename(file), total: E.length, dropped,
+    ink, paper, aMed, gain, bb, CW, CH, W, H, rows, grid: { ch },
+  }
+}
+
+// ---- 输出 ----
+function emitPart(name, arr) {
+  if (!arr.length) return `    -- ${name}: 0 笔\n    {0, 0, 0},\n`
+  const cells = arr.map((e) => [
+    fmt(e.x), fmt(e.y), fmt(e.w), fmt(e.h), fmt(e.rot),
+    // ★★ rgb 字段是 0xRRGGBB，**必须把单通道亮度乘 0x010101 铺成三通道**。
+    //   只写 `Math.round(e.rgb)` 会输出 0x000015 —— 引擎按 R=00 G=00 B=15 解析，
+    //   于是「中性灰墨线」变成**深蓝色**（第 46 批栽过：截图里木头上全是蓝线）。
+    //   heroPrims.lua 一直是 `0x282828` 这种写法，这边漏了。
+    '0x' + Math.round(e.rgb * 0x010101).toString(16).padStart(6, '0').toUpperCase(),
+    String(Math.round(e.a)),
+  ].join(','))
+  let buf = `    -- ${name}: ${arr.length} 笔\n    {0, 0, ${arr.length},`
+  for (let i = 0; i < cells.length; i++) {
+    const sep = i === 0 ? '' : (i % 3 === 0 ? ',\n     ' : ',')
+    buf += sep + cells[i]
+  }
+  return buf + '},\n'
+}
+
+// 纸面：轴对齐矩形（无旋转），每笔 4 个数 x, y, w, h
+function emitPaper(key, arr) {
+  if (!arr.length) return `M.${key}_PAPER = { 0 }\n`
+  const cells = arr.map((e) => [fmt(e.x), fmt(e.y), fmt(e.w), fmt(e.h)].join(','))
+  let buf = `M.${key}_PAPER = { ${arr.length},\n     `
+  for (let i = 0; i < cells.length; i++) {
+    const sep = i === 0 ? '' : (i % 4 === 0 ? ',\n     ' : ',')
+    buf += sep + cells[i]
+  }
+  return buf + ' }\n'
+}
+
+const built = []
+for (const def of PROPS) {
+  const d = buildProp(def)
+  if (!d) { console.log(`· ${def.key}：没找到 ${def.stem}*.lua → 跳过`); continue }
+  console.log(`· ${def.key}（${def.label}）：${d.file} → ${d.total} 图元 保留 ${d.ink.length} 墨笔` +
+    ` + 纸面 ${d.paper.length} 格（丢 ${d.dropped}）| 素材 ${d.CW}×${d.CH} → ${def.tw}×${def.th} 格` +
+    ` | alpha 中位 ${d.aMed} ×${d.gain.toFixed(2)}`)
+  built.push({ def, d })
+}
+if (!built.length) throw new Error('一个道具都没生成，检查下载目录')
+
+let out = `-- =================================================================
+-- propPrims.lua —— 场景道具的「图元笔触」数据（第 46 批：线稿风树木 / 木头）
+--
+-- 来源：用户导出的「超限素材组」脚本（旋转椭圆图元，画布宽高见各道具注释）
+`
+for (const b of built) {
+  out += `--   ${b.def.key}（${b.def.label}） ← ${b.d.file}：${b.d.total} 图元 / ` +
+    `保留 ${b.d.ink.length} 笔 + 纸面 ${b.d.paper.length} 格\n`
+}
+out += `--
+--   ★ 和 heroPrims.lua 是同一套笔法（同样的 {x,y,w,h,rot,rgb,alpha} 七元组），区别在：
+--     · 道具没有视角，一个道具就是一张图；
+--     · 尺寸按**游戏内实际大小**非等比缩放（倒木素材 3.96:1 → 压成 1.00×0.50 格）。
+--   ★ 每个道具 = 1 组墨线笔（M.<kind>）+ 1 组纸面矩形（M.<kind>_PAPER）。
+--     纸面必须先画：导出的图元只有墨、身体是透明的，不铺白纸地图格线会透出来。
+--   ★ 纸面用的是**轴对齐矩形**（按行扫描 + 区间合并），不是椭圆 ——
+--     椭圆要铺满不留缝得放大到 1.55×，边缘会在齿状轮廓外凸出一圈「白色花瓣」；
+--     矩形无缝平铺，几十个控件就能把内部填实，边缘误差只有一个列宽（≈1px）。
+--     纸面每笔 4 个数：x, y, w, h（格）。
+--   ★ 坐标单位是**格**，原点在「底边中点」（y 向上、x 向右），运行时整体 × cell。
+-- ⚠️ 不要手改数值；换素材请重新导出后重跑 _tools/gen_prop_lineart_prims.mjs。
+-- =================================================================
+
+local M = {}
+
+-- 游戏内尺寸（格）：宽, 高。level.lua 用它做自检，别和那边的常量对不上。
+M.SIZE = {
+`
+for (const b of built) out += `    ${b.def.key} = { ${fmt(b.def.tw)}, ${fmt(b.def.th)} },\n`
+out += `}
+
+-- 每个道具的『可读名』（自检日志用）
+M.LABEL = {
+`
+for (const b of built) out += `    ${b.def.key} = "${b.def.label}",\n`
+out += `}
+
+`
+for (const b of built) {
+  out += emitPaper(b.def.key, b.d.paper)
+  out += `\n`
+  out += `M.${b.def.key} = {\n`
+  out += emitPart('墨线', b.d.ink)
+  out += `}\n\n`
+}
+out += 'return M\n'
+
+fs.writeFileSync(OUT, out)
+console.log(`写出 ${OUT}（${(fs.statSync(OUT).size / 1024).toFixed(1)} KB）；实有道具 ${built.map((b) => b.def.key).join('/')}`)
