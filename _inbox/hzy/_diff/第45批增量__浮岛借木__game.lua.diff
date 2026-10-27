@@ -1,0 +1,16 @@
+diff --git "a/_inbox/hzy/\346\265\256\345\262\233\345\200\237\346\234\250/game.lua" "b/_inbox/hzy/\346\265\256\345\262\233\345\200\237\346\234\250/game.lua"
+index bcbb369..2f3bc33 100644
+--- "a/_inbox/hzy/\346\265\256\345\262\233\345\200\237\346\234\250/game.lua"
++++ "b/_inbox/hzy/\346\265\256\345\262\233\345\200\237\346\234\250/game.lua"
+@@ -816,6 +816,11 @@ function OnStart()
+     --     以后加第三种（夜空 / 熔岩）只需要再加一个字符串，不用改一堆 if。
+     state.theme = paramSwitch("skyIsland", config.DEFAULT_SKY_ISLAND) and "sky" or "sea"
+ 
++    -- ★ 线稿风（第 45 批）：把整张图换成「白纸 + 墨线」
++    --   1 / 空 = 开（默认）；-1 = 关，回到彩色调色板。
++    --   ★ 只换颜色，不改任何画法 / 层级 / 遮挡，一键可回。
++    state.inkStyle = paramSwitch("inkStyle", config.DEFAULT_INK_STYLE)
++
+     -- ★ 镜头放大（可选）：地块 / 树 / 石头 / 小人 / 旗子一律按倍数放大；海面与 HUD 不放大。
+     --   0 / 空 = 没配 = 用 config 默认（DEFAULT_VIEW_ZOOM = 4.5 倍）；
+     --   填 1 = 退回「整张地图正好一屏」的老样子。

@@ -888,6 +888,20 @@ local function paint(pool, i, parent, slot, cx, cy, w, h, hex, alpha, key)
     return i + 1
 end
 
+-- ★ 第 45 批：线稿风的「描边」—— 先铺一块大一圈的墨色，再把本色压在上面。
+--   只多一个控件，形状 / 位置 / 深度键都不变，所以层级、遮挡、动画一律照旧。
+--   t = 描边粗细（像素）；线稿风关掉时它就是个普通的 paint。
+--   ★ 描边的深度键取 key-0.002：同一个 band 里紧贴在本体下面，
+--     不会被相邻格子的顶面盖掉，也不会跑到别的物体前面去。
+local INK_HEX = "1A1A1A"
+local function paintInk(pool, i, parent, slot, cx, cy, w, h, hex, alpha, key, t)
+    if state.inkStyle and t and t > 0 then
+        i = paint(pool, i, parent, slot, cx, cy, w + t * 2, h + t * 2,
+                  INK_HEX, 255, (tonumber(key) or 0) - 0.002)
+    end
+    return paint(pool, i, parent, slot, cx, cy, w, h, hex, alpha, key)
+end
+
 -- 探一次：这个槽位在当前存档里**实际**能建成素材控件吗？
 --   （素材元件实例化失败会当场回退，所以问池子里的第 1 个控件最准）
 local function slotUsesArt(pool, parent, slot)
@@ -1122,7 +1136,8 @@ local function buildSea(palette)
     local cell = state.cellSize
     local cols, rows = state.mapCols or 1, state.mapRows or 1
     local rect = rectSlot()
-    local waterSlot = makeSlot(state.waterPrefabId)
+    -- ★ 第 45 批：线稿风用纯色矩形（水的素材是深青贴图，调色板染不上）
+    local waterSlot = state.inkStyle and rectSlot() or makeSlot(state.waterPrefabId)
 
     -- ① 背景（★ 第 34 批：按主题分两支）
     --
@@ -1199,7 +1214,11 @@ local function buildTerrain(palette, force)
     local cell = state.cellSize
     -- ★ 第 34 批：主题分支要先算出来 —— 岛缘窄边的宽度就跟着主题走
     local sky = (state.theme == "sky")
-    local rim = cell * (sky and (config.DEFAULT_SKY_RIM_RATIO or 0.10)
+    -- ★ 第 45 批：线稿风。**必须在这里就算出来** —— 下面选控件槽位（素材 or 纯色）
+    --   要用它：线稿风一律用纯色矩形，否则草地/海面还是那张贴图，调色板染不上。
+    local ink = state.inkStyle and true or false
+    local rim = cell * (ink and (config.DEFAULT_INK_RIM_RATIO or 0.06)
+                             or sky and (config.DEFAULT_SKY_RIM_RATIO or 0.10)
                              or (config.DEFAULT_TILE_RIM_RATIO or 0.17))
     local sideH = cell * (config.DEFAULT_TILE_SIDE_RATIO or 0.30)
     local cliffMax = cell * (config.DEFAULT_CLIFF_MAX or 2.1)
@@ -1213,13 +1232,15 @@ local function buildTerrain(palette, force)
     --   第 34 批第一版就栽在这：landArt=false 走进 else 分支、hex 传了 palette.land，
     --   但槽位还是 landSlot → 建出来的是素材控件 → 颜色被忽略，
     --   顶面仍然是草地贴图那只绿色（真机同理会一直是草纹，改配色根本看不出）。
-    local tileSlot = sky and rectSlot() or landSlot
+    local tileSlot = (sky or ink) and rectSlot() or landSlot
     local fit = (config.DEFAULT_ART_FIT or {}).land or { w = 1, h = 1, dy = 0 }
     -- 空中岛屿的三个几何参数（只在 sky 主题下用）
     local skyDepth = cell * (tonumber(config.DEFAULT_SKY_DEPTH) or 2.6)
     local skySegs = math.max(1, math.floor(tonumber(config.DEFAULT_SKY_SEGMENTS) or 3))
     local gridW = math.max(1, math.floor(cell * 0.030))
-    local gridAlpha = tonumber(config.DEFAULT_SKY_GRID_ALPHA) or 0
+    -- ★ 第 45 批：线稿风也要格子线（黑线勾出每一格），用的是同一套绘制
+    local gridAlpha = ink and (tonumber(config.DEFAULT_INK_GRID_ALPHA) or 0)
+                       or (tonumber(config.DEFAULT_SKY_GRID_ALPHA) or 0)
     -- ★ 第 31 批：**沙滩带 / 侧面 / 顶面一律收在格子里面，外沿正好压在格线上**。
     --   用户连报三轮「岛的边缘要和格子线（黑线）对齐、边框不能超过黑线」，
     --   到这一版才把三个越线源全部堵住：
@@ -1295,7 +1316,7 @@ local function buildTerrain(palette, force)
                             by = cy
                         end
                         ri = paint(state.rimCtrls, ri, parentRim, rect, bx, by,
-                                   bw, bh, palette.sand, 255, depthKey(BAND_TILE, r, 0.4))
+                                   bw, bh, palette.rim or palette.sand, 255, depthKey(BAND_TILE, r, 0.4))
                     end
                 end
 
@@ -1429,7 +1450,7 @@ local function buildTerrain(palette, force)
                 --     仍然是那条干净的米白窄边。
                 --   ★ 每格最多两条（右 + 下）：线的宽度是格宽的 3%（≈3px），
                 --     太细看不见、太粗像瓷砖缝，3% 在同色草地上刚好读得出。
-                if sky and gridAlpha > 0 then
+                if (sky or ink) and gridAlpha > 0 then
                     if world.landAt(c + 1, r) then
                         ri = paint(state.rimCtrls, ri, parentRim, rect,
                                    cx + cell / 2, cy, gridW, cell,
@@ -1584,8 +1605,9 @@ local function paintLyingLog(pool, i, parent, rect, sp, palette, baseKey)
     local k = utils.clamp(sp.alongX or 0, 0, 1)
     local cap = cell * LOG_CAP
 
-    i = paint(pool, i, parent, rect, sp.cx, sp.cy, sp.w, sp.h,
-              palette.logSide, 255, baseKey)
+    -- ★ 第 45 批：线稿风要给「整根木头」描一圈墨，否则白木头躺在白地上一片糊
+    i = paintInk(pool, i, parent, rect, sp.cx, sp.cy, sp.w, sp.h,
+                 palette.logSide, 255, baseKey, math.max(1.2, cell * 0.020))
     -- 背光暗边（横躺 = 贴地那一条；竖躺 = 右侧那条）
     local sx, sy, sw, sh = shadeEdgeRect(sp, k)
     i = paint(pool, i, parent, rect, sx, sy, sw, sh,
@@ -1707,6 +1729,21 @@ local function rockOccludeOn()
     return (tonumber(v) or 0) > 0
 end
 
+-- ★ 第 45 批：线稿风下把柱子的每一笔「压成灰阶墨」。
+--   柱子那 330 笔是彩色图元（褐色 + 金辉光），线稿风里必须变成
+--   「深墨勾边 + 浅灰柱身 + 白高光」，否则它会是整张白纸里唯一一块彩色。
+--   做法：按亮度分 4 档（不是连续灰），这样远看仍然有「笔触块面」的观感。
+local INK_GRAY = { "1E1E1E", "5C5C5C", "9C9C9C", "E9E9E9" }
+local function inkGray(hex)
+    local v = tonumber(hex, 16) or 0x808080
+    local r = math.floor(v / 65536) % 256
+    local g = math.floor(v / 256) % 256
+    local b = v % 256
+    local lum = 0.299 * r + 0.587 * g + 0.114 * b
+    local i = (lum < 70) and 1 or (lum < 135) and 2 or (lum < 205) and 3 or 4
+    return INK_GRAY[i]
+end
+
 -- 一根柱子：把一组图元笔（7 个字段/笔）铺到池子里，最多铺 maxN 笔
 --   单位全部是「柱高」—— nx/ny 是中心点偏移（ny 从柱脚往上），nw/nh 是尺寸
 --   返回 新游标, 实际铺了几笔
@@ -1723,7 +1760,9 @@ local function paintPillarStrokes(pool, ri, parent, rect, cx, baseY, hpx, key, a
         utils.setSize(c, arr[k + 2] * hpx, arr[k + 3] * hpx)
         utils.setPosition(c, cx + arr[k] * hpx, baseY + arr[k + 1] * hpx)
         utils.setRotation(c, arr[k + 4])
-        utils.setAlpha(c, string.format("%06X", math.floor(arr[k + 5] or 0)), arr[k + 6] or 255)
+        local hex = string.format("%06X", math.floor(arr[k + 5] or 0))
+        if state.inkStyle then hex = inkGray(hex) end
+        utils.setAlpha(c, hex, arr[k + 6] or 255)
         ri = ri + 1
         k = k + 7
         used = used + 1
@@ -2006,6 +2045,8 @@ function M.rebuildObjects()
     local rect = rectSlot()
     local treeSlot = makeSlot(state.treePrefabId)
     local cell = state.cellSize
+    -- ★ 第 45 批：线稿描边的粗细（像素）。跟着格子走，放大世界时线也一起变粗。
+    local inkW = math.max(1.2, cell * 0.020)
     local shadowAlpha = config.DEFAULT_OBJ_SHADOW_ALPHA or 0
     local shadowHex = palette.shadowLand or "33421F"    -- ★ nil 会被 hexToColorA 当成纯白
     local shSlot = shadowSlot()                        -- 椭圆（拿不到就退回矩形）
@@ -2052,9 +2093,9 @@ function M.rebuildObjects()
         if near and not woodAt[st.c .. ":" .. st.r] then
             local bx = cellCenterX(st.c)
             local base = groundY(st.c, st.r)          -- 桩子根部 = 画出来的地表
-            i = paint(pool, i, parent, rect, bx, base + stumpH * 0.5,
-                      stumpW, stumpH, palette.rootRing, 255,
-                      keyOf(st.r, SUB_ROOT))
+            i = paintInk(pool, i, parent, rect, bx, base + stumpH * 0.5,
+                         stumpW, stumpH, palette.rootRing, 255,
+                         keyOf(st.r, SUB_ROOT), inkW)
             -- 受光的那条窄边（光从左上来），圆柱感
             i = paint(pool, i, parent, rect, bx - stumpW * 0.22, base + stumpH * 0.5,
                       stumpW * 0.28, stumpH * 0.92, palette.rootTop, 190,
@@ -2124,7 +2165,11 @@ function M.rebuildObjects()
     -- ⑤ 树木（真树 1 格高 / 无叶树干 1 格高）
     --    ★ 被推立起来的树干（tr.bare）**没有树冠**：它就是倒下的那根木头竖起来了，
     --      造型和 ② 的倒木同源，所以永远走**纯色池**（套素材会变回一棵假树）。
-    local treeArt = slotUsesArt(state.treeCtrls, parentTree, treeSlot)
+    -- ★ 第 45 批：线稿风强制走纯色（素材是整棵树的贴图，既染不上色也加不了描边）
+    local treeArt = (not state.inkStyle) and slotUsesArt(state.treeCtrls, parentTree, treeSlot)
+    -- ★ 槽位也要一起换：paint() 只给**非素材控件**染色，槽位不改的话
+    --   建出来的还是素材控件，颜色被忽略（第 34 批在顶面上栽过同一个坑）
+    local treeSlotInk = state.inkStyle and rectSlot() or treeSlot
     local ti = 1
     for _, tr in ipairs(state.trees) do
         local x = cellCenterX(tr.c)
@@ -2143,12 +2188,26 @@ function M.rebuildObjects()
                        cell * (fit.w or 1), cell * (fit.h or 1), nil, nil,
                        keyOf(tr.r, SUB_TREE, stack))
         else
-            ti = paint(state.treeCtrls, ti, parentTree, treeSlot, x, base + cell * 0.31,
-                       cell * 0.22, cell * 0.62, palette.treeTrunk, 255,
-                       keyOf(tr.r, SUB_TREE, stack))
-            ti = paint(state.treeCtrls, ti, parentTree, treeSlot, x, base + cell * 0.72,
-                       cell * 0.78, cell * 0.56, palette.treeCanopy, 255,
-                       keyOf(tr.r, SUB_TREE + 0.1, stack))
+            if state.inkStyle then
+                -- ★ 线稿风：树冠拆成**上下两层**（宽 + 窄）才有「树」的剪影。
+                --   一整块描边方框在白纸上就是个「白盒子」，看不出是树。
+                ti = paintInk(state.treeCtrls, ti, parentTree, treeSlotInk, x, base + cell * 0.30,
+                              cell * 0.20, cell * 0.60, palette.treeTrunk, 255,
+                              keyOf(tr.r, SUB_TREE, stack), inkW)
+                ti = paintInk(state.treeCtrls, ti, parentTree, treeSlotInk, x, base + cell * 0.62,
+                              cell * 0.84, cell * 0.34, palette.treeCanopy, 255,
+                              keyOf(tr.r, SUB_TREE + 0.1, stack), inkW)
+                ti = paintInk(state.treeCtrls, ti, parentTree, treeSlotInk, x, base + cell * 0.88,
+                              cell * 0.56, cell * 0.26, palette.treeCanopy, 255,
+                              keyOf(tr.r, SUB_TREE + 0.2, stack), inkW)
+            else
+                ti = paint(state.treeCtrls, ti, parentTree, treeSlot, x, base + cell * 0.31,
+                           cell * 0.22, cell * 0.62, palette.treeTrunk, 255,
+                           keyOf(tr.r, SUB_TREE, stack))
+                ti = paint(state.treeCtrls, ti, parentTree, treeSlot, x, base + cell * 0.72,
+                           cell * 0.78, cell * 0.56, palette.treeCanopy, 255,
+                           keyOf(tr.r, SUB_TREE + 0.1, stack))
+            end
         end
     end
     poolTrim(state.treeCtrls, ti - 1)
@@ -2165,12 +2224,12 @@ function M.rebuildObjects()
         local sh = cell * (config.DEFAULT_SIGN_H or 0.72)
         local board = (sg.goal and palette.goalFlag) or palette.sand
         shadow(x, base, cell * 0.42, sg.r, stack)
-        gi = paint(state.goalCtrls, gi, parentTree, rect, x, base + sh * 0.5,
-                   cell * 0.11, sh, palette.goalPole, 255,
-                   keyOf(sg.r, SUB_SIGN, stack))                       -- 柱子
-        gi = paint(state.goalCtrls, gi, parentTree, rect, x + cell * 0.04, base + sh * 0.78,
-                   cell * 0.46, cell * 0.30, board, 255,
-                   keyOf(sg.r, SUB_SIGN + 0.1, stack))                 -- 牌子
+        gi = paintInk(state.goalCtrls, gi, parentTree, rect, x, base + sh * 0.5,
+                      cell * 0.11, sh, palette.goalPole, 255,
+                      keyOf(sg.r, SUB_SIGN, stack), inkW)              -- 柱子
+        gi = paintInk(state.goalCtrls, gi, parentTree, rect, x + cell * 0.04, base + sh * 0.78,
+                      cell * 0.46, cell * 0.30, board, 255,
+                      keyOf(sg.r, SUB_SIGN + 0.1, stack), inkW)        -- 牌子
         gi = paint(state.goalCtrls, gi, parentTree, rect, x + cell * 0.04, base + sh * 0.78,
                    cell * 0.34, cell * 0.05, palette.goalPole, 210,
                    keyOf(sg.r, SUB_SIGN + 0.2, stack))                 -- 板上的两道「字迹」

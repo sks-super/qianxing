@@ -229,6 +229,10 @@ M.waterGridLines = false  -- ★ 第 32 批默认关：水面不画格子线（�
 --   否则「编辑器 / 未跑 OnStart 的预览」与「真机」会各显示一套。
 -- ================================================================
 M.theme = "sky"
+-- ★ 第 45 批：线稿风开关（真机参数 inkStyle ← config.DEFAULT_INK_STYLE）
+--   true  = 整套调色板换成「白纸 + 墨线」，海面/草地/树都改用纯色矩形；
+--   false = 原来的彩色彩色（一键回退）。初值要和 DEFAULT_INK_STYLE 一致。
+M.inkStyle = true
 M.skyCtrls = {}           -- 天空渐变 + 云（bg 层，屏幕空间固定，换地图/换画布才重铺）
 M.skyUsed = 0             -- 天空池本帧占用数量
 

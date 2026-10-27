@@ -113,8 +113,14 @@ M.DEFAULT_HERO_IMG_W = 0.62               -- 立绘内容宽高比（1024×1536 
 --   ★ 优先级：图元笔触 > 图片立绘(填了图库 ID) > 像素画 > 人物素材 > 纯色矩形。
 --     任何一环拿不到控件都会**当场回退**，绝不会让小人凭空消失。
 --   ⚠️ 开关填 -1 才关闭（0 / 空 = 没配 = 用这里的默认值），见 game.lua 的 paramSwitch。
+--   ★★ 第 45 批：角色换成「线稿像素」四视角（heroArt.lua 重新生成，56×84 网格、5 档灰）。
+--     所以默认走**像素画**这条路 —— 图元笔触那套是从**彩色**原图拟合出来的，
+--     换线稿素材后它画不出黑描边 + 纸白，所以这里把它关掉（数据与代码全部保留，
+--     真要回去把 heroPrimsOn 填 1 即可）。
+--     代价：像素画是**整幅一张**，没有分部件，摆臂迈腿那套（第 17/36 批）用不上了；
+--     走路仍然有整幅起伏 / 左右倾（第 36 批）与转身压扁（第 37/38 批），都在根容器上。
 -- ----------------------------------------------------------------
-M.DEFAULT_HERO_PRIMS_ON = 1               -- 1 = 用图元笔触画小人（默认）；-1 = 关掉
+M.DEFAULT_HERO_PRIMS_ON = -1              -- -1 = 关掉图元笔触（第 45 批起默认走线稿像素画）
 M.DEFAULT_PREFAB_HERO_PRIMS = 1073741870  -- 「图片」元件（官方内置，运行时靠 SetImage 给图）
 M.DEFAULT_HERO_PRIMS_IMAGE = 100002       -- 静态图源：100001 矩形 / 100002 椭圆 / 100003 三角形
 
@@ -329,6 +335,13 @@ M.DEFAULT_SKY_RIM_RATIO = 0.10        -- 空中岛屿的岛缘窄边（× 格，
 M.DEFAULT_SKY_TIP = 0.18              -- 岩锥尖端的宽度（占岛宽的比例，0 = 收成一点）
 M.DEFAULT_SKY_SEGMENTS = 5            -- 岩锥纵向分几段（越多越像岩石、越少越像千层蛋糕）
 M.DEFAULT_SKY_GRID_ALPHA = 170        -- 岛面格线不透明度（0 = 不画格子）
+
+-- ★ 第 45 批：线稿风（整张图「白纸 + 墨线」）
+--   1 = 用 config.PALETTE_INK 覆盖彩色调色板、并打开岛面黑格线；-1 = 原来的彩色。
+--   ★ 只换颜色不改画法：形状 / 层级 / 遮挡一律不变，随时一键切回。
+M.DEFAULT_INK_STYLE = 1
+M.DEFAULT_INK_GRID_ALPHA = 210        -- 线稿风下的岛面格线不透明度（比空中岛主题更实）
+M.DEFAULT_INK_RIM_RATIO = 0.06        -- 线稿风的岛缘墨线宽度（格）；0.17 那种沙滩带宽会变成一道粗黑框
 M.DEFAULT_SKY_CLOUD_COUNT = 6         -- 云团数量（铺在屏幕下半部）
 M.DEFAULT_SKY_BANDS = 48              -- 天空渐变用几条横带（越多越平滑，控件也越多）
                                       --   ★ 20 条在 720p 下每带 36px，色差能看出一条条横纹；
@@ -655,6 +668,48 @@ M.PALETTE_SKY = {
     waterDeep  = "A9D8EE",
     waterShade = "8FB6C9",
     shadowLand = "9BA84A",   -- 物体 / 小人在黄绿草地上的接触阴影
+}
+
+-- ----------------------------------------------------------------
+-- ★ 线稿风调色板（第 45 批）—— 整张图换成「白纸 + 墨线」：
+--   · 大块面（草地 / 树冠 / 木身 / 柱身 / 纸牌）→ 纯白，
+--   · 边界与暗部（岛缘描边 / 岛面格线 / 木头切口 / 树根 / 旗杆）→ 近黑，
+--   · 海面 → 极浅的灰绿（留一点层次，否则岛和海糊成一张纸）。
+--   打开方式：真机参数 inkStyle（默认 1 = 开，见 DEFAULT_INK_STYLE）。
+--   ★ 只换颜色**不改画法**：所有形状、层级、遮挡一律不变，随时能一键切回彩色。
+-- ----------------------------------------------------------------
+M.PALETTE_INK = {
+    water      = "F4F6F1",   -- 海面 = 纸
+    waterDeep  = "E9EDE6",
+    waterLine  = "CBD3CB",
+    waterShade = "B7C0B8",
+    land       = "FFFFFF",   -- 草地 = 纸
+    landDark   = "F7F8F4",   -- 棋盘格的另一半（差一档，刚好读出格子）
+    rim        = "1A1A1A",   -- ★ 岛缘描边 = 墨线（新增键，回落见 level.buildTerrain）
+    sand       = "FFFFFF",   -- 木牌板面（不再是沙滩色）
+    soil       = "E8EAE3",   -- 崖面：浅灰，靠描边分界
+    tileGrid   = "1A1A1A",   -- 岛面格线 = 墨线
+    shadowLand = "D6DAD3",   -- 接触阴影：很浅的灰（线稿里不该有大黑块）
+    treeCanopy = "FFFFFF",
+    treeTrunk  = "FFFFFF",
+    logSide    = "FFFFFF",
+    logTop     = "FFFFFF",
+    logEnd     = "1A1A1A",   -- 木头切口 / 贴地暗边 = 墨线
+    logStandSide = "FFFFFF",
+    logStandEdge = "FFFFFF",
+    logStandCap  = "FFFFFF",
+    logStandFoot = "1A1A1A",
+    rock1Top   = "FFFFFF",
+    rock2Top   = "FFFFFF",
+    rockSide   = "1A1A1A",
+    rootTop    = "FFFFFF",
+    rootRing   = "1A1A1A",
+    playerBody = "FFFFFF",
+    playerHead = "1A1A1A",
+    goalFlag   = "FFFFFF",
+    goalPole   = "1A1A1A",
+    ripple     = "FFFFFF",
+    dust       = "C8CEC6",
 }
 
 -- ================================================================

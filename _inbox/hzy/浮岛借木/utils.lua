@@ -47,6 +47,11 @@ function M.resolvePalette(data)
     if state.theme == "sky" then
         for k, v in pairs(config.PALETTE_SKY or {}) do out[k] = v end
     end
+    -- ★ 第 45 批：线稿风。放在**最后**（除了地图自带 palette），
+    --   因为它是「整体换装」—— 空中岛屿那套地貌色也要被压成白纸墨线。
+    if state.inkStyle then
+        for k, v in pairs(config.PALETTE_INK or {}) do out[k] = v end
+    end
     if type(data) == "table" and type(data.palette) == "table" then
         for k, v in pairs(data.palette) do out[k] = v end
     end
