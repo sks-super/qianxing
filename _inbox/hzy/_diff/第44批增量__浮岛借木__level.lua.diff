@@ -1,0 +1,272 @@
+diff --git "a/_inbox/hzy/\346\265\256\345\262\233\345\200\237\346\234\250/level.lua" "b/_inbox/hzy/\346\265\256\345\262\233\345\200\237\346\234\250/level.lua"
+index bfbd890..8c8e7a6 100644
+--- "a/_inbox/hzy/\346\265\256\345\262\233\345\200\237\346\234\250/level.lua"
++++ "b/_inbox/hzy/\346\265\256\345\262\233\345\200\237\346\234\250/level.lua"
+@@ -41,7 +41,8 @@ local config = require("config")
+ local utils = require("utils")
+ local world = require("world")
+ 
+-M.BUILD = "b43"   -- 版本戳：真机日志里能一眼看出用的是哪一版文件
++M.BUILD = "b44"   -- 版本戳：真机日志里能一眼看出用的是哪一版文件
++                  --   b44 = 第 44 批：柱子遮挡改成**纯矩形相交**（小人 / 树 / 倒木 / 木筏都算遮挡物）
+                   --   b43 = 第 43 批：柱子只在「同列且真的盖得住小人」时才进前层 —— 走位不再改变柱子外观
+                   --   b42 = 第 42 批：石柱保真度重做（330 笔/根）+ 柱子挡角色（石头拆前后两层）
+                   --   b41 = 第 41 批：石柱边缘磨平（竖条层定轮廓 + 细节笔裁进轮廓）
+@@ -1664,17 +1665,19 @@ end
+ --
+ --   ★ 深度：每根柱子的所有笔共用一个深度键（行号），同一根内按笔画顺序排 ——
+ --     这样近处的柱子整根压在远处的柱子上面，不会出现「半根在后面半根在前面」。
+---   ★★★ 第 42 批的遮挡：石头层拆成**前后两层**（见 game.ensureContainers）——
+---     该挡人的柱子画进 containerRockFront（在小人**之上**），其余全在 containerRock（小人之下）。
+---     于是「站在柱子后面被挡住 / 站在柱子前面盖住它」两个方向同时成立。
+---     ★★ 第 43 批订正（两次）：
+---       ① 前层永远压在后层之上，所以「哪根进前层」就等于「柱子和柱子谁压谁」。
+---          第 42 批按「脚线比小人靠下」逐根判 → 小人每跨一行，半屏柱子一起换层，
+---          和邻柱 / 树木的遮挡关系整体翻 = 用户报的「所有柱子的样子都变了」。
+---       ② 改成**同列 + 屏幕矩形真的盖得住小人**才进前层（见 rockIsFront）：
+---          一根柱子只在「小人走到它正上方那一格」时才换层，其余柱子**永远**在后层，
+---          外观与小人走到哪儿无关。一整张图通常一次都不触发。
+---     ★ 只在「小人换格」且**确有柱子会换边**时才重铺（见 M.ensureRockSplit）——
++--   ★★★ 柱子挡东西（第 42 批起；第 44 批定稿）：石头层拆成**前后两层**
++--     （见 game.ensureContainers）—— 该挡东西的柱子画进 containerRockFront
++--     （在树木 / 小人**之上**），其余全在 containerRock（都在下面）。
++--     ★ 判据 = **纯屏幕矩形相交**（见 rockIsFront）：柱子更靠下（更近）+ 两个矩形相交。
++--       所以「挡多少」天然等于「石柱轮廓 ∩ 物体轮廓」，不是「整根柱子跳出来」：
++--         小人站柱子正上方一格 → 柱顶到腰，只挡下半身，头肩照常露出来；
++--         木头滚到柱子正上方一格 → 柱子只啃掉它朝镜头那半条边。
++--     ★ 遮挡物不只有小人：树 / 倒木 / 木筏 也各自有一条矩形（见 buildOccluders），
++--       所以「树滚到柱子后面」同样会被柱子挡住。
++--     ⚠️ 前层永远压在后层之上，所以「哪根柱子进前层」= 「它压到后层所有东西头上」，
++--       范围必须锁死在「自己脚下 + 上方一格」。第 42 批按行号一刀切（半屏柱子一起换层），
++--       用户看到的就是「所有柱子的样子都变了」。
++--     ★ 只在「有东西换格 / 确有柱子会换边」时才重铺（见 M.ensureRockSplit）——
+ --       每走一步就重铺几千个控件，真机必卡。
+ -- ================================================================
+ local ROCK_WIN_MARGIN = 2          -- 柱子比石块高，窗口外多留一格防止「脚下那根没画」
+@@ -1728,47 +1731,98 @@ local function paintPillarStrokes(pool, ri, parent, rect, cx, baseY, hpx, key, a
+     return ri, used
+ end
+ 
+--- 小人的屏幕脚线（分层判据）；没小人时返回 nil（= 全部画进后层）
+-local function playerFootY()
+-    local p = state.player
+-    if not p or not state.cellSize then return nil end
+-    return groundY(p.c, p.r)
+-end
+-
+--- 柱子该不该画进**前层**（= 挡住小人）？
+---   ★★ 第 43 批：判据从「比小人靠下」收紧成「**屏幕矩形真的和小人相交**」。
+---     为什么：前后两层的先后是**整层**压的（前层永远压在后层之上），所以一根柱子
+---     挪到前层 = 它压到「后层里所有别的柱子」头上。第 42 批把「行号比小人大」的柱子
+---     全塞进前层，于是小人每跨一行，半屏柱子一起换层、和树木/邻柱的遮挡关系整体翻，
+---     用户看到的就是「所有柱子的样子都变了」。
+---     现在只有「同一列 + 这一根真的盖得住小人」的那一根才进前层 —— 其余柱子**永远**
+---     待在后层，外观与小人走到哪儿完全无关。
+---   ★ 三个判据（必须全满足）：
+---     ① 比小人近：行号更大（同行的柱子深度键相同，让它待在后层，小人自然压住它）；
+---     ② 同一列：柱宽 0.49 格、小人宽 0.60 格 → 半宽和 0.55 < 1 格，隔壁列碰不到小人；
+---     ③ 屏幕矩形相交：柱子占 [脚线, 脚线+1.9 格]，小人占 [脚线, 脚线+1.15 格]。
+---        正下方那一格必然相交；再往下一格柱顶已经低于小人脚线，就不该遮挡。
+-local function rockIsFront(rk, p, pFoot)
+-    if not p or pFoot == nil then return false end
+-    local pr = tonumber(p.r)
+-    local r = tonumber(rk.r)
+-    if pr == nil or r == nil or r <= pr then return false end
+-    if (tonumber(rk.c) or -1) ~= (tonumber(p.c) or -2) then return false end
++-- ================================================================
++-- ★★★ 第 44 批：柱子挡不挡东西，只看**两个屏幕矩形相不相交**。
++--   柱子矩形：[脚线, 脚线 + 柱高] × [中心 ± 柱身半宽]
++--   物体矩形：[脚线, 脚线 + 物体高] × [中心 ± 物体半宽]
++--   条件只有两条：① 柱子**更靠下**（离镜头更近）；② 两个矩形相交。
++--   于是「挡多少」天然等于「石柱轮廓 ∩ 物体轮廓」——
++--     小人站在柱子正上方一格：柱顶到小人腰以上，只挡住下半身，头肩照常露出来；
++--     木头滚到柱子正上方一格：柱子只啃掉它朝镜头那半条边。
++--   第 42 批按「行号比小人大」一刀切（柱子整根跑前面）、第 43 批按「同列」特判，
++--   都在描述「谁该挡谁」这个人肉规则；这一批改成纯几何，规则只有一条。
++--
++--   ★ 为什么要给每个物体配一个矩形，而不是只给小人：树木层固定在小人之下，
++--     柱子要挡树就只能整根进前层 —— 但**只有真的和那棵树相交的柱子**才该进，
++--     否则一根柱子跑到前面会把一整片树全压住（第 42 批的老毛病）。
++--   ★ 前层永远压在后层之上，所以进前层的柱子也会压到后层里别的东西；
++--     但矩形相交已经把范围锁在「自己脚下这一格 + 上方一格」，不会波及远处。
++-- ================================================================
++local function pillarBox(rk)
+     local cell = state.cellSize or 1
+     local hpx = cell * (tonumber(config.DEFAULT_PILLAR_H) or 1.9)
+-    local fit = (config.DEFAULT_ART_FIT or {}).player or { h = 1.126 }
+-    local heroH = cell * (tonumber(fit.h) or 1.126)
+-    local foot = groundY(rk.c, r)
+-    return (foot < pFoot + heroH) and (pFoot < foot + hpx)
++    local bodyW = (rockPrims and tonumber(rockPrims.BODY_W)) or 0.2564
++    return cellCenterX(rk.c), groundY(rk.c, rk.r), hpx * bodyW, hpx   -- cx, foot, 半宽, 高
+ end
+ 
+--- 小人现在在第几行 / 第几列（分层判据的「变了没」缓存键）
+---   ★ 用**整格坐标**做键：柱子进前层的条件里同时含行和列，
+---     只比行号会漏掉「在同一行里横着走到某根柱子正上方」这种情况。
+-local function playerCellKey()
++-- 收集「柱子可能挡住的东西」的屏幕矩形（小人 / 树 / 倒木 / 木筏）
++--   ★ 只取**看得见的主体**，不取整个控件矩形：真树的素材控件是 1.82 格见方、
++--     中间一大圈透明留白，按控件算会让两列外的柱子也翻层。
++local function buildOccluders()
++    if not state.cellSize then return {} end
++    local cell = state.cellSize
++    local list = {}
++    local function add(cx, foot, w, h)
++        if w and h and h > 0 then
++            list[#list + 1] = { cx = cx, foot = foot, w = w, h = h }
++        end
++    end
++    -- 小人（立绘 / 图元都用 ART_FIT.player 这套尺寸）
+     local p = state.player
+-    if not p then return nil end
+-    return string.format("%s,%s", tostring(tonumber(p.c) or -1), tostring(tonumber(p.r) or -1))
++    if p then
++        local fit = (config.DEFAULT_ART_FIT or {}).player or { w = 0.751, h = 1.126 }
++        add(cellCenterX(p.c), groundY(p.c, p.r), cell * (tonumber(fit.w) or 0.751),
++            cell * (tonumber(fit.h) or 1.126))
++    end
++    -- 树：有叶子的按树冠算（约 0.95 × 1.35 格），无叶树干按真身算
++    for _, tr in ipairs(state.trees or {}) do
++        local base = entBaseY(tr.c, tr.r, tr.z)
++        if tr.bare then
++            local sp = standingShape(tr.c, tr.r, tr.z)
++            add(sp.cx, sp.cy - sp.h * 0.5, sp.w, sp.h)
++        else
++            add(cellCenterX(tr.c), base - cell * 0.05, cell * 0.95, cell * 1.35)
++        end
++    end
++    -- 倒木 / 木筏：用画它们的那个形态表，矩形和画出来的一模一样
++    for _, lg in ipairs(state.logs or {}) do
++        local sp = lyingShape(lg.c, lg.r, lg.dir, lg.z)
++        add(sp.cx, sp.cy - sp.h * 0.5, sp.w, sp.h)
++    end
++    for _, rf in ipairs(state.rafts or {}) do
++        local sp = lyingShape(rf.c, rf.r, rf.dir, rf.z)
++        add(sp.cx, sp.cy - sp.h * 0.5, sp.w, sp.h)
++    end
++    return list
++end
++
++-- 这根柱子要不要画进前层（挡住上面那些物体）？
++local function rockIsFront(rk, occ)
++    if not occ or #occ == 0 then return false end
++    local cx, foot, halfW, hpx = pillarBox(rk)
++    for i = 1, #occ do
++        local o = occ[i]
++        if foot < o.foot then                                  -- ① 柱子更靠下 = 更近
++            if math.abs(cx - o.cx) < (halfW + o.w * 0.5) then   -- ② 横向相交
++                if (foot < o.foot + o.h) and (o.foot < foot + hpx) then  -- ③ 纵向相交
++                    return true
++                end
++            end
++        end
++    end
++    return false
++end
++
++-- 「变了没」的缓存键：所有遮挡物体的矩形拼成字符串
++--   ★ 比整格坐标更严：木头滚一格、树被推倒、小人换格，这里都会变。
++local function occluderKey(occ)
++    if not occ or #occ == 0 then return "" end
++    local t = {}
++    for i = 1, #occ do
++        local o = occ[i]
++        t[i] = string.format("%.0f,%.0f,%.0f", o.cx, o.foot, o.h)
++    end
++    return table.concat(t, ";")
+ end
+ 
+ -- 重铺整个石头层（自成一个函数：rebuildObjects / 换可视窗 / 小人换格 三处都要调）
+@@ -1785,16 +1839,14 @@ local function paintRockPillars(palette)
+     local sides = state.rockSideTbl or {}
+     state.rockSideTbl = sides
+     local occl = rockOccludeOn()
+-    local pl = occl and state.player or nil
+-    local pFoot = occl and playerFootY() or nil
++    local occ = occl and buildOccluders() or nil
+     -- ★★ 第 43 批：**全部**柱子（含可视窗外的）的「前 / 后」都先算一遍。
+     --   之前只在绘制循环里给窗口内那几根写 sides[]，窗口外那六十多根永远是 nil，
+     --   而 M.ensureRockSplit 拿 `sides[i] ~= want` 比 → nil 和 false 不等 →
+     --   小人每挪一格都判「有柱子换边」，白白重铺几千个控件。
+     for i = 1, #rocks do
+-        sides[i] = rockIsFront(rocks[i], pl, pFoot)
++        sides[i] = rockIsFront(rocks[i], occ)
+     end
+-
+     if rockPillarOn() then
+         local R = rockPrims
+         local hpx = cell * (tonumber(config.DEFAULT_PILLAR_H) or 1.9)
+@@ -1827,8 +1879,8 @@ local function paintRockPillars(palette)
+             local cx = cellCenterX(rk.c)
+             local foot = groundY(rk.c, rk.r)
+             local key = objKey(rk.r, SUB_ROCK)
+-            -- 前 / 后：见 rockIsFront（同列 + 屏幕矩形真的盖得住小人才进前层）
+-            local front = rockIsFront(rk, pl, pFoot)
++            -- 前 / 后：见 rockIsFront（柱子的屏幕矩形和谁相交，就挡谁）
++            local front = rockIsFront(rk, occ)
+             local tp, tparent
+             if front then
+                 tp, tparent = fpool, fparent
+@@ -1889,8 +1941,7 @@ local function paintRockPillars(palette)
+     state.rockDrawn = drawn
+     state.rockFlat = flat
+     state.rockFrontDrawn = frontN
+-    state.rockSplitY = pFoot
+-    state.rockSplitKey = playerCellKey()
++    state.rockSplitKey = occluderKey(occ)
+     return (#pool + #fpool) > poolBefore   -- 池子扩容了（**不再用它决定要不要重排**，见调用处）
+ end
+ 
+@@ -1901,12 +1952,13 @@ function M.repaintRockPillars(palette)
+ end
+ 
+ -- ================================================================
+--- ★ 逐帧（纯算术，不碰控件）：小人换格后，若有柱子要「从人前挪到人后」（或反过来），
+---   才重铺石头层。判据见 rockIsFront（同列 + 屏幕矩形真的盖得住小人才进前层）。
++-- ★ 逐帧（纯算术，不碰控件）：小人换格 / 木头滚动 / 树被推倒之后，
++--   若有柱子要「从物体前面挪到后面」（或反过来），才重铺石头层。
++--   判据见 rockIsFront（纯屏幕矩形相交）。
+ --   ★ 为什么不每步都重铺：一次重铺 = 几百到几千次控件调用，走一步就闪一下。
+---     按现在的判据，**一根柱子只有在「小人走到它正上方那一格」时才换层** ——
++--     按现在的判据，**一根柱子只有在「有东西走到它正上方那一格」时才换层** ——
+ --     一整张图通常一次都不会触发，所以石头层实际是「建好就不动」。
+---   ★★ 第 43 批：重铺之后**必须无条件 restackWorld**。柱子进哪个池是由小人位置决定的，
++--   ★★ 第 43 批：重铺之后**必须无条件 restackWorld**。柱子进哪个池由物体位置决定，
+ --     一换边「哪根柱子占哪个池槽」就整体挪位；池子没扩容时不动 sibling 顺序，
+ --     旧顺序和新分配对不上 → 柱子互相遮挡的先后乱掉。
+ --     一次 restack 只是几千次 SetAsLastSibling，比重铺便宜得多。
+@@ -1914,20 +1966,17 @@ end
+ function M.ensureRockSplit()
+     if not state.cellSize or not state.rocks then return false end
+     if not rockOccludeOn() or not rockPillarOn() then return false end
+-    local p = state.player
+-    local pFoot = playerFootY()
+-    if not p or pFoot == nil then return false end
+-    local pKey = playerCellKey()
+-    if pKey ~= nil and state.rockSplitKey == pKey then return false end
++    local occ = buildOccluders()
++    local key = occluderKey(occ)
++    if state.rockSplitKey == key then return false end
+     local rocks = state.rocks
+     local sides = state.rockSideTbl or {}
+     local changed = false
+     for i = 1, #rocks do
+-        if sides[i] ~= rockIsFront(rocks[i], p, pFoot) then changed = true break end
++        if sides[i] ~= rockIsFront(rocks[i], occ) then changed = true break end
+     end
+     if not changed then
+-        state.rockSplitY = pFoot          -- 小人挪了但没有柱子换边：只记一下，不动控件
+-        state.rockSplitKey = pKey
++        state.rockSplitKey = key        -- 物体挪了但没有柱子换边：只记一下，不动控件
+         return false
+     end
+     paintRockPillars(utils.resolvePalette(state.levelConfig))
+@@ -3347,7 +3396,6 @@ function M.clear()
+     poolTrim(state.rockCtrls, 0)     -- ★ 第 22 批：石头 / 木头两个新池一并清空
+     poolTrim(state.rockFrontCtrls, 0)-- ★ 第 42 批：石头前景池
+     state.rockSideTbl = {}           -- 分层缓存一起作废（下次 build 重新判断）
+-    state.rockSplitY = nil
+     state.rockSplitKey = nil
+     poolTrim(state.logCtrls, 0)
+     poolTrim(state.treeCtrls, 0)
