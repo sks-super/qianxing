@@ -1,6 +1,6 @@
-// 第 45 批 · 把四张「线稿像素」PNG 转成 heroArt.lua（纯色矩形像素画）
+// 第 45 批 · 把四张「线稿像素」**像素数据**转成 heroArt.lua（纯色矩形像素画）
 //   用法：node _tools/make_hero_lineart.mjs [COLS] [ROWS] [out.lua] [preview.png]
-//   源：C:/Users/lenovo/WorkBuddy/2026-10-21-21-32-48/generated-images/lineart/pixel6/*_1x.png
+//   源：…/lineart/pixel6/extracted/0X_xxx_像素数据.txt（170×255，一行一排、`#` = 墨、`.` = 底）
 //   输出格式与老 heroArt.lua 完全一致：{ x, y, w, h, 颜色索引 }，左上原点、y 向下。
 //   ★ 为什么不是直接引用 PNG：千星脚本没有「画一张图」的接口，
 //     图片控件要图库 ID，而且会丢掉像素风。像素画 = 几百块纯色矩形，最稳。
@@ -15,18 +15,20 @@ const ROWS = Number(process.argv[3] || 60)
 const OUT = process.argv[4] || '浮岛借木/heroArt.lua'
 const PREVIEW = process.argv[5] || '_tmp/b45_hero_preview.png'
 
-const DIR = 'C:/Users/lenovo/WorkBuddy/2026-10-21-21-32-48/generated-images/lineart/pixel6/'
-// ★ 必须用「透明」那一版：同名不带后缀的 _1x 是**白底**，整张画布都不透明，
-//   按 alpha 取覆盖率会把整块画布当成「纸面」→ 小人变一张白卡片。
+const DIR = 'C:/Users/lenovo/WorkBuddy/2026-10-21-21-32-48/generated-images/lineart/pixel6/extracted/'
+// ★ 用**逐像素的文本数据**（`#` = 墨 / `.` = 底），不再去采样 PNG：
+//   PNG 版（`_1x`）是白底不透明的，按 alpha 取覆盖率会把整块画布当成纸面 → 一张白卡片；
+//   透明版虽然能取到轮廓，但内部是镂空的，还得靠形态学补。文本数据是**逐像素精确**的，
+//   采样时一格里有多少墨就是多少，没有任何抗锯齿干扰。
 const SRC = [
-  ['S', '01_正面_像素6x6_透明.png', '正面'],
-  ['W', '02_背面_像素6x6_透明.png', '背面'],
-  ['A', '03_侧面朝左_像素6x6_透明.png', '侧面朝左'],
-  ['D', '04_侧面朝右_像素6x6_透明.png', '侧面朝右'],
+  ['S', '01_正面_像素数据.txt', '正面'],
+  ['W', '02_背面_像素数据.txt', '背面'],
+  ['A', '03_侧面朝左_像素数据.txt', '侧面朝左'],
+  ['D', '04_侧面朝右_像素数据.txt', '侧面朝右'],
 ]
 
 // 5 档灰：0 = 墨线，4 = 纸白
-const GRAYS = [0x11, 0x55, 0x9E, 0xD8, 0xFF]
+const GRAYS = [0x16, 0x16, 0x6E, 0x6E, 0xFF]
 const hex = n => n.toString(16).padStart(2, '0')
 const COLORS = GRAYS.map(v => `${hex(v)}${hex(v)}${hex(v)}`)
 
@@ -34,10 +36,9 @@ const COLORS = GRAYS.map(v => `${hex(v)}${hex(v)}${hex(v)}`)
 //   ★ 源图的纸面是**透明**的，只有墨线不透明。而这是手绘线稿，线条有断口，
 //     直接对透明像素做洪水填充会从断口漏进去 → 内部一个都填不到（小人变「空心线人」）。
 //   做法：先**膨胀**墨线把断口堵上（R=3 源像素），再洪水填充求外部，最后**腐蚀**回来。
-function fillInside(w, h, data) {
+function fillInside(w, h, srcMask) {
   const R = 3
-  const ink = new Uint8Array(w * h)
-  for (let i = 0; i < w * h; i++) if (data[i * 4 + 3] > 100) ink[i] = 1
+  const ink = srcMask
   const dil = new Uint8Array(w * h)
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
@@ -95,36 +96,37 @@ function fillInside(w, h, data) {
 const SPRITES = {}
 const stats = {}
 
-// ① 先把四张读进来，并求**并集**边界：四视角必须共用同一个框，
-//    否则换朝向时脚底 / 头会跳（这是第 26 批换素材时踩过的老坑）。
+// ① 读四份「像素数据」文本（170×255，`#` = 墨 / `.` = 底），求**并集**边界。
+//    四视角必须共用同一个框，否则换朝向时脚底 / 头会跳（第 26 批换素材踩过）。
 const IMGS = []
 let BX0 = 1e9, BY0 = 1e9, BX1 = -1e9, BY1 = -1e9
 for (const [key, file, label] of SRC) {
-  const img = await loadImage(DIR + file)
-  const c = createCanvas(img.width, img.height)
-  const ctx = c.getContext('2d')
-  ctx.drawImage(img, 0, 0)
-  const data = ctx.getImageData(0, 0, img.width, img.height).data
-  // ★ 源图的「纸面」是**透明**的（只有墨线不透明），所以要自己把内部填出来：
-  //   从画布四边对透明像素做洪水填充 → 填不到的透明像素就是「人物内部」。
-  //   不填的话小人只剩几根线，草地会从身体里透出来。
-  const inside = fillInside(img.width, img.height, data)
-  for (let y = 0; y < img.height; y++) {
-    for (let x = 0; x < img.width; x++) {
-      if (data[(y * img.width + x) * 4 + 3] > 127) {
+  const rows = fs.readFileSync(DIR + file, 'utf8').split(/\r?\n/).filter(l => l.length > 0)
+  const h = rows.length
+  const w = rows[0].length
+  const mask = new Uint8Array(w * h)
+  for (let y = 0; y < h; y++) {
+    const line = rows[y]
+    if (line.length !== w) throw new Error(`${file} 第 ${y + 1} 行长度 ${line.length}，应为 ${w}`)
+    for (let x = 0; x < w; x++) {
+      if (line[x] === '#') {
+        mask[y * w + x] = 1
         if (x < BX0) BX0 = x
         if (x > BX1) BX1 = x
         if (y < BY0) BY0 = y
         if (y > BY1) BY1 = y
+      } else if (line[x] !== '.') {
+        throw new Error(`${file} 出现未知字符 ${JSON.stringify(line[x])}`)
       }
     }
   }
-  IMGS.push({ key, label, w: img.width, h: img.height, data, inside })
+  const inside = fillInside(w, h, mask)
+  IMGS.push({ key, label, w, h, mask, inside })
 }
 const BW = BX1 - BX0 + 1, BH = BY1 - BY0 + 1
 console.log(`并集边界 ${BX0},${BY0} → ${BX1},${BY1}（${BW}×${BH}） 网格 ${COLS}×${ROWS}`)
 
-for (const { key, label, w, h, data: px, inside } of IMGS) {
+for (const { key, label, w, h, mask, inside } of IMGS) {
 
   const grid = []          // grid[y][x] = 颜色索引 或 -1（空）
   const cw = BW / COLS, ch = BH / ROWS
@@ -139,24 +141,22 @@ for (const { key, label, w, h, data: px, inside } of IMGS) {
           const x = Math.min(w - 1, Math.max(0, Math.floor(BX0 + gx * cw + (sx + 0.5) * cw / 4)))
           const y = Math.min(h - 1, Math.max(0, Math.floor(BY0 + gy * ch + (sy + 0.5) * ch / 4)))
           const i = y * w + x
-          const a = px[i * 4 + 3] / 255
-          if (a > 0.5) {
-            const l = 0.299 * px[i * 4] + 0.587 * px[i * 4 + 1] + 0.114 * px[i * 4 + 2]
-            if (l < 128) ink++
-          } else if (inside[i]) {
-            paper++
-          }
+          if (mask[i]) ink++          // 逐像素数据：`#` 就是墨，没有任何抗锯齿干扰
+          else if (inside[i]) paper++
           n++
         }
       }
       const solid = (ink + paper) / n
       if (solid < 0.30) { row.push(-1); continue }   // 大半是背景 → 不画
+      // ★ 用「这一格的平均调子」定灰阶，而不是「有多少墨就压多黑」：
+      //   线稿是密密麻麻的细线，一格里有 40% 墨时原图在 111px 下看起来是中灰，
+      //   按阈值直接判黑会整片糊成墨块（对比图里一眼能看出差多少）。
+      // ★ 1-bit：像素数据本来就只有「墨 / 纸」两种，中间调只会让 111px 的小人显脏。
+      //   一格 2.9px、线宽 2px：斜线约有 1/3 格是墨 → 阈值 0.18 能把连续笔触留住。
       const inkF = ink / n
-      // ★ 阈值别压太低：细线摊进一格 ink≈0.4，一压就全变实心墨块，几十条线连成一片黑。
-      if (inkF > 0.55) row.push(0)                   // 实心墨（瞳孔、粗轮廓）
-      else if (inkF > 0.22) row.push(1)              // 深灰（主线）
-      else if (inkF > 0.08) row.push(2)              // 中灰（细线 / 抗锯齿）
-      else row.push(4)                               // 纸面
+      if (inkF > 0.42) row.push(0)                    // 实墨（密排的排线 / 粗轮廓）
+      else if (inkF > 0.10) row.push(2)               // 中灰（单根细线）
+      else row.push(4)                                // 纸
     }
     grid.push(row)
   }
